@@ -1,0 +1,59 @@
+# Unified experiment config, shared by Terminal-Bench 4.0 and ExploitBench.
+#
+# This is the primary configuration: a frontier orchestrator directing smaller
+# subagents served by vLLM. Switch `benchmark` to exploit_bench and `sandbox`
+# accordingly to run the other benchmark with the same orchestrator setup.
+#
+# Every field is documented in subagents_bench/config.py.
+
+name: unified-opus-orch-small-sub
+
+benchmark: terminal_bench        # terminal_bench | exploit_bench
+topology: subagents              # single | subagents
+subtask_type: none               # none | parallel_exploration | localize_then_fix | verify | decompose
+
+# Frontier orchestrator, native Anthropic API.
+orchestrator:
+  model: claude-opus-4-8
+  provider: anthropic
+  api_key_env: ANTHROPIC_API_KEY
+  max_output_tokens: 8192
+  temperature: 0.0
+  price_in: 15.0                 # USD / 1M tokens (set to current list price)
+  price_out: 75.0
+  price_cache_read: 1.5
+
+# Smaller subagent model, served by a hosted OpenAI-compatible endpoint.
+# provider: prime -> Prime Intellect (https://api.pinference.ai/api/v1, PRIME_API_KEY)
+# provider: sail  -> Sail Research  (https://api.sailresearch.com/v1, SAIL_API_KEY)
+# Both report USD cost in the usage object, so leaving price_in/out at 0 reports
+# the endpoint's actual cost. Override base_url/api_key_env to point elsewhere
+# (e.g. a local vLLM server: provider: vllm, base_url: http://localhost:8000/v1).
+subagent:
+  model:
+    model: Qwen/Qwen3-8B
+    provider: prime               # prime | sail | vllm | openai
+    max_output_tokens: 4096
+    temperature: 0.2
+    price_in: 0.0                 # 0 -> use provider-reported cost
+    price_out: 0.0
+  max_concurrent: 3              # instruct-to-spawn count for the IF eval
+  max_dispatches: null           # null -> max_concurrent * orchestrator_steps
+  max_steps: 8
+
+budget:
+  orchestrator_steps: 5          # the study fixes episodes at 5 steps
+  total_token_budget: 2000000
+  timeout_sec: 1800
+
+sandbox:
+  kind: harbor                   # harbor | exploitbench | local_docker | local_shell
+  workdir: /app
+  network: false
+
+# Task selection. Empty lists = all tasks in the subset.
+task_ids: []
+difficulties: []                 # e.g. [easy, medium, hard] -- the task-size axis
+n_trials: 1
+seed: 1
+output_dir: runs

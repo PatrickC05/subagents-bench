@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "subagents-bench"
+version = "0.1.0"
+description = "Cost and latency of a frontier orchestrator directing smaller subagents on executable coding tasks (Terminal-Bench 4.0 and ExploitBench)."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.40"]
+openai = ["openai>=1.40"]
+all = ["anthropic>=0.40", "openai>=1.40"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+subagents-bench = "subagents_bench.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["subagents_bench*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

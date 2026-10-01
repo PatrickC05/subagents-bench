@@ -1,0 +1,35 @@
+# Baseline 1: the orchestrator model as a single agent, same tools/sandbox/budget.
+# No subagents. Compare its resolve rate against the model's published
+# SWE-bench Verified result to validate the harness.
+
+name: baseline-single-opus
+
+benchmark: terminal_bench
+topology: single                 # <- no subagents
+subtask_type: none
+
+orchestrator:
+  model: claude-opus-4-8
+  provider: anthropic
+  api_key_env: ANTHROPIC_API_KEY
+  max_output_tokens: 8192
+  temperature: 0.0
+  price_in: 15.0
+  price_out: 75.0
+  price_cache_read: 1.5
+
+budget:
+  orchestrator_steps: 5
+  total_token_budget: 2000000
+  timeout_sec: 1800
+
+sandbox:
+  kind: harbor
+  workdir: /app
+  network: false
+
+task_ids: []
+difficulties: []
+n_trials: 1
+seed: 1
+output_dir: runs

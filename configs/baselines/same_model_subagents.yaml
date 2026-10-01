@@ -1,0 +1,41 @@
+# Baseline 2: orchestrator with subagents of ITS OWN model. Separates the
+# effect of having subagents from the effect of subagent size. Leave the
+# subagent model unset so it defaults to the orchestrator's.
+
+name: baseline-same-model-subagents
+
+benchmark: terminal_bench
+topology: subagents
+subtask_type: none
+
+orchestrator:
+  model: claude-opus-4-8
+  provider: anthropic
+  api_key_env: ANTHROPIC_API_KEY
+  max_output_tokens: 8192
+  temperature: 0.0
+  price_in: 15.0
+  price_out: 75.0
+  price_cache_read: 1.5
+
+subagent:
+  model: null                    # <- defaults to the orchestrator model
+  max_concurrent: 3
+  max_dispatches: null
+  max_steps: 8
+
+budget:
+  orchestrator_steps: 5
+  total_token_budget: 2000000
+  timeout_sec: 1800
+
+sandbox:
+  kind: harbor
+  workdir: /app
+  network: false
+
+task_ids: []
+difficulties: []
+n_trials: 1
+seed: 1
+output_dir: runs
