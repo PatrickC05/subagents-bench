@@ -224,6 +224,31 @@ def test_record_tables_conditions_paired_and_calibration(offline, aggregated):
     assert (cal["n_calls"] > 0).all() and cal["ttft_median"].notna().all()
 
 
+def test_validity_uptake_and_isolation_on_runtime_output(aggregated):
+    ep, cond, s = aggregated["episodes"], aggregated["conditions"].set_index("condition"), aggregated["summary"]
+    # No provider failure, no agent exception, no duplicate in a clean run: every trial counts.
+    assert (ep["n_provider_errors"] == 0).all() and not ep["duplicate"].any()
+    assert s["invalid_reason_counts"] == {} and s["duplicate_trials"] == []
+    # Every subagents condition delegated in every episode; the treatment check agrees.
+    sub = ep[ep["topology"] == "subagents"]
+    assert (sub["delegated"] == 1).all() and (ep.loc[ep["topology"] == "single", "delegated"] == 0).all()
+    cov = {r["condition"]: r for r in s["treatment_coverage"]}
+    assert set(cov) == set(sub["condition"]) and all(r["ok"] for r in cov.values())
+    assert (cond.loc[sorted(cov), "delegated_frac"] == 1.0).all()
+    assert (cond["resolve_rate_delegated"].dropna() == cond.loc[sorted(cov), "resolve_rate"]).all()
+    assert (cond["n_tasks_valid"] == len(TASKS)).all()
+    # The real arbiter's copy-isolation check ran (hard scope) and found no leak; shared isolation has none.
+    hard, easy = ep[ep["condition"] == "gemma31b_arbiter_hard"], ep[ep["condition"] == "gemma31b_arbiter_easy"]
+    assert (hard["n_isolation_checked"] == hard["arbitrations"]).all() and (hard["n_isolation_violations"] == 0).all()
+    assert (easy["n_isolation_checked"] == 0).all()
+    assert cond.loc["gemma31b_arbiter_hard", "isolation_violated_frac"] == 0.0
+    # The fitted profile reproduces the measured call time in-sample, per model.
+    for model, chk in s["latency_checks"]["fitted_vs_measured"]["fitted"].items():
+        assert chk["ratio"] == pytest.approx(1.0, abs=0.02), model
+    assert s["analysis_source"]["source_sha256"] and all(
+        len(v) == 1 and v[0] != "unknown" for v in s["episode_source_sha256"].values())
+
+
 # ---------------------------------------------------------------------------
 # side directories of a real jobs dir are not double counted
 # ---------------------------------------------------------------------------

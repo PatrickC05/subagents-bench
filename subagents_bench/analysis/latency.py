@@ -16,8 +16,10 @@ arbiter        max over the group's arbitrations of: isolation setup
                + diff summaries (first round's ``t_start`` minus
                ``t_candidates_end``) + sum over judge rounds of (judge call
                + max of that round's debate calls) + apply and cleanup
-               (arbitration ``t_end`` minus the last judge call's ``t_end``);
-               the setup, diff and apply parts are always measured
+               (arbitration ``t_end`` minus the latest end of any judge or
+               debate call counted, so a round aborted mid-debate is not
+               counted twice); the setup, diff and apply parts are always
+               measured
 =============  ==============================================================
 
 The episode duration is the orchestrator chain. Only LLM call durations
@@ -33,9 +35,16 @@ thread start-up and record writing. Each chain element is attributed to ``orch_l
 Serving profiles (``configs/serving.yaml``):
 
 * ``measured`` -- the call's logged ``latency_sec`` (retries and backoff included);
-* ``fitted`` -- ``ttft_fit_a + ttft_fit_b * prompt/1000 + completion / decode_tok_s``
-  per (model, provider, completion_window), from ``calibration.csv`` or a file
-  written by ``subagents-bench calibrate``;
+* ``fitted`` -- ``lat_fit_a + lat_fit_b * prompt/1000 + lat_fit_c * completion``
+  per (model, provider, completion_window): one least-squares fit of the
+  whole call time (:func:`fit_target_sec`) with every coefficient >= 0, from
+  ``calibration.csv`` or a file written by ``subagents-bench calibrate``. One
+  fit of the total (rather than a TTFT fit plus a median decode rate) keeps
+  the per-call intercept that short replies pay, so in-sample its total
+  matches the measured total and its error does not depend on reply length
+  (``summary.json`` ``latency_checks.fitted_vs_measured`` checks both). Params
+  files from before the joint fit (``ttft_a_sec``, ``decode_tok_s``) still
+  load, as ``c = 1 / decode_tok_s``;
 * ``roofline`` -- theoretical dedicated batch-1 serving:
   ``prefill_tok_s = mfu * peak_flops / (2 * active_params)``,
   ``decode_tok_s = mbu * peak_bw / (active_params * bytes_per_param)``,
@@ -115,6 +124,24 @@ def measured_call_sec(call: dict) -> float:
         t0, t1 = call.get("t_start"), call.get("t_end")
         return float(t1 - t0) if t0 is not None and t1 is not None else NAN
     return float(lat)
+
+
+def fit_target_sec(call: dict) -> float:
+    """What the ``fitted`` profile models: the serving time of a successful call.
+
+    ``ttft_sec + decode_sec`` (the final attempt, request to last chunk) when
+    both were measured, else ``latency_sec - backoff_sec``; NaN if neither is
+    known. Retry backoff is left out, so the fit describes one served request.
+    A single-chunk reply has ``decode_sec`` 0 and its whole time in TTFT, which
+    this total handles like any other call.
+    """
+    ttft, dec = call.get("ttft_sec"), call.get("decode_sec")
+    if ttft is not None and dec is not None:
+        return float(ttft) + float(dec)
+    lat = call.get("latency_sec")
+    if lat is None:
+        return NAN
+    return float(lat) - float(call.get("backoff_sec") or 0.0)
 
 
 def _tool_sec(tool: dict) -> float:
@@ -248,18 +275,22 @@ class CriticalPath:
         # Diff summaries for the judge, between the candidates' end and the first round: measured.
         if rounds and rounds[0].get("t_start") is not None and arb.get("t_candidates_end") is not None:
             total = total + PathCost.of("tool", max(0.0, float(rounds[0]["t_start"]) - float(arb["t_candidates_end"])))
-        last_judge_end = None
+        # Apply and cleanup run from the end of the last judge OR debate call counted: a round
+        # aborted mid-debate (cancel) has debate calls and no judge, and measuring from the
+        # previous judge would count that debate a second time.
+        ends: list[float] = []
         for rnd in rounds:
-            debates = [self.call_cost(self.g.calls[c]) for c in rnd.get("debate_call_ids") or [] if c in self.g.calls]
-            total = total + _max_cost(debates)
+            dcalls = [self.g.calls[c] for c in rnd.get("debate_call_ids") or [] if c in self.g.calls]
+            total = total + _max_cost([self.call_cost(c) for c in dcalls])
+            ends += [float(c["t_end"]) for c in dcalls if c.get("t_end") is not None]
             judge = self.g.calls.get(rnd.get("judge_call_id"))
             if judge is not None:
                 total = total + self.call_cost(judge)
                 if judge.get("t_end") is not None:
-                    last_judge_end = max(last_judge_end or judge["t_end"], judge["t_end"])
+                    ends.append(float(judge["t_end"]))
         apply_sec = 0.0
-        if last_judge_end is not None and arb.get("t_end") is not None:
-            apply_sec = max(0.0, float(arb["t_end"]) - float(last_judge_end))
+        if ends and arb.get("t_end") is not None:
+            apply_sec = max(0.0, float(arb["t_end"]) - max(ends))
         return total + PathCost.of("tool", apply_sec)
 
     def episode(self) -> PathCost:
@@ -306,10 +337,15 @@ class MeasuredProfile:
 
 @dataclass
 class FitParams:
-    ttft_a_sec: float
-    ttft_b_sec_per_1k_prompt_tokens: float
-    decode_tok_s: float
+    """``call_sec = a_sec + b * prompt_tokens/1000 + c * completion_tokens``."""
+
+    a_sec: float
+    b_sec_per_1k_prompt_tokens: float
+    c_sec_per_completion_token: float
     n_calls: int | None = None
+    # lat_fit: the joint fit of the whole call; ttft_fit+decode_rate: an older params file
+    # (TTFT fit plus a median decode rate, c = 1 / decode_tok_s).
+    form: str = "lat_fit"
 
 
 @dataclass
@@ -324,12 +360,12 @@ class FittedProfile:
         p = self.params.get(calib_key(call.get("model"), call.get("provider"), call.get("completion_window")))
         if p is None:
             return NAN
-        sec = p.ttft_a_sec + p.ttft_b_sec_per_1k_prompt_tokens * _tok(call, "prompt_tokens") / 1000.0
+        sec = p.a_sec + p.b_sec_per_1k_prompt_tokens * _tok(call, "prompt_tokens") / 1000.0
         completion = _tok(call, "completion_tokens")
         if completion > 0:
-            if not (p.decode_tok_s and p.decode_tok_s > 0):
+            if not (p.c_sec_per_completion_token >= 0 and math.isfinite(p.c_sec_per_completion_token)):
                 return NAN
-            sec += completion / p.decode_tok_s
+            sec += p.c_sec_per_completion_token * completion
         return sec
 
     def describe(self) -> dict:
@@ -448,18 +484,70 @@ class TableProfile:
         return {"kind": self.kind, "description": self.description, "models": self.models}
 
 
+COMPLETION_BINS = ((0, 100), (100, 400), (400, None))
+
+
+def fitted_vs_measured(profile: FittedProfile, calls: Iterable[dict]) -> dict[str, dict]:
+    """Per model: sum of the profile's call times / sum of :func:`fit_target_sec`.
+
+    Over the successful calls with a measured target, overall and per
+    completion-length bin. For a profile fitted in-sample the overall ratio is
+    1 whenever the fitted intercept is positive (residuals of a fit with an
+    intercept sum to 0), and the bins show any length-dependent bias; NaN
+    when the profile has no parameters for some of the model's calls.
+    """
+    labels = [f"{lo}-{hi - 1}" if hi else f"{lo}+" for lo, hi in COMPLETION_BINS]
+    sums: dict[str, dict[str, list[float]]] = {}
+    for c in calls:
+        meas = fit_target_sec(c)
+        if c.get("error") or not math.isfinite(meas):
+            continue
+        comp = _tok(c, "completion_tokens")
+        b = next(lab for lab, (lo, hi) in zip(labels, COMPLETION_BINS) if comp >= lo and (hi is None or comp < hi))
+        fit = profile.call_sec(c)
+        for key in ("all", b):
+            s = sums.setdefault(str(c.get("model")), {}).setdefault(key, [0.0, 0.0, 0])
+            s[0], s[1], s[2] = s[0] + fit, s[1] + meas, s[2] + 1
+
+    def ratio(s: list[float]) -> float:
+        return s[0] / s[1] if s[1] > 0 else NAN
+
+    return {
+        model: {
+            "n_calls": by["all"][2],
+            "ratio": ratio(by["all"]),
+            "by_completion_tokens": {k: {"n_calls": by[k][2], "ratio": ratio(by[k])} for k in labels if k in by},
+        }
+        for model, by in sorted(sums.items())
+    }
+
+
+LAT_FIT_KEYS = ("lat_fit_a", "lat_fit_b_per_1k_prompt", "lat_fit_c_per_completion_token")
+
+
 def fit_params_from_rows(rows: Iterable[dict]) -> dict[tuple[str, str, str], FitParams]:
-    """FitParams from calibration rows (calibration.csv columns, or calibrate's YAML entries)."""
+    """FitParams from calibration rows (calibration.csv columns, or calibrate's YAML entries).
+
+    Rows with the joint fit (``lat_fit_*``) use it. Rows without those keys
+    (params files written before the joint fit) fall back to the TTFT fit plus
+    decode rate, ``c = 1 / decode_tok_s``.
+    """
     out = {}
     for r in rows:
-        a = _num(r.get("ttft_fit_a", r.get("ttft_a_sec")))
-        b = _num(r.get("ttft_fit_b_per_1k_prompt_tokens", r.get("ttft_b_sec_per_1k_prompt_tokens")))
-        dec = _num(r.get("decode_tok_s_median", r.get("decode_tok_s")))
-        if a is None or b is None or dec is None:
+        if any(k in r for k in LAT_FIT_KEYS):
+            a, b, c = (_num(r.get(k)) for k in LAT_FIT_KEYS)
+            form = "lat_fit"
+        else:
+            a = _num(r.get("ttft_fit_a", r.get("ttft_a_sec")))
+            b = _num(r.get("ttft_fit_b_per_1k_prompt_tokens", r.get("ttft_b_sec_per_1k_prompt_tokens")))
+            dec = _num(r.get("decode_tok_s_median", r.get("decode_tok_s")))
+            c = 1.0 / dec if dec is not None and dec > 0 else None
+            form = "ttft_fit+decode_rate"
+        if a is None or b is None or c is None:
             continue  # this model's fit is not identifiable -> its calls simulate to NaN
-        n = r.get("n_calls")
+        n = r.get("lat_fit_n", r.get("n_calls")) if form == "lat_fit" else r.get("n_calls")
         out[calib_key(r.get("model"), r.get("provider"), r.get("completion_window"))] = FitParams(
-            a, b, dec, int(n) if n is not None and not (isinstance(n, float) and math.isnan(n)) else None
+            a, b, c, int(n) if n is not None and not (isinstance(n, float) and math.isnan(n)) else None, form
         )
     return out
 

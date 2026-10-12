@@ -7,7 +7,9 @@
 * :func:`mcnemar_exact` -- exact two-sided McNemar test (binomial on the
   discordant pairs) for paired condition-vs-baseline comparisons;
 * :func:`linear_fit` -- ordinary least squares ``y = a + b x`` (TTFT vs prompt
-  size in ``calibration.csv``).
+  size in ``calibration.csv``);
+* :func:`nonneg_least_squares` -- least squares with every coefficient >= 0
+  (the per-call latency model of the ``fitted`` serving profile).
 
 Only numpy is needed (no scipy). Every function returns NaN rather than a
 made-up number when the input cannot support an estimate.
@@ -15,6 +17,7 @@ made-up number when the input cannot support an estimate.
 
 from __future__ import annotations
 
+import itertools
 import math
 from typing import Iterable, Sequence
 
@@ -66,14 +69,15 @@ def bootstrap_mean_ci(
     """(mean, lo, hi): percentile bootstrap CI of the mean of the finite values.
 
     A fresh generator seeded with ``seed`` is used per call, so results do not
-    depend on the order in which tables are computed.
+    depend on the order in which tables are computed. One value has a mean
+    but no interval: (mean, NaN, NaN), not a zero-width CI.
     """
     x = finite(values)
     if x.size == 0:
         return (NAN, NAN, NAN)
     mean = float(x.mean())
     if x.size == 1:
-        return (mean, mean, mean)
+        return (mean, NAN, NAN)
     rng = np.random.default_rng(seed)
     idx = rng.integers(0, x.size, size=(n_resamples, x.size))
     means = x[idx].mean(axis=1)
@@ -129,6 +133,50 @@ def linear_fit(x: Sequence[float], y: Sequence[float]) -> tuple[float, float, in
     b = float(((xa - xm) * (ya - ym)).sum()) / sxx
     a = float(ym - b * xm)
     return (a, b, n)
+
+
+def nonneg_least_squares(rows: Sequence[Sequence[float]], y: Sequence[float]) -> tuple[np.ndarray, int]:
+    """Least squares ``y ~ X @ coef`` with every coefficient >= 0; returns ``(coef, n)``.
+
+    Rows where X or y is not finite are skipped. The exact non-negative
+    solution is the ordinary least-squares fit on some subset of the columns
+    (its support), so every subset whose own design has full column rank is
+    fitted and the feasible one (all coefficients >= 0) with the smallest
+    squared error wins; ties go to the subset with more columns, then to the
+    earlier columns. Columns left out get coefficient 0. With fewer than two
+    usable rows, or no feasible subset, every coefficient is NaN.
+    """
+    X, ys = [], []
+    for xi, yi in zip(rows, y):
+        try:
+            xr, yf = [float(v) for v in xi], float(yi)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(yf) and all(math.isfinite(v) for v in xr):
+            X.append(xr)
+            ys.append(yf)
+    k = len(rows[0]) if len(rows) else 0
+    n = len(X)
+    nan = np.full(k, NAN)
+    if n < 2 or k == 0:
+        return (nan, n)
+    xa, ya = np.asarray(X), np.asarray(ys)
+    tie = 1e-12 * max(float((ya**2).sum()), 1e-300)  # squared-error differences below this are ties
+    best: tuple[float, np.ndarray] | None = None
+    for size in range(k, 0, -1):
+        for cols in itertools.combinations(range(k), size):
+            sub = xa[:, cols]
+            if np.linalg.matrix_rank(sub) < size:
+                continue
+            coef_s = np.linalg.lstsq(sub, ya, rcond=None)[0]
+            if (coef_s < -1e-12 * max(1.0, float(np.abs(coef_s).max()))).any():
+                continue  # infeasible: a negative coefficient (beyond rounding)
+            coef = np.zeros(k)
+            coef[list(cols)] = np.clip(coef_s, 0.0, None)
+            sse = float(((xa @ coef - ya) ** 2).sum())
+            if best is None or sse < best[0] - tie:
+                best = (sse, coef)
+    return (best[1], n) if best is not None else (nan, n)
 
 
 def quantile(values: Iterable[float | None], q: float) -> float:

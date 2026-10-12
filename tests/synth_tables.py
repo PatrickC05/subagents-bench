@@ -11,7 +11,10 @@ orchestrator steps, LLM calls (with retry/TTFT/decode instants), tools, spawn
 groups, subagent dispatches and arbitrations on one timeline, and the
 per-episode aggregates (tokens, costs, critical path, simulated wall-clock)
 are computed from those events. So the tables are internally consistent and
-the timeline figures have real structure to draw.
+the timeline figures have real structure to draw. The default conditions
+include partial treatment uptake (one grid condition never delegates), a
+manager control (restricted orchestrator tools) and one re-run trial flagged
+``duplicate``, so the figures' handling of each is exercised.
 
 EVERY NUMBER HERE IS SYNTHETIC. Prices, parameter counts, speeds and outcomes
 are placeholders chosen to look plausible; they are not measurements and must
@@ -88,6 +91,11 @@ class Condition:
     sub_model: str | None
     steps: int
     p_mult: float  # multiplier on the task's base solve probability
+    uptake: float = 1.0  # probability that the orchestrator spawns subagents at all in an episode
+    orchestrator_tools: str = "all"  # tools.orchestrator_tools label; restricted = manager control
+
+
+MANAGER_TOOLS = "read_file+list_dir+search"
 
 
 def default_conditions() -> list[Condition]:
@@ -99,8 +107,12 @@ def default_conditions() -> list[Condition]:
     smult = {"easy": 0.85, "medium": 1.0, "hard": 1.15}
     for st in STRATEGIES:
         for sc in SCOPES:
-            conds.append(Condition(f"gemma31b_{st}_{sc}", "subagents", st, sc, GEMMA, 5, mult[st] * smult[sc]))
+            # Partial treatment uptake; sequential/easy never delegates (an untreated condition).
+            uptake = 0.0 if (st, sc) == ("sequential", "easy") else 0.8
+            conds.append(Condition(f"gemma31b_{st}_{sc}", "subagents", st, sc, GEMMA, 5, mult[st] * smult[sc], uptake))
     conds.append(Condition("samemodel_parallel_hard", "subagents", "parallel", "hard", ORCH, 5, 1.25))
+    conds.append(Condition("manager_arbiter_hard", "subagents", "arbiter", "hard", GEMMA, 5, 1.1,
+                           orchestrator_tools=MANAGER_TOOLS))
     return conds
 
 
@@ -570,8 +582,10 @@ class _Episode:
         n_steps = cond.steps if cond.steps <= 5 else int(rng.integers(12, 30))
         finish_at = n_steps if rng.random() < 0.5 else max(2, n_steps - 1)
         spawn_steps: set[int] = set()
-        if cond.topology == "subagents":
+        if cond.topology == "subagents" and rng.random() < cond.uptake:
             spawn_steps = {1} | {s for s in (2, 3) if rng.random() < 0.6}
+        own_tools = ["read_file", "search", "list_dir"] if cond.orchestrator_tools != "all" else \
+            ["bash", "read_file", "bash", "search"]
         prev_prompt = 0
         exit_reason = "max_steps"
         for step in range(1, finish_at + 1):
@@ -590,7 +604,7 @@ class _Episode:
             elif step in spawn_steps and self.dispatch_budget > 0:
                 names = ["spawn_subagents"]
             else:
-                names = [str(rng.choice(["bash", "read_file", "bash", "search"])) for _ in range(int(rng.integers(1, 3)))]
+                names = [str(rng.choice(own_tools)) for _ in range(int(rng.integers(1, 3)))]
             tools_t0 = t
             for name in names:
                 if name == "spawn_subagents":
@@ -688,6 +702,7 @@ def _episode_row(ep: _Episode, out: dict, resolved: bool) -> dict:
         "wall_clock_sec": wall,
         "orchestrator_steps": len(ep.steps),
         "spawn_calls": len(ep.spawns),
+        "delegated": int(len(ep.spawns) > 0),
         "dispatches": len(ep.dispatches),
         "redispatches": sum(1 for d in ep.dispatches if d["group_id"] != (ep.spawns[0]["group_id"] if ep.spawns else None)),
         "arbitrations": len(ep.arbitrations),
@@ -699,6 +714,7 @@ def _episode_row(ep: _Episode, out: dict, resolved: bool) -> dict:
         "cp_sub_llm_sec": ep.cp_sub_llm,
         "cp_arb_llm_sec": ep.cp_arb_llm,
         "cp_tool_sec": cp_tool,
+        "cp_group_sec": ep.cp_in_groups,
         "overhead_sec": wall - cp_total,
         "sub_busy_sec": sub_busy,
         "parallel_speedup": (sub_busy / max(ep.cp_in_groups, 1e-6)) if ep.spawns and sub_busy > 0 else float("nan"),
@@ -720,6 +736,7 @@ def _episode_row(ep: _Episode, out: dict, resolved: bool) -> dict:
         "harbor_exception": None,
         "exit_reason": out["exit_reason"],
         "valid": True,
+        "duplicate": False,
     })
     return row
 
@@ -756,16 +773,25 @@ def _condition_table(eps: pd.DataFrame, by: list[str]) -> pd.DataFrame:
                + [f"{r}_{k}" for r in ("orch", "sub") for k in
                   ("prompt_tokens", "cached_tokens", "uncached_prompt_tokens", "completion_tokens", "reasoning_tokens")])
     rows = []
-    for key, g in eps.groupby(by, sort=False):
+    for key, g in eps[~eps["duplicate"].astype(bool)].groupby(by, sort=False):
         key = key if isinstance(key, tuple) else (key,)
         row: dict[str, Any] = dict(zip(by, key))
         first = g.iloc[0]
-        for col in ("topology", "strategy", "scope", "orchestrator_model", "subagent_model"):
+        for col in ("topology", "strategy", "scope", "orchestrator_model", "subagent_model", "orchestrator_tools"):
             row[col] = first[col]
         v = g[g["valid"].astype(bool)]
         k = int(v["resolved"].sum())
         p, lo, hi = _wilson(k, len(v))
         row.update({"n": len(g), "n_valid": len(v), "n_resolved": k, "resolve_rate": p, "resolve_ci_lo": lo, "resolve_ci_hi": hi})
+        per_task = v.groupby("task_name")["resolved"].mean()
+        took = v[v["delegated"] == 1]
+        kd = int(took["resolved"].sum())
+        dlo, dhi = _wilson(kd, len(took))[1:]
+        row.update({"n_tasks_valid": len(per_task),
+                    "resolve_rate_task_balanced": float(per_task.mean()) if len(per_task) else float("nan"),
+                    "n_delegated": len(took), "delegated_frac": len(took) / len(v) if len(v) else float("nan"),
+                    "resolve_rate_delegated": kd / len(took) if len(took) else float("nan"),
+                    "resolve_delegated_ci_lo": dlo, "resolve_delegated_ci_hi": dhi})
         for m in metrics:
             row[f"{m}_mean"], row[f"{m}_ci_lo"], row[f"{m}_ci_hi"] = _boot(v[m].to_numpy(dtype=float))
         for s in SCHEMES:
@@ -777,7 +803,7 @@ def _condition_table(eps: pd.DataFrame, by: list[str]) -> pd.DataFrame:
 
 
 def _paired(eps: pd.DataFrame) -> pd.DataFrame:
-    v = eps[eps["valid"].astype(bool)]
+    v = eps[eps["valid"].astype(bool) & ~eps["duplicate"].astype(bool)]
     out = []
     for base in ("single_5step", "single_matched"):
         b = v[v["condition"] == base].set_index(["task_name", "round"])["resolved"]
@@ -822,13 +848,24 @@ def write_synthetic_analysis(
     conditions: list[Condition] | None = None,
     tasks: list[dict[str, Any]] | None = None,
     rounds: list[int] | None = None,
-    invalid: tuple[str, str, int] | None = ("gemma31b_sequential_medium", "raman-fitting", 2),
+    invalid: tuple | list[tuple] | None = ("gemma31b_sequential_medium", "raman-fitting", 2),
+    duplicate: tuple[str, str, int] | None = ("gemma31b_parallel_hard", "fix-git", 1),
 ) -> Path:
     """Simulate a sweep and write its analysis tables to ``out_dir``.
 
-    ``invalid`` names one (condition, task, round) trial that fails in the
-    environment build (``valid=False``, no events), to exercise filtering.
+    ``invalid`` names (condition, task, round) trials that fail in the
+    environment build (``valid=False``, no events), to exercise filtering;
+    one tuple or a list, and a task or round of None matches every one.
+    ``duplicate`` names one trial that is also re-run: the copy, with the
+    opposite outcome, is flagged ``duplicate`` in episodes.csv and left out
+    of the condition tables, as the aggregator does.
     """
+    if invalid and isinstance(invalid[0], str):
+        invalid = [invalid]
+
+    def is_invalid(cond: str, task: str, rnd: int) -> bool:
+        return any(c == cond and t in (None, task) and r in (None, rnd) for c, t, r in (invalid or []))
+
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(seed)
@@ -854,6 +891,7 @@ def write_synthetic_analysis(
                     "trial_name": f"{task['name']}__{eid[-6:]}", "task_name": task["name"], "episode_id": eid,
                     "topology": cond.topology, "strategy": cond.strategy, "scope": cond.scope,
                     "orchestrator_model": ORCH, "subagent_model": cond.sub_model,
+                    "orchestrator_tools": cond.orchestrator_tools,
                     "arbiter_model": ORCH if cond.strategy == "arbiter" else None,
                     "max_concurrent": 3 if cond.topology == "subagents" else None,
                     "n_candidates": 3 if cond.strategy == "arbiter" else None,
@@ -861,7 +899,7 @@ def write_synthetic_analysis(
                     "difficulty": task["difficulty"], "category": task["category"],
                     "expert_time_min": task["expert"], "junior_time_min": task["junior"],
                 }
-                if invalid and (cond.name, task["name"], rnd) == tuple(invalid):
+                if is_invalid(cond.name, task["name"], rnd):
                     base.update({"valid": False, "harbor_exception": "EnvironmentBuildError", "exit_reason": None,
                                  "reward": None, "resolved": None, "env_setup_sec": 41.0})
                     ep_rows.append(base)
@@ -873,6 +911,9 @@ def write_synthetic_analysis(
                 resolved = bool(rng.random() < min(0.95, task["p"] * cond.p_mult))
                 row = {**base, **_episode_row(ep, res, resolved)}
                 ep_rows.append(row)
+                if duplicate and (cond.name, task["name"], rnd) == tuple(duplicate):
+                    ep_rows.append({**row, "trial_name": row["trial_name"] + "-rerun", "episode_id": eid + "d",
+                                    "resolved": int(not resolved), "reward": float(not resolved), "duplicate": True})
                 job_end = max(job_end, t0 + row["trial_total_sec"])
                 keys = _keys(ep)
                 for name in tables:
@@ -882,6 +923,7 @@ def write_synthetic_analysis(
     sweep_hours = (t_job - SWEEP_T0) / 3600.0
     eps = pd.DataFrame(ep_rows)
     eps["valid"] = eps["valid"].fillna(True).astype(bool)
+    eps["duplicate"] = eps["duplicate"].fillna(False).astype(bool)
     eps.to_csv(out / "episodes.csv", index=False)
     for name, rows in tables.items():
         pd.DataFrame(rows).to_csv(out / f"{name}.csv", index=False)

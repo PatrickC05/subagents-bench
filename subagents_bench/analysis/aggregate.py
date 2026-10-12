@@ -8,7 +8,9 @@ profiles (:mod:`.latency`), then build and write:
 ``episodes.csv``, ``calls.csv``, ``tools.csv``, ``dispatches.csv``,
 ``spawns.csv``, ``arbitrations.csv``, ``steps.csv``, ``conditions.csv``,
 ``conditions_by_difficulty.csv``, ``paired.csv``, ``calibration.csv`` and
-``summary.json`` (inputs, counts, pricing/serving provenance, warnings).
+``summary.json`` (inputs, counts, the prices and the sha256 of every input
+file used, the analysis code's provenance, treatment coverage, latency
+checks, warnings).
 
 Every table is written even when empty (header only), so downstream plotting
 can rely on the files existing.
@@ -16,6 +18,7 @@ can rely on the files existing.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from dataclasses import dataclass, field
@@ -25,7 +28,8 @@ from typing import Any, Iterable
 
 import pandas as pd
 
-from .latency import load_serving
+from .. import provenance
+from .latency import FittedProfile, fitted_vs_measured, load_serving
 from .load import load_trials
 from .pricing import load_models, load_pricing
 from .tables import (
@@ -37,6 +41,10 @@ from .tables import (
     paired_table,
     record_tables,
 )
+from .validate import treatment_coverage_rows
+
+# Tolerance (seconds) below which overhead_sec - harness_exec_sec < 0 is clock jitter.
+OVER_EXPLAINED_TOL_SEC = 0.05
 
 DEFAULT_BASELINES = ("single_5step", "single_matched")
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -97,9 +105,25 @@ def aggregate(
             warnings.append(f"{t.ref.trial_dir or t.ref.episode_dir}: {p}")
     for ctx in {id(t.ctx): t.ctx for t in trials}.values():
         warnings += [f"{ctx.root}: {p}" for p in ctx.problems]
+    for scheme, models in _unpriced(tables["calls"], pricebook).items():
+        if models:
+            warnings.append(f"pricing scheme {scheme!r} has no price for {', '.join(models)}: "
+                            f"cost_{scheme}_* of their calls, and every total including them, are NaN")
+    dups = episodes.loc[episodes["duplicate"].astype(bool), "trial_name"].dropna().tolist()
+    if dups:
+        warnings.append(f"{len(dups)} duplicate trial(s) of an already-present (condition, sweep, task, round) "
+                        f"left out of conditions/paired (the valid one, else the first by name, is kept): "
+                        f"{', '.join(dups[:20])}{' ...' if len(dups) > 20 else ''}")
+    coverage = treatment_coverage_rows(nan_to_none(
+        episodes.loc[episodes["episode_status"] != "missing",
+                     ["condition", "topology", "strategy", "spawn_calls", "dispatches", "arbitrations"]]
+        .to_dict("records")))
+    for row in coverage:
+        if row["problem"]:
+            warnings.append(f"condition {row['condition']}: treatment not exercised: {row['problem']}")
 
     summary = _summary(trials, tables, pricebook, profiles, catalog, paths, warnings, baselines,
-                       pricing_path, serving_path, models_path)
+                       pricing_path, serving_path, models_path, coverage, dups)
     result = AggregateResult(tables=tables, summary=summary, warnings=warnings)
     if out_dir is not None:
         out = Path(out_dir)
@@ -115,36 +139,70 @@ def _counts(series: pd.Series) -> dict[str, int]:
     return {str(k): int(v) for k, v in series.fillna("none").value_counts().sort_index().items()}
 
 
+def _unpriced(calls: pd.DataFrame, pricebook) -> dict[str, list[str]]:
+    """scheme -> models that made calls but have no price in it."""
+    models_seen = sorted({m for m in calls["model"].dropna().unique()}) if len(calls) else []
+    return {s: [m for m in models_seen if pricebook.price(s, m) is None] for s in pricebook.scheme_names}
+
+
+def _sha256(path: Any) -> str | None:
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except (OSError, TypeError):
+        return None
+
+
+def _input_hashes(pricing_path, serving_path, models_path, pricebook, profiles) -> dict[str, str | None]:
+    """sha256 of every config file the tables were computed from (None if missing)."""
+    paths = [pricing_path, *pricebook.files(), serving_path, models_path]
+    paths += [p.source for p in profiles if isinstance(p, FittedProfile) and Path(p.source).is_file()]
+    return {str(p): _sha256(p) for p in dict.fromkeys(paths) if p is not None}
+
+
 def _summary(trials, tables, pricebook, profiles, catalog, paths, warnings, baselines,
-             pricing_path, serving_path, models_path) -> dict[str, Any]:
+             pricing_path, serving_path, models_path, coverage, duplicates) -> dict[str, Any]:
     from .. import __version__
 
     ep = tables["episodes"]
     calls = tables["calls"]
     valid = ep[ep["valid"]]
     models_seen = sorted({m for m in calls["model"].dropna().unique()}) if len(calls) else []
-    unpriced = {
-        s: [m for m in models_seen if pricebook.price(s, m) is None] for s in pricebook.scheme_names
-    }
+    unpriced = _unpriced(calls, pricebook)
     no_params = [m for m in models_seen if catalog.active_params_b(m) is None]
     task_names = sorted({t for t in ep["task_name"].dropna().unique()})
     tasks_meta = {k: v for t in trials for k, v in t.ctx.tasks_meta.items()}
     datasets = sorted({t.ctx.dataset for t in trials if t.ctx.dataset})
+    root = provenance.repo_root()
+    code_by_cond: dict[str, set] = {}
+    for t in trials:
+        if t.episode is not None and t.condition is not None:
+            code_by_cond.setdefault(str(t.condition), set()).add(t.episode.get("source_sha256") or "unknown")
 
     # measured replay vs critical path, and the overhead check of DESIGN section 9. Overhead the
     # harness's own measurement commands account for (harness_exec_sec) counts as explained.
+    # Unexplained overhead is not clipped at 0: a negative value means harness_exec_sec
+    # over-explains it (the summed execs of records before schema_version 3, or execs that
+    # overlapped a chain), which is reported rather than hidden.
     diff = (ep["sim_measured_wall_sec"] - ep["cp_total_sec"]).abs() if "sim_measured_wall_sec" in ep else pd.Series(dtype=float)
     frac = (ep["overhead_sec"] / ep["wall_clock_sec"]).where(ep["wall_clock_sec"] > 0)
     over = ep.loc[frac > 0.10, "trial_name"].dropna().tolist()
-    unexplained = (ep["overhead_sec"] - ep["harness_exec_sec"].fillna(0.0)).clip(lower=0.0)
+    unexplained = ep["overhead_sec"] - ep["harness_exec_sec"].fillna(0.0)
     ufrac = (unexplained / ep["wall_clock_sec"]).where(ep["wall_clock_sec"] > 0)
     u_over = ep.loc[ufrac > 0.10, "trial_name"].dropna().tolist()
+    over_explained = ep.loc[unexplained < -OVER_EXPLAINED_TOL_SEC, "trial_name"].dropna().tolist()
+    all_calls = [c for t in trials if t.data is not None for c in t.data.calls]
+    fitted = {p.name: fitted_vs_measured(p, all_calls) for p in profiles if isinstance(p, FittedProfile)}
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "harness_version": __version__,
         "inputs": [str(p) for p in paths],
         "files": {"pricing": _p(pricing_path), "serving": _p(serving_path), "models": _p(models_path)},
+        "input_sha256": _input_hashes(pricing_path, serving_path, models_path, pricebook, profiles),
+        # The analysis code that produced these tables (not the runtime that recorded the episodes).
+        "analysis_source": {"source_sha256": provenance.source_fingerprint(root), **provenance.git_info(root)},
+        # The runtime code that recorded the episodes, per condition (EpisodeRecord.source_sha256).
+        "episode_source_sha256": {c: sorted(v) for c, v in sorted(code_by_cond.items())},
         "n_trials": len(ep),
         "n_with_episode": int((ep["episode_status"] != "missing").sum()),
         "n_valid": len(valid),
@@ -176,7 +234,12 @@ def _summary(trials, tables, pricebook, profiles, catalog, paths, warnings, base
             "episodes_overhead_over_10pct": over,
             "unexplained_overhead_frac_median": float(ufrac.median()) if ufrac.notna().any() else None,
             "episodes_unexplained_overhead_over_10pct": u_over,
+            "unexplained_overhead_sec_min": float(unexplained.min()) if unexplained.notna().any() else None,
+            "episodes_overhead_over_explained": over_explained,
+            "fitted_vs_measured": fitted,
         },
+        "treatment_coverage": coverage,
+        "duplicate_trials": duplicates,
         "table_rows": {k: int(len(v)) for k, v in tables.items()},
         "warnings": warnings,
     }

@@ -15,11 +15,20 @@
 
 An episode that never finalized (``status == "running"``) is itself an error;
 its totals are not checked and dangling references are warnings, since a
-crash legitimately leaves them. Trials without an episode dir are warnings.
+crash legitimately leaves them. So does a cancel (``exit_reason ==
+"cancelled"``: harbor stopped the agent, e.g. at its timeout, while a spawn
+group was still running), so its dangling references are warnings too.
+Trials without an episode dir are warnings.
 
 ``completeness`` reports, per record file, role and schema field, the
 fraction of records where the field is None, empty or zero, and flags fields
 that are never populated.
+
+Both also report :func:`treatment_coverage`: per subagents condition, the
+share of episodes that delegated, and a problem when none did (or an arbiter
+condition ran no arbitration). Field coverage cannot catch that, because a
+record file nobody wrote has no fields to flag. ``check-run`` lists it as a
+warning; ``completeness --strict`` fails on it.
 """
 
 from __future__ import annotations
@@ -31,7 +40,8 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from ..schema import RECORD_TYPES, SCHEMA_VERSION, validate_record
-from .load import ROLES, discover, load_episode, read_json
+from ..telemetry import is_provider_error
+from .load import ROLES, discover, load_episode, load_trials, read_json
 
 ABS_TOL = 1e-6
 REL_TOL = 1e-6
@@ -53,6 +63,7 @@ class CheckReport:
     n_episodes: int = 0
     n_trials_without_episode: int = 0
     problems: list[Problem] = field(default_factory=list)
+    coverage: list[dict[str, Any]] = field(default_factory=list)  # treatment_coverage rows
 
     @property
     def errors(self) -> list[Problem]:
@@ -93,6 +104,8 @@ class _Checker:
         self.problems: list[Problem] = []
         ep = self.data.episode or {}
         self.running = ep.get("status") != "done"
+        # Cut off mid-run: records of work still in flight (a dispatch, its group) may be missing.
+        self.partial = self.running or ep.get("exit_reason") == "cancelled"
 
     def err(self, msg: str, where: str | None = None) -> None:
         self.problems.append(Problem("error", where or str(self.dir), msg))
@@ -101,8 +114,8 @@ class _Checker:
         self.problems.append(Problem("warning", where or str(self.dir), msg))
 
     def ref(self, msg: str) -> None:
-        """A dangling reference: an error for finished episodes, a warning after a crash."""
-        (self.warn if self.running else self.err)(msg)
+        """A dangling reference: an error for finished episodes, a warning after a crash or cancel."""
+        (self.warn if self.partial else self.err)(msg)
 
     def run(self) -> list[Problem]:
         d = self.data
@@ -193,6 +206,8 @@ class _Checker:
             "requested_total": sum(_num(s.get("requested")) for s in d.spawns),
             "granted_total": sum(_num(s.get("granted")) for s in d.spawns),
         }
+        if "n_provider_errors" in ep:  # schema_version >= 3
+            scalar_checks["n_provider_errors"] = sum(1 for c in d.calls if is_provider_error(c.get("error")))
         for k, v in scalar_checks.items():
             if ep.get(k) != v:
                 self.err(f"{k}={ep.get(k)} but the records give {v}")
@@ -337,7 +352,82 @@ def check_run(paths: Iterable[str | Path]) -> CheckReport:
             continue
         report.n_episodes += 1
         report.problems.extend(check_episode(ref.episode_dir))
+    report.coverage = treatment_coverage(paths)
+    for row in report.coverage:
+        if row["problem"]:
+            report.problems.append(Problem("warning", f"condition {row['condition']}",
+                                           f"treatment not exercised: {row['problem']}"))
     return report
+
+
+# ---------------------------------------------------------------------------
+# treatment coverage
+# ---------------------------------------------------------------------------
+
+
+def treatment_coverage_rows(episodes: Iterable[dict]) -> list[dict[str, Any]]:
+    """Per subagents condition: whether its treatment happened at all.
+
+    ``episodes``: one dict per episode that has records (condition, topology,
+    strategy, spawn_calls, dispatches, arbitrations). A subagents condition in
+    which no orchestrator ever spawned (or, for the arbiter strategy, no
+    arbitration ran) measured only its prompt text; ``problem`` says so.
+    """
+    by: dict[str, list[dict]] = defaultdict(list)
+    for e in episodes:
+        if e.get("condition") is not None:
+            by[str(e["condition"])].append(e)
+    out = []
+    for cond in sorted(by):
+        eps = by[cond]
+        if next((e["topology"] for e in eps if e.get("topology")), None) != "subagents":
+            continue
+        strategy = next((e["strategy"] for e in eps if e.get("strategy")), None)
+        n = len(eps)
+        n_deleg = sum(1 for e in eps if (e.get("spawn_calls") or 0) > 0)
+        n_disp = sum(int(e.get("dispatches") or 0) for e in eps)
+        n_arb = sum(int(e.get("arbitrations") or 0) for e in eps)
+        problems = []
+        if n_deleg == 0:
+            problems.append(f"no episode delegated (spawn_calls = 0 in all {n})")
+        elif n_disp == 0:
+            problems.append("spawn calls but no dispatch ran")
+        if strategy == "arbiter" and n_arb == 0:
+            problems.append("arbiter strategy but no arbitration ran")
+        out.append({
+            "condition": cond, "strategy": strategy, "n_episodes": n, "n_delegated": n_deleg,
+            "delegated_frac": n_deleg / n if n else None, "n_dispatches": n_disp,
+            "n_arbitrations": n_arb if strategy == "arbiter" else None,
+            "ok": not problems, "problem": "; ".join(problems) or None,
+        })
+    return out
+
+
+def treatment_coverage(paths: Iterable[str | Path]) -> list[dict[str, Any]]:
+    """:func:`treatment_coverage_rows` over every episode under ``paths``, counted from the records
+    (so an episode that crashed before finalizing counts what it did)."""
+    from .tables import design_fields
+
+    rows = []
+    for t in load_trials(paths):
+        if t.data is None:
+            continue
+        d = design_fields(t.episode, t.config)
+        rows.append({"condition": t.condition, "topology": d["topology"], "strategy": d["strategy"],
+                     "spawn_calls": len(t.data.spawns), "dispatches": len(t.data.dispatches),
+                     "arbitrations": len(t.data.arbitrations)})
+    return treatment_coverage_rows(rows)
+
+
+def coverage_lines(rows: list[dict[str, Any]]) -> list[str]:
+    """Printable treatment-coverage lines (one per subagents condition)."""
+    out = []
+    for r in rows:
+        arb = f", {r['n_arbitrations']} arbitrations" if r["n_arbitrations"] is not None else ""
+        line = (f"treatment {r['condition']}: delegated in {r['n_delegated']}/{r['n_episodes']} episodes, "
+                f"{r['n_dispatches']} dispatches{arb}")
+        out.append(line + (f"  ** {r['problem']} **" if r["problem"] else ""))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -351,6 +441,7 @@ OFTEN_EMPTY = {
     # failures, retries, timeouts, context guard
     "error", "apply_error", "backoff_sec", "n_retries", "n_command_timeouts", "n_timeouts",
     "n_tool_errors", "context_trimmed_chars", "context_trims", "n_context_trims", "cap_reason",
+    "n_provider_errors", "cancel_kill",
     # provider extras (Sail sends no request id; Prime reports cost 0.0 and no reasoning tokens)
     "provider_reported_cost", "response_id", "reasoning_tokens", "reasoning_chars", "t_first_reasoning",
     "reasoning", "completion_window", "extra_body", "cached_tokens",
@@ -366,10 +457,13 @@ ROLE_OFTEN_EMPTY = {
     "debate": {"n_tool_calls", "tool_call_names", "t_first_tool_call", "n_tools", "tools_hash",
                "tool_calls", "tool_results"},
     # A judge sees one user message per round and answers once: no tool results in its context.
-    "arbiter": {"dispatch_id", "tool_results"},
+    # Arbitrations: no leak and no redirected path is the normal case.
+    "arbiter": {"dispatch_id", "tool_results", "leaked_files", "n_path_remaps"},
     "episode": {"subagent_model", "arbiter_model", "strategy", "scope", "instruction_following",
                 "spawn_calls", "dispatches", "arbitrations", "requested_total", "granted_total",
-                "reward", "resolved", "trial_name", "harbor_session_id", "harbor_trial_id"},
+                "reward", "resolved", "trial_name", "harbor_session_id", "harbor_trial_id",
+                # None outside a git work tree (ZIP/tarball copy); source_sha256 identifies the code there.
+                "git_commit", "git_dirty"},
 }
 
 # Fields where 0 is a real value (exit code 0, candidate/winner index 0): only
@@ -401,27 +495,33 @@ def _classify(v: Any) -> str:
 
 
 def completeness(paths: Iterable[str | Path]) -> list[dict[str, Any]]:
-    """Rows: file, role, field, n_records, frac_none, frac_empty, frac_zero, frac_unpopulated, never_populated."""
+    """Rows: file, role, field, n_records, frac_none, frac_empty, frac_zero, frac_unpopulated, never_populated.
+
+    A field added in a later schema version (``since``) is not counted for
+    records of an episode written by older code, which cannot have it; a
+    field no counted record could have gets no row."""
     counts: dict[tuple[str, str, str], Counter] = defaultdict(Counter)
-    totals: Counter = Counter()
     types = {}
     for ref in discover(paths):
         if ref.episode_dir is None:
             continue
         data = load_episode(ref.episode_dir, with_transcript=True)
+        version = (data.episode or {}).get("schema_version")
         for fname, cls in RECORD_TYPES.items():
             recs = [data.episode] if fname == "episode.json" else getattr(data, fname.split(".")[0])
             for rec in recs:
                 if not isinstance(rec, dict):
                     continue
                 role = FILE_ROLE.get(fname) or str(rec.get("role") or "unknown")
-                totals[(fname, role)] += 1
                 for f in fields(cls):
                     types[(fname, f.name)] = f.type
+                    since = f.metadata.get("since")
+                    if f.name not in rec and since is not None and isinstance(version, int) and version < since:
+                        continue  # written before the field existed
                     counts[(fname, role, f.name)][_classify(rec.get(f.name))] += 1
     rows = []
     for (fname, role, name), c in sorted(counts.items()):
-        n = totals[(fname, role)]
+        n = sum(c.values())
         # schema.py uses postponed annotations, so field types are strings like "bool | None".
         is_bool = str(types.get((fname, name), "")).startswith("bool")
         unpop = c["none"] + c["empty"] + c["zero"]

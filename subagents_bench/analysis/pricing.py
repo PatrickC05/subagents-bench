@@ -215,15 +215,21 @@ class PriceBook:
         return price.cost(uncached, cached, call.get("completion_tokens") or 0)
 
     def describe(self) -> dict[str, Any]:
-        """Provenance summary for summary.json."""
+        """Provenance summary for summary.json: every price used (USD per 1M tokens), so the
+        cost columns can be traced to a price book even after pricing.yaml changes."""
         return {
             name: {
                 "meta": s.meta,
                 "models": sorted(s.prices),
+                "prices": {m: {"in": p.in_, "cached": p.cached, "out": p.out} for m, p in sorted(s.prices.items())},
                 "cached_price_missing_charged_at_input": s.cached_fallback,
             }
             for name, s in self.schemes.items()
         }
+
+    def files(self) -> list[str]:
+        """Files the schemes came from besides pricing.yaml itself (its includes)."""
+        return sorted({str(s.meta["file"]) for s in self.schemes.values() if s.meta.get("file")})
 
 
 def load_pricing(path: str | Path | None, catalog: ModelCatalog | None = None) -> PriceBook:

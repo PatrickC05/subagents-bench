@@ -8,9 +8,11 @@ Subcommands registered by :func:`register_cli`:
   costs are recomputed per pricing scheme and wall time is simulated per
   serving profile;
 * ``check-run DIR...`` -- schema and internal-consistency checks; exit 1 on problems;
-* ``completeness DIR...`` -- per-field population report, flags never-populated fields;
+  also prints each subagents condition's delegation rate;
+* ``completeness DIR...`` -- per-field population report, flags never-populated
+  fields; ``--strict`` also fails when a subagents condition never delegated;
 * ``calibrate JOBS_DIR... --out configs/serving_fitted.yaml`` -- writes the
-  per-model TTFT/decode fit used by the ``fitted`` serving profile.
+  per-model call-time fit used by the ``fitted`` serving profile.
 
 Modules: :mod:`.load` (discovery and joins), :mod:`.pricing` (price schemes,
 model catalog, FLOPs), :mod:`.latency` (critical path, serving profiles),
@@ -49,7 +51,8 @@ def register_cli(subparsers: argparse._SubParsersAction) -> None:
     p.add_argument("--out", default=None, help="also write the full report as CSV")
     p.add_argument("--all", action="store_true", help="print every field, not only never-populated ones")
     p.add_argument("--strict", action="store_true",
-                   help="exit 1 if a field outside the expected-empty list is never populated")
+                   help="exit 1 if a field outside the expected-empty list is never populated, or a subagents "
+                        "condition never delegated (an arbiter condition never arbitrated)")
     p.set_defaults(func=_cmd_completeness)
 
     p = subparsers.add_parser("calibrate", help="fit per-model TTFT/decode latency for the 'fitted' serving profile")
@@ -88,12 +91,14 @@ def _cmd_aggregate(args: argparse.Namespace) -> int:
 
 
 def _cmd_check_run(args: argparse.Namespace) -> int:
-    from .validate import check_run
+    from .validate import check_run, coverage_lines
 
     report = check_run(args.dirs)
     for p in report.problems:
         if p.level == "error" or not args.quiet:
             print(p)
+    for line in coverage_lines(report.coverage):
+        print(line)
     status = "OK" if report.ok else "FAILED"
     print(f"check-run {status}: {report.n_episodes} episodes, {report.n_trials_without_episode} trials without "
           f"episode.json, {len(report.errors)} errors, {len(report.warnings)} warnings")
@@ -105,12 +110,13 @@ def _cmd_check_run(args: argparse.Namespace) -> int:
 def _cmd_completeness(args: argparse.Namespace) -> int:
     import pandas as pd
 
-    from .validate import completeness
+    from .validate import completeness, coverage_lines, treatment_coverage
 
     rows = completeness(args.dirs)
     if not rows:
         print("completeness: no episodes found", file=sys.stderr)
         return 1
+    coverage = treatment_coverage(args.dirs)
     df = pd.DataFrame(rows)
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
@@ -127,7 +133,14 @@ def _cmd_completeness(args: argparse.Namespace) -> int:
     flagged = df[df["never_populated"] & ~df["often_empty"]]
     print(f"completeness: {len(df)} (file, role, field) rows; {int(df['never_populated'].sum())} never populated, "
           f"{len(flagged)} of them unexpected")
-    return 1 if (args.strict and len(flagged)) else 0
+    # A treatment that never ran leaves no records, so no field above can flag it.
+    for line in coverage_lines(coverage):
+        print(line)
+    untreated = [r["condition"] for r in coverage if r["problem"]]
+    if untreated:
+        print(f"completeness: treatment not exercised in {len(untreated)} subagents condition(s): "
+              f"{', '.join(untreated)}")
+    return 1 if (args.strict and (len(flagged) or untreated)) else 0
 
 
 def _cmd_calibrate(args: argparse.Namespace) -> int:
@@ -146,14 +159,19 @@ def _cmd_calibrate(args: argparse.Namespace) -> int:
     for r in table.to_dict("records"):
         params.append(nan_to_none({
             "model": r["model"], "provider": r["provider"], "completion_window": r["completion_window"],
+            "lat_fit_a": r["lat_fit_a"], "lat_fit_b_per_1k_prompt": r["lat_fit_b_per_1k_prompt"],
+            "lat_fit_c_per_completion_token": r["lat_fit_c_per_completion_token"], "lat_fit_n": r["lat_fit_n"],
+            "n_calls": r["n_calls"],
+            # Descriptive only (the profile uses lat_fit_*).
             "ttft_a_sec": r["ttft_fit_a"], "ttft_b_sec_per_1k_prompt_tokens": r["ttft_fit_b_per_1k_prompt_tokens"],
-            "decode_tok_s": r["decode_tok_s_median"], "n_calls": r["n_calls"], "ttft_fit_n": r["ttft_fit_n"],
+            "decode_tok_s": r["decode_tok_s_median"], "ttft_fit_n": r["ttft_fit_n"],
         }))
     doc = {
         "profile": "fitted",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "sources": [str(p) for p in args.jobs_dirs],
-        "model": "call_sec = ttft_a_sec + ttft_b_sec_per_1k_prompt_tokens * prompt/1000 + completion / decode_tok_s",
+        "model": "call_sec = lat_fit_a + lat_fit_b_per_1k_prompt * prompt/1000 + lat_fit_c_per_completion_token * "
+                 "completion (non-negative least squares of ttft_sec + decode_sec)",
         "params": params,
     }
     out = Path(args.out)
@@ -161,6 +179,6 @@ def _cmd_calibrate(args: argparse.Namespace) -> int:
     header = ("# Written by `subagents-bench calibrate`; referenced from configs/serving.yaml\n"
               "# (profiles.fitted.params_file). Entries with null fit values simulate to NaN.\n")
     out.write_text(header + yaml.safe_dump(doc, sort_keys=False))
-    n_ok = sum(1 for p in params if p["ttft_a_sec"] is not None and p["decode_tok_s"] is not None)
+    n_ok = sum(1 for p in params if p["lat_fit_a"] is not None)
     print(f"calibrate: {len(calls)} calls, {len(params)} (model, provider, window) groups, {n_ok} fitted -> {out}")
     return 0

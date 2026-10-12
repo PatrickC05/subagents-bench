@@ -7,15 +7,26 @@
 * :func:`record_tables` -- ``calls/tools/dispatches/spawns/arbitrations/steps``
   flattened, bulky lists dropped or summarized, plus episode keys;
 * :func:`condition_table` -- ``conditions.csv`` / ``conditions_by_difficulty.csv``
-  (Wilson CI on resolve rate, seeded bootstrap CIs on means, per-solve costs);
-* :func:`paired_table` -- each condition vs each baseline on (task, round), exact McNemar;
+  (Wilson CI on resolve rate, task-balanced rate, delegation uptake and the
+  per-protocol resolve rate, seeded bootstrap CIs on means, per-solve costs);
+* :func:`paired_table` -- each condition vs each baseline on (sweep, task,
+  round), exact McNemar;
 * :func:`calibration_table` -- per (model, provider, completion_window) TTFT,
-  decode rate and the least-squares TTFT fit.
+  decode rate, the least-squares TTFT fit and the joint call-time fit of the
+  ``fitted`` serving profile.
 
 Unknown values are NaN/None, never 0: a trial without ``episode.json`` has NaN
 tokens, a model without a price has NaN cost, a model without parameters has
 NaN FLOPs. Zero is used only when it was observed (e.g. a role that made no
 calls costs exactly 0).
+
+Validity (``invalid_reason``) removes trials that do not measure their
+condition: no episode, a billing refusal, a harbor error outside the agent, a
+provider failure anywhere in the episode, an exception from the agent itself
+after which harbor skipped the verifier, or no ``result.json``. Several trials
+of one (condition, sweep, task, round) -- re-runs, or the same sweep passed
+twice -- are flagged ``duplicate`` except one, and only that one enters the
+condition and paired tables.
 """
 
 from __future__ import annotations
@@ -29,10 +40,11 @@ import numpy as np
 import pandas as pd
 
 from ..schema import ArbitrationRecord, CallRecord, DispatchRecord, SpawnRecord, StepRecord, ToolRecord
-from .latency import CATEGORIES, CriticalPath, EpisodeGraph, measured_call_sec
+from ..telemetry import is_provider_error
+from .latency import CATEGORIES, CriticalPath, EpisodeGraph, fit_target_sec, measured_call_sec
 from .load import ROLE_SHORT, Trial, parse_ts, phase_seconds
 from .pricing import ModelCatalog, PriceBook
-from .stats import bootstrap_mean_ci, linear_fit, mcnemar_exact, median, quantile, wilson_ci
+from .stats import bootstrap_mean_ci, linear_fit, mcnemar_exact, median, nonneg_least_squares, quantile, wilson_ci
 
 NAN = float("nan")
 EPS = 1e-9
@@ -43,14 +55,18 @@ DESIGN_COLS = [
     "max_concurrent", "n_candidates", "orchestrator_steps_budget", "orchestrator_tools",
 ]
 TASK_COLS = ["difficulty", "category", "expert_time_min", "junior_time_min"]
-OUTCOME_COLS = ["reward", "resolved", "harbor_exception", "exit_reason", "valid", "invalid_reason", "episode_status"]
+OUTCOME_COLS = ["reward", "resolved", "harbor_exception", "exit_reason", "valid", "invalid_reason", "episode_status",
+                "duplicate"]
 PHASE_COLS = ["env_setup_sec", "agent_setup_sec", "agent_exec_sec", "verifier_sec", "trial_total_sec"]
 EPISODE_COLS = [
-    "wall_clock_sec", "orchestrator_steps", "spawn_calls", "dispatches", "redispatches", "arbitrations",
+    "wall_clock_sec", "orchestrator_steps", "spawn_calls", "delegated", "dispatches", "redispatches", "arbitrations",
+    "n_isolation_checked", "n_isolation_violations", "n_leaked_files",
     "instruction_following", "dispatch_submitted_frac", "n_files_modified",
 ]
 TOKEN_KINDS = ["calls", "prompt_tokens", "cached_tokens", "uncached_prompt_tokens", "completion_tokens", "reasoning_tokens"]
 TOKEN_COLS = [f"{s}_{k}" for s in ROLE_SHORT.values() for k in TOKEN_KINDS] + ["total_tokens"]
+# Calls cut off at max_tokens (finish_reason 'length'), per role.
+LENGTH_COLS = [f"{s}_length_finishes" for s in ROLE_SHORT.values()]
 TIME_COLS = (
     [f"llm_sec_{s}" for s in ROLE_SHORT.values()]
     + [f"tool_sec_{s}" for s in ROLE_SHORT.values()]
@@ -60,19 +76,23 @@ CP_COLS = [
     "cp_total_sec", "cp_orch_llm_sec", "cp_sub_llm_sec", "cp_arb_llm_sec", "cp_tool_sec", "cp_group_sec",
     "overhead_sec", "harness_exec_sec", "sub_busy_sec", "parallel_speedup",
 ]
-EXTRA_COLS = ["n_failed_calls", "n_usage_estimated", "container_arch", "host_machine"]
+EXTRA_COLS = ["n_failed_calls", "n_provider_errors", "n_usage_estimated", "container_arch", "host_machine"]
 
 # harbor exceptions raised before/around the agent rather than by it.
 OUTSIDE_AGENT_EXCEPTIONS = {
     "EnvironmentStartTimeoutError", "AgentSetupTimeoutError", "SandboxBuildFailedError",
     "HealthcheckError", "CancelledError", "DockerBuildError",
 }
+# Agent-phase exceptions harbor catches before running the verifier anyway
+# (harbor 0.24.0 SingleStepTrial._run_agent): the container is still graded.
+GRADED_AGENT_EXCEPTIONS = {"AgentTimeoutError", "NonZeroAgentExitCodeError"}
 
 INT_COLS = (
     ["round", "resolved", "max_concurrent", "n_candidates", "orchestrator_steps_budget", "orchestrator_steps",
-     "spawn_calls", "dispatches", "redispatches", "arbitrations", "n_files_modified", "n_retries",
-     "n_command_timeouts", "n_failed_calls", "n_usage_estimated", "total_tokens"]
-    + [c for c in TOKEN_COLS if c != "total_tokens"]
+     "spawn_calls", "delegated", "dispatches", "redispatches", "arbitrations", "n_isolation_checked",
+     "n_isolation_violations", "n_leaked_files", "n_files_modified", "n_retries", "n_command_timeouts",
+     "n_failed_calls", "n_provider_errors", "n_usage_estimated", "total_tokens"]
+    + [c for c in TOKEN_COLS if c != "total_tokens"] + LENGTH_COLS
 )
 
 
@@ -93,7 +113,7 @@ def sim_cols(profiles: Iterable[Any]) -> list[str]:
 
 def episode_columns(schemes: Iterable[str], profiles: Iterable[Any]) -> list[str]:
     return (
-        KEY_COLS + DESIGN_COLS + TASK_COLS + OUTCOME_COLS + PHASE_COLS + EPISODE_COLS + TOKEN_COLS
+        KEY_COLS + DESIGN_COLS + TASK_COLS + OUTCOME_COLS + PHASE_COLS + EPISODE_COLS + TOKEN_COLS + LENGTH_COLS
         + cost_cols(schemes) + flops_cols() + TIME_COLS + CP_COLS + sim_cols(profiles) + EXTRA_COLS
     )
 
@@ -179,6 +199,50 @@ def exception_outside_agent(result: dict, exc: dict) -> bool:
         return False
 
 
+def exception_skipped_verifier(result: dict, exc: dict) -> bool:
+    """True when harbor's exception came from the agent phase and the verifier never ran.
+
+    harbor runs the verifier after an agent timeout (``GRADED_AGENT_EXCEPTIONS``)
+    but not after any other exception the agent raises (a harness bug, a
+    crashed recorder): such a trial says nothing about the task. A verifier
+    exception (the verifier phase started) leaves the trial graded-as-unsolved.
+    """
+    if exc.get("exception_type") in GRADED_AGENT_EXCEPTIONS or result.get("verifier_result") is not None:
+        return False
+    ver = result.get("verifier")
+    return not (isinstance(ver, dict) and ver.get("started_at"))
+
+
+def provider_failure(ep: dict, exc: dict | None, n_call_provider_errors: int) -> bool:
+    """Whether a provider failure (a plain LLMError after all retries) touched the episode.
+
+    The orchestrator could not be served (``exit_reason == 'provider_error'``,
+    harbor exception ``ProviderUnavailableError``), or any call of any role
+    failed that way (``n_provider_errors``, recounted from the calls so
+    records written before that field existed count too). Records before
+    schema_version 3 ended an orchestrator provider failure with
+    ``exit_reason == 'error'`` and an ``LLMError:`` error text.
+    """
+    if ep.get("exit_reason") == "provider_error":
+        return True
+    if exc and exc.get("exception_type") == "ProviderUnavailableError":
+        return True
+    if (ep.get("n_provider_errors") or 0) > 0 or n_call_provider_errors > 0:
+        return True
+    return ep.get("exit_reason") == "error" and is_provider_error(ep.get("error"))
+
+
+def _isolation_counts(arbitrations: list[dict]) -> dict[str, Any]:
+    """Copy-isolation leaks over an episode's arbitrations; NaN for records that predate the check."""
+    if arbitrations and not any("isolation_violated" in a for a in arbitrations):
+        return {"n_isolation_checked": NAN, "n_isolation_violations": NAN, "n_leaked_files": NAN}
+    return {
+        "n_isolation_checked": sum(1 for a in arbitrations if a.get("isolation_violated") is not None),
+        "n_isolation_violations": sum(1 for a in arbitrations if a.get("isolation_violated") is True),
+        "n_leaked_files": sum(len(a.get("leaked_files") or []) for a in arbitrations),
+    }
+
+
 def _record_counts(data) -> dict[str, Any]:
     """Episode counters recomputed from the record files (used for unfinished episodes)."""
     orch_steps = {c.get("step") for c in data.calls if c.get("role") == "orchestrator"}
@@ -224,12 +288,17 @@ def episode_row(trial: Trial, pricebook: PriceBook, profiles: list[Any]) -> dict
     exc = res.get("exception_info") if res else None
     exc = exc if isinstance(exc, dict) else None
     exit_reason = (ep or {}).get("exit_reason")
+    n_provider_errors = sum(1 for c in data.calls if is_provider_error(c.get("error"))) if data else 0
     if ep is None:
         invalid = "no_episode"
     elif exit_reason == "billing_error" or (exc and exc.get("exception_type") == "BillingError"):
         invalid = "billing_error"
     elif exc and exception_outside_agent(res, exc):
         invalid = "harbor_exception_outside_agent"
+    elif provider_failure(ep, exc, n_provider_errors):
+        invalid = "provider_error"
+    elif exc and exception_skipped_verifier(res, exc):
+        invalid = "agent_exception"
     elif trial.ref.trial_dir is not None and res is None and reward is None:
         invalid = "no_result"
     else:
@@ -256,6 +325,8 @@ def episode_row(trial: Trial, pricebook: PriceBook, profiles: list[Any]) -> dict
     for k, v in counts.items():
         row[k] = ep.get(k, v) if done else v
         row[k] = _nan_if_none(row[k])
+    row["delegated"] = int(row["spawn_calls"] > 0) if not pd.isna(row["spawn_calls"]) else NAN
+    row.update(_isolation_counts(data.arbitrations))
     row["wall_clock_sec"] = _nan_if_none((ep or {}).get("wall_clock_sec"))
     row["n_files_modified"] = _nan_if_none((ep or {}).get("n_files_modified"))
     statuses = [d.get("status") for d in data.dispatches]
@@ -276,6 +347,7 @@ def episode_row(trial: Trial, pricebook: PriceBook, profiles: list[Any]) -> dict
         )
         reasoning = [c["reasoning_tokens"] for c in rc if c.get("reasoning_tokens") is not None]
         row[f"{s}_reasoning_tokens"] = sum(reasoning) if reasoning else (0 if not rc else NAN)
+        row[f"{s}_length_finishes"] = sum(1 for c in rc if c.get("finish_reason") == "length")
         tot_tokens += row[f"{s}_prompt_tokens"] + row[f"{s}_completion_tokens"]
         for scheme in pricebook.scheme_names:
             row[f"cost_{scheme}_{s}"] = _sum(pricebook.call_cost(scheme, c) for c in rc)
@@ -293,6 +365,7 @@ def episode_row(trial: Trial, pricebook: PriceBook, profiles: list[Any]) -> dict
     row["n_retries"] = sum(max(int(c.get("n_attempts") or 1) - 1, 0) for c in data.calls)
     row["n_command_timeouts"] = sum(1 for t in data.tools if t.get("timed_out"))
     row["n_failed_calls"] = sum(1 for c in data.calls if c.get("error"))
+    row["n_provider_errors"] = n_provider_errors
     row["n_usage_estimated"] = sum(1 for c in data.calls if c.get("usage_source") == "estimated")
     row["container_arch"] = (ep or {}).get("container_arch")
     row["host_machine"] = (ep or {}).get("host_machine")
@@ -320,7 +393,33 @@ def episode_row(trial: Trial, pricebook: PriceBook, profiles: list[Any]) -> dict
 def episodes_frame(rows: list[dict], schemes: list[str], profiles: list[Any]) -> pd.DataFrame:
     df = pd.DataFrame(rows, columns=episode_columns(schemes, profiles))
     df["valid"] = df["valid"].astype(bool)
+    df["duplicate"] = duplicate_mask(df)
     return _int_cols(df, INT_COLS)
+
+
+DUPLICATE_KEY = ["condition", "sweep", "task_name", "round"]
+
+
+def duplicate_mask(episodes: pd.DataFrame) -> pd.Series:
+    """True for every trial but one of each (condition, sweep, task, round) cell.
+
+    A cell holds one trial per sweep design; more means a re-run, or the same
+    sweep aggregated twice (two jobs dirs of one sweep name). The one kept is
+    the valid trial, else the first by trial name. Trials without a round
+    (bare local episodes, which repeat a task by design) are never duplicates.
+    """
+    mask = pd.Series(False, index=episodes.index)
+    if episodes.empty:
+        return mask
+    keyed = episodes[episodes["round"].notna() & episodes["condition"].notna() & episodes["task_name"].notna()]
+    order = keyed.assign(_invalid=~keyed["valid"].astype(bool)).sort_values(["_invalid", "trial_name"], kind="stable")
+    dup = order.duplicated(DUPLICATE_KEY, keep="first")
+    mask.loc[dup[dup].index] = True
+    return mask
+
+
+def _without_duplicates(episodes: pd.DataFrame) -> pd.DataFrame:
+    return episodes[~episodes["duplicate"].astype(bool)] if "duplicate" in episodes.columns else episodes
 
 
 def _int_cols(df: pd.DataFrame, cols: Iterable[str]) -> pd.DataFrame:
@@ -435,6 +534,9 @@ RECORD_TABLES: dict[str, tuple[type, dict[str, Transform]]] = {
         "candidate_dispatch_ids": _keep_as(_join)("candidate_dispatch_ids"),
         "rounds": _rounds_summary,
         "applied_files": _rename("n_applied_files", lambda v: len(v or [])),
+        # Absent (records before the leak check) stays empty, not 0.
+        "leaked_files": lambda v, _r: {"leaked_files": _json(v),
+                                       "n_leaked_files": len(v) if isinstance(v, list) else None},
     }),
 }
 
@@ -528,18 +630,36 @@ def _first(series: pd.Series) -> Any:
     return s.iloc[0] if len(s) else None
 
 
+RESOLVE_EXTRA_COLS = [
+    "n_tasks_valid", "resolve_rate_task_balanced",
+    "n_delegated", "delegated_frac", "resolve_rate_delegated", "resolve_delegated_ci_lo", "resolve_delegated_ci_hi",
+]
+ISOLATION_COND_COLS = ["n_isolation_checked", "n_isolation_violations", "isolation_violated_frac", "n_leaked_files"]
+LENGTH_FRAC_COLS = [f"length_finish_frac_{s}" for s in ROLE_SHORT.values()]
+
+
 def condition_table(
     episodes: pd.DataFrame, by: list[str], schemes: list[str], baselines: Iterable[str] = ()
 ) -> pd.DataFrame:
+    """One row per ``by`` group over its valid, non-duplicate episodes.
+
+    The resolve rate pools trials (Wilson CI), so it describes these tasks
+    with their trial-to-trial randomness; ``resolve_rate_task_balanced``
+    weights every task with a valid trial equally, so a condition that lost
+    trials of one task (invalid, e.g. an environment failure) is not shifted
+    by the task mix. ``resolve_rate_delegated`` is the per-protocol rate:
+    among valid episodes whose orchestrator spawned subagents at least once.
+    """
     metrics = [m for m in condition_metrics(episodes) if m in episodes.columns]
     cols = list(by) + [c for c in DESIGN_COLS if c not in by] + [
-        "n", "n_valid", "n_resolved", "resolve_rate", "resolve_ci_lo", "resolve_ci_hi"]
+        "n", "n_valid", "n_resolved", "resolve_rate", "resolve_ci_lo", "resolve_ci_hi"] + RESOLVE_EXTRA_COLS
     for m in metrics:
         cols += [f"{m}_mean", f"{m}_ci_lo", f"{m}_ci_hi"]
     cols += [f"cost_per_solve_{s}" for s in [*schemes, "runtime"]] + ["time_per_solve_sec"]
+    cols += ISOLATION_COND_COLS + LENGTH_FRAC_COLS
     if episodes.empty:
         return pd.DataFrame(columns=cols)
-    df = episodes.copy()
+    df = _without_duplicates(episodes).copy()
     if "difficulty" in by:
         df["difficulty"] = df["difficulty"].fillna("unknown")
     df = df[df["condition"].notna()]
@@ -556,6 +676,8 @@ def condition_table(
         lo, hi = wilson_ci(n_res, n_valid)
         row.update(n=len(g), n_valid=n_valid, n_resolved=n_res,
                    resolve_rate=n_res / n_valid if n_valid else NAN, resolve_ci_lo=lo, resolve_ci_hi=hi)
+        row.update(_resolve_extras(valid))
+        row.update(_isolation_and_length(valid))
         for m in metrics:
             vals = pd.to_numeric(valid[m], errors="coerce").to_numpy(dtype=float, na_value=np.nan)
             if strict_nan_metric(m) and np.isnan(vals).any():
@@ -572,7 +694,53 @@ def condition_table(
     sort_cols = ["_o"] + [c for c in by if c != "condition"]
     out = out.assign(_o=out["condition"].map(order)).sort_values(sort_cols, kind="stable").drop(columns="_o")
     return _int_cols(out.reset_index(drop=True), ["n", "n_valid", "n_resolved", "max_concurrent", "n_candidates",
-                                                    "orchestrator_steps_budget"])
+                                                    "orchestrator_steps_budget", "n_tasks_valid", "n_delegated",
+                                                    "n_isolation_checked", "n_isolation_violations",
+                                                    "n_leaked_files"])
+
+
+def _resolve_extras(valid: pd.DataFrame) -> dict[str, Any]:
+    """Task-balanced resolve rate and delegation uptake over a group's valid episodes."""
+    solved = pd.to_numeric(valid["resolved"], errors="coerce").fillna(0)
+    per_task = solved.groupby(valid["task_name"]).mean() if len(valid) else pd.Series(dtype=float)
+    # Without the column (an episodes frame from before it existed) uptake is unknown, not 0.
+    deleg = (pd.to_numeric(valid["delegated"], errors="coerce") if "delegated" in valid
+             else pd.Series(NAN, index=valid.index, dtype=float))
+    known = deleg.notna()
+    took = valid[deleg == 1]
+    n_took = len(took)
+    k_took = int(pd.to_numeric(took["resolved"], errors="coerce").fillna(0).sum())
+    lo, hi = wilson_ci(k_took, n_took)
+    return {
+        "n_tasks_valid": len(per_task),
+        "resolve_rate_task_balanced": float(per_task.mean()) if len(per_task) else NAN,
+        "n_delegated": n_took,
+        "delegated_frac": n_took / int(known.sum()) if known.any() else NAN,
+        "resolve_rate_delegated": k_took / n_took if n_took else NAN,
+        "resolve_delegated_ci_lo": lo, "resolve_delegated_ci_hi": hi,
+    }
+
+
+def _strict_sum(values: pd.Series) -> float:
+    """Sum, or NaN if any value is unknown (records that predate the field)."""
+    v = pd.to_numeric(values, errors="coerce")
+    return float(v.sum()) if v.notna().all() else NAN
+
+
+def _isolation_and_length(valid: pd.DataFrame) -> dict[str, Any]:
+    """Copy-isolation leaks and per-role max_tokens truncation over a group's valid episodes."""
+    out: dict[str, Any] = {c: NAN for c in ISOLATION_COND_COLS + LENGTH_FRAC_COLS}
+    if "n_isolation_checked" in valid:
+        checked, violated = _strict_sum(valid["n_isolation_checked"]), _strict_sum(valid["n_isolation_violations"])
+        out.update(n_isolation_checked=checked, n_isolation_violations=violated,
+                   isolation_violated_frac=violated / checked if checked > 0 else NAN,
+                   n_leaked_files=_strict_sum(valid["n_leaked_files"]))
+    for s in ROLE_SHORT.values():
+        if f"{s}_length_finishes" in valid and f"{s}_calls" in valid:
+            n_calls = pd.to_numeric(valid[f"{s}_calls"], errors="coerce").sum()
+            n_len = pd.to_numeric(valid[f"{s}_length_finishes"], errors="coerce").sum()
+            out[f"length_finish_frac_{s}"] = float(n_len / n_calls) if n_calls > 0 else NAN
+    return out
 
 
 def _per_solve(values: pd.Series | None, solved: pd.Series, strict: bool) -> float:
@@ -596,16 +764,25 @@ PAIRED_COLS = ["condition", "baseline", "n_pairs", "both", "only_cond", "only_ba
 
 
 def paired_table(episodes: pd.DataFrame, baselines: Iterable[str]) -> pd.DataFrame:
-    """Each condition vs each baseline, matched on (task_name, round) over valid episodes."""
+    """Each condition vs each baseline, matched on (sweep, task_name, round) over valid episodes.
+
+    Rounds are numbered from 1 in every sweep, so the sweep is part of the
+    key: aggregating several sweeps pairs trials within each sweep instead of
+    dropping the cells whose (task, round) repeats. Trials flagged
+    ``duplicate`` are left out (:func:`duplicate_mask`).
+    """
     if episodes.empty:
         return pd.DataFrame(columns=PAIRED_COLS)
-    valid = episodes[episodes["valid"].astype(bool) & episodes["condition"].notna()]
-    # One outcome per (condition, task, round); duplicates (re-runs) keep the first trial by name.
+    eps = _without_duplicates(episodes)
+    valid = eps[eps["valid"].astype(bool) & eps["condition"].notna()]
+    # One outcome per (condition, sweep, task, round); any duplicate left keeps the first trial by name.
     valid = valid.sort_values("trial_name", kind="stable")
     outcome: dict[str, dict[tuple, int]] = {}
     for _, r in valid.iterrows():
         rnd = None if pd.isna(r["round"]) else int(r["round"])
-        outcome.setdefault(r["condition"], {}).setdefault((r["task_name"], rnd), int(r["resolved"]))
+        sweep = r.get("sweep")
+        sweep = None if sweep is None or (isinstance(sweep, float) and math.isnan(sweep)) else str(sweep)
+        outcome.setdefault(r["condition"], {}).setdefault((sweep, r["task_name"], rnd), int(r["resolved"]))
     rows = []
     baselines = list(baselines)
     for bi, base in enumerate(baselines):
@@ -639,12 +816,33 @@ def paired_table(episodes: pd.DataFrame, baselines: Iterable[str]) -> pd.DataFra
 CALIBRATION_COLS = [
     "model", "provider", "completion_window", "n_calls", "n_ttft", "ttft_median", "ttft_p90",
     "n_decode", "decode_tok_s_median", "ttft_fit_a", "ttft_fit_b_per_1k_prompt_tokens", "ttft_fit_n",
+    "lat_fit_a", "lat_fit_b_per_1k_prompt", "lat_fit_c_per_completion_token", "lat_fit_n",
     "latency_median", "prompt_tokens_median", "completion_tokens_median", "n_retried",
 ]
 
 
+def latency_fit(calls: Iterable[dict]) -> tuple[float, float, float, int]:
+    """``(a, b, c, n)``: least squares of :func:`fit_target_sec` on
+    ``a + b * prompt_tokens/1000 + c * completion_tokens`` with a, b, c >= 0."""
+    pts = [c for c in calls if c.get("prompt_tokens") is not None and c.get("completion_tokens") is not None
+           and math.isfinite(fit_target_sec(c))]
+    if not pts:
+        return (NAN, NAN, NAN, 0)
+    coef, n = nonneg_least_squares(
+        [(1.0, float(c["prompt_tokens"]) / 1000.0, float(c["completion_tokens"])) for c in pts],
+        [fit_target_sec(c) for c in pts],
+    )
+    return (float(coef[0]), float(coef[1]), float(coef[2]), n)
+
+
 def calibration_table(calls: Iterable[dict]) -> pd.DataFrame:
-    """Provider latency per (model, provider, completion_window) over successful calls."""
+    """Provider latency per (model, provider, completion_window) over successful calls.
+
+    ``lat_fit_*`` is what the ``fitted`` serving profile uses. The TTFT fit and
+    the median decode rate are descriptive: a TTFT fit plus one decode rate
+    has no per-call decode intercept, so it simulates short replies too fast
+    and long ones too slow.
+    """
     groups: dict[tuple, list[dict]] = {}
     for c in calls:
         if c.get("error"):
@@ -660,11 +858,13 @@ def calibration_table(calls: Iterable[dict]) -> pd.DataFrame:
         ]
         pts = [((c.get("prompt_tokens") or 0) / 1000.0, c["ttft_sec"]) for c in cs if c.get("ttft_sec") is not None]
         a, b, n_fit = linear_fit([p[0] for p in pts], [p[1] for p in pts])
+        la, lb, lc, n_lat = latency_fit(cs)
         rows.append({
             "model": model, "provider": provider, "completion_window": window, "n_calls": len(cs),
             "n_ttft": sum(1 for x in ttft if x is not None), "ttft_median": median(ttft),
             "ttft_p90": quantile(ttft, 0.9), "n_decode": len(decode), "decode_tok_s_median": median(decode),
             "ttft_fit_a": a, "ttft_fit_b_per_1k_prompt_tokens": b, "ttft_fit_n": n_fit,
+            "lat_fit_a": la, "lat_fit_b_per_1k_prompt": lb, "lat_fit_c_per_completion_token": lc, "lat_fit_n": n_lat,
             "latency_median": median(measured_call_sec(c) for c in cs),
             "prompt_tokens_median": median(c.get("prompt_tokens") for c in cs),
             "completion_tokens_median": median(c.get("completion_tokens") for c in cs),

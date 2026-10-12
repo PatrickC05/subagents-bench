@@ -81,6 +81,20 @@ def test_token_total_mismatch(tmp_path):
     assert _cli(["check-run", str(ep)]) == 1
 
 
+def test_provider_error_count_is_cross_checked(tmp_path):
+    ep = _episode(tmp_path)
+    doc = json.loads((ep / "episode.json").read_text())
+    (ep / "episode.json").write_text(json.dumps({**doc, "n_provider_errors": 2}))
+    assert "n_provider_errors=2 but the records give 0" in _messages(check_episode(ep))
+    _rewrite_jsonl(ep / "calls.jsonl", lambda recs: [{**r, "error": "LLMError: sail: giving up after 9 attempts"}
+                                                     if i < 2 else r for i, r in enumerate(recs)])
+    assert not any(m.startswith("n_provider_errors") for m in _messages(check_episode(ep)))
+    # A record written before the field existed is not checked for it.
+    doc = {k: v for k, v in doc.items() if k != "n_provider_errors"} | {"schema_version": 2}
+    (ep / "episode.json").write_text(json.dumps(doc))
+    assert not any(m.startswith("n_provider_errors") for m in _messages(check_episode(ep)))
+
+
 def test_missing_dispatch_record(tmp_path):
     ep = _episode(tmp_path)
     _rewrite_jsonl(ep / "dispatches.jsonl", lambda recs: recs[1:])
@@ -166,6 +180,24 @@ def test_running_episode_is_an_error_but_refs_only_warn(tmp_path):
     assert any("not in dispatches.jsonl" in m for m in _messages(problems, "warning"))
 
 
+def test_cancelled_episode_refs_only_warn(tmp_path):
+    # harbor cancelled the agent mid-group (agent timeout): the recorder finalized the episode
+    # from what was written, but the dispatch still running never wrote its record.
+    b = EpisodeBuilder(strategy="parallel", t0=1000.0)
+    b.step(C(2.0), [Spawn(members=[[C(1.0)], [C(1.5)]])])
+    b.finish(exit_reason="cancelled")
+    ep = b.write(tmp_path / "ep")
+    _rewrite_jsonl(ep / "dispatches.jsonl", lambda recs: recs[:1])
+    doc = json.loads((ep / "episode.json").read_text())
+    (ep / "episode.json").write_text(json.dumps({**doc, "dispatches": 1}))
+    problems = check_episode(ep)
+    assert _messages(problems) == []
+    assert any("not in dispatches.jsonl" in m for m in _messages(problems, "warning"))
+    # The same dangling references in an episode that ended normally are errors.
+    (ep / "episode.json").write_text(json.dumps({**doc, "dispatches": 1, "exit_reason": "finished"}))
+    assert any("not in dispatches.jsonl" in m for m in _messages(check_episode(ep)))
+
+
 def test_jobs_dir_without_episodes_fails(tmp_path):
     make_sweep(tmp_path / "jobs", conditions={"gemma31b_parallel_easy": CONDS["gemma31b_parallel_medium"]},
                tasks={}, edge_cases=True)  # only the environment-failure trial
@@ -197,3 +229,102 @@ def test_completeness_flags_all_none_field(tmp_path, capsys):
     assert "ttft_sec" in out and "NEVER POPULATED" in out
     assert (tmp_path / "c.csv").is_file()
     assert _cli(["completeness", str(tmp_path / "jobs"), "--strict"]) == 1
+
+
+def test_completeness_skips_fields_newer_than_the_record(tmp_path):
+    # Records written by older code (e.g. a sweep still running schema-2 code)
+    # lack the fields added since; that is not a never-populated field.
+    from dataclasses import fields
+
+    from subagents_bench.schema import RECORD_TYPES
+
+    make_sweep(tmp_path / "jobs", conditions=CONDS, edge_cases=False, rounds=(1,))
+    newer = {fname: {f.name for f in fields(cls) if (f.metadata.get("since") or 0) >= 3}
+             for fname, cls in RECORD_TYPES.items()}
+    assert "source_sha256" in newer["episode.json"]
+    for ep_path in (tmp_path / "jobs").rglob("episode.json"):
+        ep = json.loads(ep_path.read_text())
+        ep = {k: v for k, v in ep.items() if k not in newer["episode.json"]}
+        ep_path.write_text(json.dumps({**ep, "schema_version": 2}))
+        for fname, names in newer.items():
+            if fname != "episode.json" and names and (ep_path.parent / fname).is_file():
+                _rewrite_jsonl(ep_path.parent / fname, lambda recs: [{k: v for k, v in r.items() if k not in names}
+                                                                    for r in recs])
+    rows = {(r["file"], r["role"], r["field"]): r for r in completeness([tmp_path / "jobs"])}
+    assert not [k for k in rows if k[2] in newer[k[0]]]
+    assert not rows[("episode.json", "episode", "exit_reason")]["never_populated"]
+    assert rows[("episode.json", "episode", "exit_reason")]["n_records"] == 8
+    # A current-version record that lacks one is still flagged.
+    for ep_path in (tmp_path / "jobs").rglob("episode.json"):
+        ep = json.loads(ep_path.read_text())
+        ep_path.write_text(json.dumps({**ep, "schema_version": 3}))
+    rows = {(r["file"], r["role"], r["field"]): r for r in completeness([tmp_path / "jobs"])}
+    r = rows[("episode.json", "episode", "source_sha256")]
+    assert r["never_populated"] and not r["often_empty"] and r["n_records"] == 8
+
+
+def _no_delegation_in(condition: str):
+    """make_sweep episode builder: ``condition``'s orchestrator never spawns; the others delegate."""
+    from synth import standard_episode
+
+    def build(b: EpisodeBuilder, task_idx: int, rnd: int) -> EpisodeBuilder:
+        if b.condition != condition:
+            return standard_episode(b, task_idx, rnd)
+        return b.step(C(2.0), [T("bash", 1.0)]).step(C(1.0), finish=True)
+
+    return build
+
+
+def test_treatment_coverage_gates_completeness_and_warns_in_check_run(tmp_path, capsys, monkeypatch):
+    from subagents_bench.analysis import validate
+
+    # Synthetic records leave a few fields unpopulated (no transcripts of tool turns, no measurement
+    # execs); keep only the fields that are populated so --strict depends on the treatment check alone.
+    real = validate.completeness
+    monkeypatch.setattr(validate, "completeness", lambda paths: [
+        r for r in real(paths) if not (r["never_populated"] and not r["often_empty"])])
+    # Every subagents condition delegated: reported, and nothing fails.
+    make_sweep(tmp_path / "ok", conditions=CONDS, edge_cases=False, rounds=(1,))
+    assert _cli(["completeness", str(tmp_path / "ok"), "--strict"]) == 0
+    out = capsys.readouterr().out
+    assert "treatment gemma31b_parallel_medium: delegated in 2/2 episodes, 6 dispatches" in out
+    assert "treatment gemma31b_arbiter_hard: delegated in 2/2 episodes, 6 dispatches, 2 arbitrations" in out
+    assert "single_5step" not in out and "not exercised" not in out
+    assert all(r["ok"] for r in check_run([tmp_path / "ok"]).coverage)
+
+    # A subagents condition whose orchestrator never spawned: every field check still passes (no
+    # spawn/dispatch record exists to flag), but the treatment check catches it.
+    make_sweep(tmp_path / "jobs", conditions=CONDS, edge_cases=False, rounds=(1,),
+               episode=_no_delegation_in("gemma31b_parallel_medium"))
+    assert _cli(["completeness", str(tmp_path / "jobs")]) == 0
+    assert _cli(["completeness", str(tmp_path / "jobs"), "--strict"]) == 1
+    out = capsys.readouterr().out
+    assert "treatment not exercised in 1 subagents condition(s): gemma31b_parallel_medium" in out
+    assert "no episode delegated (spawn_calls = 0 in all 2)" in out
+    report = check_run([tmp_path / "jobs"])
+    assert report.ok  # check-run is about record consistency: a warning, not an error
+    assert [str(p) for p in report.warnings if "treatment" in p.message] == [
+        "[WARNING] condition gemma31b_parallel_medium: treatment not exercised: "
+        "no episode delegated (spawn_calls = 0 in all 2)"]
+    cov = {r["condition"]: r for r in report.coverage}
+    assert (cov["gemma31b_parallel_medium"]["n_delegated"], cov["gemma31b_parallel_medium"]["delegated_frac"]) == (0, 0.0)
+    assert _cli(["check-run", str(tmp_path / "jobs")]) == 0
+    assert "** no episode delegated" in capsys.readouterr().out
+
+
+def test_treatment_coverage_rows():
+    from subagents_bench.analysis.validate import treatment_coverage_rows
+
+    ep = lambda c, t, s, sp, d, a: {"condition": c, "topology": t, "strategy": s, "spawn_calls": sp,  # noqa: E731
+                                    "dispatches": d, "arbitrations": a}
+    rows = treatment_coverage_rows([
+        ep("single_5step", "single", None, 0, 0, 0),
+        ep("arb", "subagents", "arbiter", 1, 3, 0), ep("arb", "subagents", "arbiter", 0, 0, 0),
+        ep("par", "subagents", "parallel", 1, 0, 0),
+        ep("seq", "subagents", "sequential", 2, 4, 0), ep("seq", "subagents", "sequential", None, None, None),
+    ])
+    by = {r["condition"]: r for r in rows}
+    assert set(by) == {"arb", "par", "seq"}  # single topology has no treatment to check
+    assert by["arb"]["problem"] == "arbiter strategy but no arbitration ran" and by["arb"]["delegated_frac"] == 0.5
+    assert by["par"]["problem"] == "spawn calls but no dispatch ran"
+    assert by["seq"]["ok"] and by["seq"]["n_arbitrations"] is None and by["seq"]["n_delegated"] == 1

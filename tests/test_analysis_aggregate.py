@@ -10,6 +10,7 @@ billing error. Expected values are recomputed from what the generator wrote.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import shutil
@@ -22,12 +23,25 @@ import pytest
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from synth import GEMMA, ORCH, C, EpisodeBuilder, T, make_sweep, write_job, write_trial  # noqa: E402
+from synth import (  # noqa: E402
+    GEMMA,
+    ORCH,
+    C,
+    EpisodeBuilder,
+    Spawn,
+    T,
+    make_sweep,
+    pilot_conditions,
+    write_job,
+    write_trial,
+)
 
 from subagents_bench import analysis  # noqa: E402
 from subagents_bench.analysis.aggregate import aggregate  # noqa: E402
 from subagents_bench.analysis.stats import mcnemar_exact, wilson_ci  # noqa: E402
 from subagents_bench.analysis.tables import condition_table  # noqa: E402
+
+PILOT = pilot_conditions()
 
 REPO = Path(__file__).resolve().parents[1]
 SCHEMES = ["sail_balanced", "sail_asap", "sail_flex", "prime"]
@@ -137,7 +151,9 @@ def test_edge_cases(run):
         assert pd.isna(env[c]), c
 
     crash = by_edge["running"]
-    assert crash["episode_status"] == "running" and bool(crash["valid"]) and crash["resolved"] == 0
+    # The agent raised, so harbor skipped the verifier: the trial measured nothing (not "unsolved").
+    assert crash["episode_status"] == "running" and not bool(crash["valid"]) and pd.isna(crash["resolved"])
+    assert crash["invalid_reason"] == "agent_exception"
     assert pd.isna(crash["exit_reason"]) and pd.isna(crash["wall_clock_sec"]) and pd.isna(crash["overhead_sec"])
     assert crash["harbor_exception"] == "RuntimeError"
     # Counts come from the records because the crashed episode.json has no aggregates.
@@ -246,6 +262,12 @@ def test_conditions_table(run):
     # Bootstrap is seeded: recomputing the table gives identical CIs.
     again = condition_table(res.tables["episodes"], ["condition"], SCHEMES, ["single_5step", "single_matched"])
     pd.testing.assert_frame_equal(again, res.tables["conditions"])
+    # An episodes frame from before the uptake/duplicate/isolation columns still aggregates: unknown uptake.
+    old = res.tables["episodes"].drop(columns=["delegated", "duplicate", "n_isolation_checked",
+                                               "n_isolation_violations", "n_leaked_files"])
+    old_cond = condition_table(old, ["condition"], SCHEMES, ["single_5step", "single_matched"]).set_index("condition")
+    assert old_cond["delegated_frac"].isna().all() and old_cond["resolve_rate_delegated"].isna().all()
+    assert old_cond["n_valid"].tolist() == cond["n_valid"].tolist()
     by_diff = pd.read_csv(out / "conditions_by_difficulty.csv")
     assert set(zip(by_diff["condition"], by_diff["difficulty"])) >= {(c, d) for c in sweep.conditions
                                                                       for d in ("easy", "medium")}
@@ -314,7 +336,7 @@ def test_record_tables(run):
 def test_summary_json(run):
     _, res, out = run
     s = json.loads((out / "summary.json").read_text())
-    assert s["invalid_reason_counts"] == {"billing_error": 1, "no_episode": 1, "no_result": 1}
+    assert s["invalid_reason_counts"] == {"agent_exception": 1, "billing_error": 1, "no_episode": 1, "no_result": 1}
     assert s["episode_status_counts"] == {"done": 51, "missing": 1, "running": 1}
     assert s["conditions"][:2] == ["single_5step", "single_matched"] and len(s["conditions"]) == 12
     assert s["rounds"] == [1, 2]
@@ -324,6 +346,205 @@ def test_summary_json(run):
     assert s["serving_profiles"]["roofline_h100"]["theoretical"] is True
     assert any("pricing_reference.yaml" in w for w in s["warnings"])
     assert s["tasks_meta"]["tasks_without_meta"] == []
+    # An unpriced model is a warning (stderr and summary.json), not only a list entry.
+    assert any(f"no price for {GEMMA}" in w and "'prime'" in w for w in s["warnings"])
+    assert not any("sail_balanced' has no price" in w for w in s["warnings"])
+    # Every price used and the sha256 of every input file, so the cost/latency columns can be traced.
+    assert s["pricing"]["schemes"]["sail_balanced"]["prices"][ORCH] == {"in": 0.07, "cached": 0.005, "out": 0.22}
+    sha = s["input_sha256"]
+    assert set(sha) == {str(out.parent / "cfg" / f) for f in ("pricing.yaml", "serving.yaml", "models.yaml")}
+    for p, h in sha.items():
+        assert h == hashlib.sha256(Path(p).read_bytes()).hexdigest()
+    src = s["analysis_source"]
+    assert len(src["source_sha256"]) == 64 and {"git_commit", "git_dirty"} <= set(src)
+    assert s["episode_source_sha256"]["single_5step"] == ["0" * 64]
+    # Every subagents condition delegated in the synthetic sweep; no duplicates.
+    cov = {r["condition"]: r for r in s["treatment_coverage"]}
+    assert set(cov) == {c for c, spec in PILOT.items() if spec["topology"] == "subagents"}
+    assert all(r["ok"] and r["problem"] is None for r in cov.values())
+    assert cov["gemma31b_arbiter_hard"]["n_arbitrations"] > 0
+    assert cov["gemma31b_parallel_hard"]["n_arbitrations"] is None  # not an arbiter condition
+    assert s["duplicate_trials"] == []
+    lc = s["latency_checks"]
+    assert lc["episodes_overhead_over_explained"] == [] and lc["unexplained_overhead_sec_min"] > 0
+    fit = lc["fitted_vs_measured"]["fitted"]
+    # In-sample: exactly 1 while the intercept is in the fit; the synthetic Gemma latencies would
+    # want a negative intercept, which the non-negative fit drops, so allow a little there.
+    assert fit[ORCH]["ratio"] == pytest.approx(1.0, abs=1e-9)
+    assert fit[GEMMA]["ratio"] == pytest.approx(1.0, abs=0.02)
+    assert sum(b["n_calls"] for b in fit[ORCH]["by_completion_tokens"].values()) == fit[ORCH]["n_calls"]
+
+
+def test_treatment_uptake_and_task_balanced_columns(run):
+    _, res, _ = run
+    eps = res.tables["episodes"]
+    have = eps[eps["episode_status"] != "missing"]
+    assert (have["delegated"] == (have["spawn_calls"] > 0).astype(int)).all()
+    assert eps.loc[eps["episode_status"] == "missing", "delegated"].isna().all()
+    assert (have.loc[have["topology"] == "single", "delegated"] == 0).all()
+    cond = res.tables["conditions"].set_index("condition")
+    for name, row in cond.iterrows():
+        v = eps[eps["valid"] & (eps["condition"] == name)]
+        took = v[v["delegated"] == 1]
+        assert row["n_delegated"] == len(took)
+        assert row["delegated_frac"] == pytest.approx(len(took) / len(v))
+        k = int(took["resolved"].sum())
+        if len(took):
+            assert row["resolve_rate_delegated"] == pytest.approx(k / len(took))
+            lo, hi = wilson_ci(k, len(took))
+            assert row["resolve_delegated_ci_lo"] == pytest.approx(lo)
+            assert row["resolve_delegated_ci_hi"] == pytest.approx(hi)
+        else:
+            assert pd.isna(row["resolve_rate_delegated"]) and pd.isna(row["resolve_delegated_ci_lo"])
+        per_task = v.groupby("task_name")["resolved"].mean()
+        assert row["n_tasks_valid"] == len(per_task)
+        assert row["resolve_rate_task_balanced"] == pytest.approx(per_task.mean())
+    # The zero-dispatch edge (solved, never delegated) is in the intention-to-treat rate only.
+    ph = cond.loc["gemma31b_parallel_hard"]
+    assert (ph["n_valid"], ph["n_delegated"], ph["delegated_frac"]) == (5, 4, pytest.approx(0.8))
+    assert ph["n_tasks_valid"] == 3  # fix-git, crack-7z-hash, and the edge's cobol-modernization
+    assert cond.loc["single_5step", "delegated_frac"] == 0.0
+
+
+def test_isolation_and_length_columns(run, tmp_path):
+    _, res, _ = run
+    eps = res.tables["episodes"]
+    hard = eps[(eps["condition"] == "gemma31b_arbiter_hard") & eps["valid"]]
+    leak = hard[hard["task_name"] == "crack-7z-hash"]
+    assert (leak["n_isolation_violations"] == 1).all() and (leak["n_leaked_files"] == 2).all()
+    assert (hard.loc[hard["task_name"] == "fix-git", "n_isolation_violations"] == 0).all()
+    easy = eps[(eps["condition"] == "gemma31b_arbiter_easy") & eps["valid"]]
+    assert (easy["n_isolation_checked"] == 0).all()  # shared isolation: no check
+    cond = res.tables["conditions"].set_index("condition")
+    row = cond.loc["gemma31b_arbiter_hard"]
+    assert (row["n_isolation_checked"], row["n_isolation_violations"], row["n_leaked_files"]) == (4, 2, 4)
+    assert row["isolation_violated_frac"] == pytest.approx(0.5)
+    assert pd.isna(cond.loc["gemma31b_arbiter_easy", "isolation_violated_frac"])
+    arbs = res.tables["arbitrations"]
+    assert set(arbs.loc[arbs["isolation"] == "copy", "n_leaked_files"]) == {0, 2}
+    assert {"isolation_violated", "n_path_remaps", "final_from_round"} <= set(arbs.columns)
+    for s in ("orch", "sub", "arb", "deb"):
+        assert (cond[f"length_finish_frac_{s}"].dropna() == 0).all()  # synthetic calls never hit max_tokens
+
+    # Records from before the leak check (no isolation_violated / leaked_files): unknown, not 0;
+    # and calls cut off at max_tokens count per role.
+    sweep = make_sweep(tmp_path / "jobs", conditions={"gemma31b_arbiter_hard": PILOT["gemma31b_arbiter_hard"]},
+                       edge_cases=False, rounds=(1,))
+    for p in (tmp_path / "jobs").rglob("arbitrations.jsonl"):
+        recs = [json.loads(x) for x in p.read_text().splitlines()]
+        p.write_text("".join(json.dumps({k: v for k, v in r.items() if k not in ("isolation_violated", "leaked_files")})
+                             + "\n" for r in recs))
+    t = sweep.trials[0]
+    calls_p = tmp_path / "jobs" / t.job_name / t.trial_name / "agent" / "calls.jsonl"
+    recs = [json.loads(x) for x in calls_p.read_text().splitlines()]
+    subs = [r for r in recs if r["role"] == "subagent"]
+    subs[0]["finish_reason"] = "length"
+    calls_p.write_text("".join(json.dumps(r) + "\n" for r in recs))
+    res2 = aggregate([tmp_path / "jobs"], None, **_configs(tmp_path / "cfg"))
+    e2 = res2.tables["episodes"]
+    assert e2["n_isolation_violations"].isna().all() and e2["n_leaked_files"].isna().all()
+    c2 = res2.tables["conditions"].iloc[0]
+    assert pd.isna(c2["n_isolation_violations"]) and pd.isna(c2["isolation_violated_frac"])
+    assert e2.loc[e2["trial_name"] == t.trial_name, "sub_length_finishes"].item() == 1
+    n_sub = e2["sub_calls"].sum()
+    assert c2["length_finish_frac_sub"] == pytest.approx(1 / n_sub) and c2["length_finish_frac_orch"] == 0.0
+    assert res2.tables["arbitrations"]["n_leaked_files"].isna().all()
+
+
+PROVIDER_MSG = ("LLMError: sail nvidia/Gemma-4-31B-IT-NVFP4: giving up after 9 attempts; "
+                "last ServerError (HTTP 503)")
+
+
+def test_validity_of_provider_failures_and_agent_exceptions(tmp_path):
+    """Provider failures and agent crashes are not task failures; verifier errors and timeouts are."""
+    job = tmp_path / "jobs" / "pilot__r1__gemma31b_parallel_hard"
+    write_job(job, 9)
+    cases = {}  # suffix -> (invalid_reason, resolved)
+
+    def trial(suffix, build, *, reward, exception=None, phase="agent", expect, schema=None):
+        # One task per case: trials of one (condition, task, round) would be duplicates of each other.
+        task = f"task-{suffix}"
+        b = EpisodeBuilder(episode_id=f"ep-{suffix}", condition="gemma31b_parallel_hard", task_name=task,
+                           trial_name=f"{task}__x", t0=1000.0)
+        build(b)
+        if schema is not None:  # a record written by older code
+            b.episode = {k: v for k, v in b.episode.items() if k != "n_provider_errors"} | {"schema_version": schema}
+        write_trial(job, task, b.trial_name, b, reward=reward, exception=exception, exception_phase=phase)
+        cases[b.trial_name] = expect
+
+    def orch_failed(b, exit_reason="provider_error", error=PROVIDER_MSG):
+        b.step(C(2.0), [T("bash", 0.5)]).step(C(0.5, error=error))
+        b.finish(exit_reason=exit_reason, error=error)
+
+    def sub_failed(b):
+        b.step(C(2.0), [Spawn(members=[[C(1.0), T("bash", 0.2)], [C(3.0, error=PROVIDER_MSG)]])])
+        b.step(C(1.0), finish=True).finish()
+
+    def plain(b, exit_reason="finished", error=None):
+        b.step(C(2.0), [T("bash", 0.5)]).step(C(1.0), finish=True)
+        b.finish(exit_reason=exit_reason, error=error)
+
+    # The orchestrator could not be served: harbor records ProviderUnavailableError, no verifier.
+    trial("prov", orch_failed, reward=None, exception="ProviderUnavailableError", expect=("provider_error", None))
+    # Schema-2 record of the same: exit_reason 'error' with an LLMError text, graded by the verifier.
+    trial("old", lambda b: orch_failed(b, "error"), reward=0.0, schema=2, expect=("provider_error", 0))
+    # A subagent call failed after all retries; the episode finished and even solved the task.
+    trial("sub", sub_failed, reward=1.0, expect=("provider_error", 1))
+    # ...the same on a schema-2 record (no n_provider_errors): counted from calls.jsonl.
+    trial("subold", sub_failed, reward=1.0, schema=2, expect=("provider_error", 1))
+    # A harness bug raised in the agent: harbor skipped the verifier.
+    trial("bug", plain, reward=None, exception="TypeError", expect=("agent_exception", None))
+    # Verifier exceptions and agent timeouts stay valid and unsolved (the container was, or could be, graded).
+    trial("vexc", plain, reward=None, exception="VerifierTimeoutError", phase="verifier", expect=(None, 0))
+    trial("tout", plain, reward=0.0, exception="AgentTimeoutError", expect=(None, 0))
+    trial("tout2", plain, reward=None, exception="AgentTimeoutError", expect=(None, 0))
+    # A context overflow is the model's failure, not the provider's.
+    trial("ctx", lambda b: plain(b, "error", "ContextLengthError: prompt too long"), reward=0.0, expect=(None, 0))
+
+    res = aggregate([tmp_path / "jobs"], tmp_path / "out", **_configs(tmp_path / "cfg"))
+    eps = res.tables["episodes"].set_index("trial_name")
+    for name, (reason, resolved) in cases.items():
+        r = eps.loc[name]
+        assert (None if pd.isna(r["invalid_reason"]) else r["invalid_reason"]) == reason, name
+        assert bool(r["valid"]) == (reason is None), name
+        assert (None if pd.isna(r["resolved"]) else int(r["resolved"])) == resolved, name
+    assert eps.loc["task-sub__x", "n_provider_errors"] == 1 and eps.loc["task-subold__x", "n_provider_errors"] == 1
+    assert eps.loc["task-ctx__x", "n_provider_errors"] == 0
+    cond = res.tables["conditions"].iloc[0]
+    assert (cond["n"], cond["n_valid"], cond["n_resolved"]) == (9, 4, 0)
+    s = res.summary
+    assert s["invalid_reason_counts"] == {"agent_exception": 1, "provider_error": 4}
+
+
+def test_pairing_is_within_a_sweep_and_duplicates_are_dropped_once(tmp_path):
+    conds = {"single_5step": PILOT["single_5step"], "gemma31b_parallel_hard": PILOT["gemma31b_parallel_hard"]}
+    make_sweep(tmp_path / "a", sweep="pilot", conditions=conds, edge_cases=False)
+    make_sweep(tmp_path / "b", sweep="topup", conditions=conds, edge_cases=False)
+    res = aggregate([tmp_path / "a", tmp_path / "b"], None, **_configs(tmp_path / "cfg"))
+    # Round numbers repeat across sweeps: every (sweep, task, round) cell is its own pair.
+    p = res.tables["paired"].iloc[0]
+    assert (p["condition"], p["baseline"], p["n_pairs"]) == ("gemma31b_parallel_hard", "single_5step", 8)
+    assert (res.tables["conditions"]["n"] == 8).all() and res.summary["duplicate_trials"] == []
+    assert not res.tables["episodes"]["duplicate"].any()
+
+    # The same sweep passed twice (a copy of its jobs dir): one trial per cell is kept, loudly.
+    shutil.copytree(tmp_path / "a", tmp_path / "a_copy")
+    res = aggregate([tmp_path / "a", tmp_path / "a_copy"], tmp_path / "out", **_configs(tmp_path / "cfg"))
+    eps = res.tables["episodes"]
+    assert len(eps) == 16 and eps["duplicate"].sum() == 8
+    assert (res.tables["conditions"]["n"] == 4).all() and (res.tables["conditions_by_difficulty"]["n"] == 2).all()
+    assert res.tables["paired"]["n_pairs"].tolist() == [4]
+    assert len(res.summary["duplicate_trials"]) == 8
+    assert any("8 duplicate trial(s)" in w for w in res.warnings)
+    # A re-run after an invalid trial keeps the valid one.
+    job = next(p for p in (tmp_path / "a_copy").iterdir() if p.name.endswith("single_5step") and "r1" in p.name)
+    first = sorted(x for x in job.iterdir() if x.is_dir())[0]
+    res_p = json.loads((first / "result.json").read_text())
+    res_p["exception_info"] = {"exception_type": "EnvironmentStartTimeoutError", "occurred_at": res_p["started_at"]}
+    (first / "result.json").write_text(json.dumps(res_p))
+    eps = aggregate([tmp_path / "a_copy", tmp_path / "a"], None, **_configs(tmp_path / "cfg")).tables["episodes"]
+    cell = eps[(eps["trial_name"] == first.name) & (eps["condition"] == "single_5step")]
+    assert len(cell) == 2 and set(zip(cell["valid"], cell["duplicate"])) == {(True, False), (False, True)}
 
 
 # ---------------------------------------------------------------------------

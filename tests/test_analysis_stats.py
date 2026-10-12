@@ -1,4 +1,4 @@
-"""Statistics helpers: Wilson CI, seeded bootstrap, exact McNemar, least squares."""
+"""Statistics helpers: Wilson CI, seeded bootstrap, exact McNemar, least squares (plain and non-negative)."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from subagents_bench.analysis.stats import (
     linear_fit,
     mcnemar_exact,
     median,
+    nonneg_least_squares,
     quantile,
     wilson_ci,
 )
@@ -76,7 +77,9 @@ def test_bootstrap_seeded_and_reproducible():
 
 def test_bootstrap_edge_cases():
     assert bootstrap_mean_ci([2.5, 2.5, 2.5]) == (2.5, 2.5, 2.5)
-    assert bootstrap_mean_ci([7.0]) == (7.0, 7.0, 7.0)
+    # One value has a mean but no interval (not a zero-width CI that reads as certainty).
+    mean, lo, hi = bootstrap_mean_ci([7.0, None, float("nan")])
+    assert mean == 7.0 and math.isnan(lo) and math.isnan(hi)
     # NaN/None are dropped, never treated as 0.
     assert bootstrap_mean_ci([1.0, float("nan"), None, 3.0])[0] == 2.0
     assert all(math.isnan(v) for v in bootstrap_mean_ci([]))
@@ -94,6 +97,30 @@ def test_linear_fit_exact_and_degenerate():
     # None/NaN pairs are skipped.
     a, b, n = linear_fit([0.0, None, 1.0, 2.0], [1.0, 5.0, 3.0, float("nan")])
     assert (a, b, n) == (pytest.approx(1.0), pytest.approx(2.0), 2)
+
+
+def test_nonneg_least_squares_exact_and_constrained():
+    rng = np.random.default_rng(3)
+    p, c = rng.uniform(1, 20, 40), rng.uniform(10, 900, 40)
+    rows = [(1.0, pi, ci) for pi, ci in zip(p, c)]
+    coef, n = nonneg_least_squares(rows, 0.6 + 0.03 * p + 0.01 * c)
+    assert n == 40 and coef == pytest.approx([0.6, 0.03, 0.01])
+    # Unconstrained OLS would give a negative prompt slope here; the constrained fit drops that
+    # regressor (coefficient 0) and refits the rest, keeping the intercept, so residuals sum to 0.
+    y = 0.6 - 0.02 * p + 0.01 * c
+    ols = np.linalg.lstsq(np.asarray(rows), y, rcond=None)[0]
+    assert ols[1] < 0
+    coef, _ = nonneg_least_squares(rows, y)
+    assert coef[1] == 0.0 and (coef >= 0).all()
+    exp = np.linalg.lstsq(np.asarray(rows)[:, [0, 2]], y, rcond=None)[0]
+    assert (coef[0], coef[2]) == (pytest.approx(exp[0]), pytest.approx(exp[1]))
+    assert (np.asarray(rows) @ coef).sum() == pytest.approx(y.sum())
+    # Non-finite rows are skipped; fewer than two usable rows -> NaN.
+    coef, n = nonneg_least_squares([(1.0, 1.0, 5.0), (1.0, float("nan"), 2.0)], [1.0, 2.0])
+    assert n == 1 and np.isnan(coef).all() and len(coef) == 3
+    # Collinear columns (every prompt the same): a full-rank subset is used, preferring the earlier column.
+    coef, n = nonneg_least_squares([(1.0, 2.0, x) for x in (10.0, 20.0, 30.0)], [1.1, 1.2, 1.3])
+    assert n == 3 and coef == pytest.approx([1.0, 0.0, 0.01])
 
 
 def test_quantiles():

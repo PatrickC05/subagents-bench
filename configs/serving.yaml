@@ -8,9 +8,12 @@
 # kinds:
 #   measured  replay the logged per-call latency (retries and backoff included);
 #             must reproduce cp_total_sec exactly
-#   fitted    ttft_fit_a + ttft_fit_b * prompt_tokens/1000 + completion_tokens / decode_tok_s,
-#             per (model, provider, completion_window) from calibration.csv. Removes
-#             run-to-run noise but keeps the provider's typical queueing.
+#   fitted    lat_fit_a + lat_fit_b * prompt_tokens/1000 + lat_fit_c * completion_tokens,
+#             per (model, provider, completion_window) from calibration.csv: one
+#             non-negative least-squares fit of the whole served call (ttft + decode),
+#             so it is unbiased in-sample across reply lengths. Removes run-to-run
+#             noise but keeps the provider's typical queueing. A params_file written
+#             before the joint fit (ttft_a_sec, decode_tok_s) loads as c = 1/decode_tok_s.
 #   roofline  theoretical dedicated batch-1 serving on one GPU:
 #               prefill_tok_s = mfu * peak_flops / (2 * active_params)
 #               decode_tok_s  = mbu * peak_bw / (active_params * bytes_per_param)
@@ -29,7 +32,7 @@ profiles:
 
   fitted:
     kind: fitted
-    description: Per-model least-squares TTFT fit plus median decode rate from this sweep's calls.
+    description: Per-model least-squares fit of call time on prompt and completion tokens from this sweep's calls.
     # Optional: use a fit written by `subagents-bench calibrate JOBS_DIR --out configs/serving_fitted.yaml`
     # (e.g. from a larger sweep) instead of fitting in-sample. Path is relative to this file.
     # params_file: serving_fitted.yaml
