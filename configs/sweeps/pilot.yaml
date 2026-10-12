@@ -37,7 +37,7 @@ conditions:
   # --- baselines: the orchestrator alone -----------------------------------
   single_5step:                    # the study's 5-step budget, no subagents
     topology: single
-  single_matched:                  # compute-matched: 40 orchestrator steps, no subagents
+  single_matched:                  # step-matched: 40 = 5 orchestrator steps x 8 subagent max_steps (not FLOPs), no subagents
     topology: single
     budget: {orchestrator_steps: 40}
 

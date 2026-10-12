@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import copy
 import json
+import os
+import shutil
 import subprocess
 import sys
+import time
 import types
 from dataclasses import dataclass
 from pathlib import Path
@@ -137,30 +140,48 @@ def harbor_result(n_total, n_completed, n_errored=0, running=0, pending=0, finis
     }
 
 
+# Trial outcomes make_job can give the first trial (or, for "outage", every
+# trial): (episode exit_reason, harbor exception or None, agent started?,
+# verifier ran?, extra episode.json fields).
+TRIAL_MODES = {
+    "billing": ("billing_error", "BillingError", True, False, {}),
+    "errored": ("timeout", "AgentTimeoutError", True, True, {}),  # an outcome: harbor still verifies
+    "provider": ("provider_error", "ProviderUnavailableError", True, False, {"n_provider_errors": 1}),
+    "sub_provider": ("finished", None, True, True, {"n_provider_errors": 2}),  # a subagent call failed
+    "infra": (None, "EnvironmentStartTimeoutError", False, False, {}),
+    "crash": ("error", "RuntimeError", True, False, {}),  # harness bug: the agent raised
+}
+
+
 def make_job(job_dir: Path, tasks, *, mode="complete", reward=1.0, exit_reason="finished"):
-    """Create a harbor-like job dir. mode: complete | partial | billing | errored."""
+    """Create a harbor-like job dir (trial result.json with harbor 0.24.0's
+    phase timings). mode: complete | partial | outage (every trial a provider
+    failure) | a TRIAL_MODES key (the first trial only)."""
     job_dir.mkdir(parents=True, exist_ok=True)
-    (job_dir / "config.json").write_text("{}")
+    (job_dir / "config.json").write_text(json.dumps({"job_name": job_dir.name, "datasets": [
+        {"name": "terminal-bench", "version": "2.0", "task_names": list(tasks)}]}))
     n_err = 0
     for i, t in enumerate(tasks):
         trial = job_dir / f"{t}__abc{i}"
         (trial / "agent").mkdir(parents=True)
-        er = exit_reason
-        exc = None
-        if mode == "billing" and i == 0:
-            er = "billing_error"
-            exc = {"exception_type": "BillingError", "exception_message": "402"}
-        if mode == "errored" and i == 0:
-            exc = {"exception_type": "AgentTimeoutError", "exception_message": "t"}
+        trial_mode = "provider" if mode == "outage" else (mode if i == 0 else None)
+        er, etype, agent_started, verified, extra = TRIAL_MODES.get(trial_mode, (exit_reason, None, True, True, {}))
+        exc = {"exception_type": etype, "exception_message": "x", "occurred_at": "2026-10-11T20:53:20"} if etype else None
         if exc:
             n_err += 1
-        (trial / "agent" / "episode.json").write_text(json.dumps({"exit_reason": er}))
+        if er is not None:
+            (trial / "agent" / "episode.json").write_text(json.dumps({"exit_reason": er, "n_provider_errors": 0, **extra}))
         if mode == "partial" and i > 0:
             continue  # trial still running: no trial result.json
-        (trial / "result.json").write_text(
-            json.dumps({"task_name": t, "trial_name": trial.name, "exception_info": exc,
-                        "verifier_result": {"rewards": {"reward": reward}}})
-        )
+        res = {"task_name": t, "trial_name": trial.name, "exception_info": exc,
+               "verifier_result": {"rewards": {"reward": reward}} if verified else None,
+               "started_at": "2026-10-11T20:52:54", "finished_at": "2026-10-11T20:53:38",
+               "environment_setup": {"started_at": "2026-10-11T20:52:54", "finished_at": "2026-10-11T20:52:55"}}
+        if agent_started:
+            res["agent_execution"] = {"started_at": "2026-10-11T20:52:56", "finished_at": "2026-10-11T20:53:20"}
+        if verified:
+            res["verifier"] = {"started_at": "2026-10-11T20:53:21", "finished_at": "2026-10-11T20:53:37"}
+        (trial / "result.json").write_text(json.dumps(res))
     n = len(tasks)
     if mode == "partial":
         res = harbor_result(n, 1, running=n - 1, finished=False)
@@ -181,13 +202,21 @@ class FakeHarbor:
         self.modes = modes or {}  # job name -> make_job mode
         self.rc = rc
         self.popen_calls = []  # (cmd, env, cwd)
+        self.popen_kwargs = []
         self.run_calls = []
+        self.real_git = False  # True: git commands run for real (provenance tests)
+        self.on_job = None  # called with the job name when a job "runs"
 
     def popen(self, cmd, env=None, cwd=None, **kw):
+        if cmd[0] == "git":  # real git (subprocess.run goes through Popen)
+            return REAL_POPEN(cmd, env=env, cwd=cwd, **kw)
         self.popen_calls.append((list(cmd), dict(env or {}), Path(cwd)))
+        self.popen_kwargs.append(kw)
         job = _arg(cmd, "--job-name")
         tasks = [cmd[i + 1] for i, a in enumerate(cmd) if a == "-i"]
         make_job(Path(cwd) / _arg(cmd, "-o") / job, tasks, mode=self.modes.get(job, "complete"))
+        if self.on_job:
+            self.on_job(job)
         rc = self.rc
 
         class P:
@@ -200,16 +229,35 @@ class FakeHarbor:
 
     def run(self, cmd, **kw):
         self.run_calls.append(list(cmd))
+        if cmd[0] == "git" and self.real_git:
+            return REAL_RUN(cmd, **kw)
         if cmd[0] == "git" and "rev-parse" in cmd:
             return subprocess.CompletedProcess(cmd, 0, "deadbeef" * 5 + "\n", "")
         if cmd[0] == "git" and "status" in cmd:
             return subprocess.CompletedProcess(cmd, 0, " M foo.py\n", "")
+        if cmd[0] == "git" and "ls-files" in cmd and "-c" in cmd:  # the package is tracked
+            return subprocess.CompletedProcess(cmd, 0, "subagents_bench/__init__.py\0", "")
         if cmd[0] == "docker":
             return subprocess.CompletedProcess(cmd, 0, "28.3.2|aarch64|12|33601363968\n", "")
         if len(cmd) > 2 and cmd[1:3] == ["dataset", "download"]:
             make_task_tree(Path(_arg(cmd, "-o")) / "terminal-bench", PILOT_TASKS)
             return subprocess.CompletedProcess(cmd, 0, "Successfully downloaded", "")
         return subprocess.CompletedProcess(cmd, 0, "", "")
+
+
+REAL_RUN = subprocess.run
+REAL_POPEN = subprocess.Popen
+
+
+@pytest.fixture(autouse=True)
+def code_root(tmp_path_factory, monkeypatch):
+    """The harness source the sweep fingerprints: a small tree of its own, so
+    concurrent edits of the real repository cannot change it mid-test."""
+    root = tmp_path_factory.mktemp("code")
+    (root / "subagents_bench").mkdir()
+    (root / "subagents_bench" / "__init__.py").write_text("VERSION = 1\n")
+    monkeypatch.setattr(sweep, "code_root", lambda: root)
+    return root
 
 
 @pytest.fixture
@@ -351,10 +399,17 @@ def test_pilot_resolved_conditions():
 def test_prime_size_spec():
     spec = sweep.load_spec(SWEEPS / "prime_size.yaml")
     res = sweep.resolve_conditions(spec)
-    assert list(res) == ["qwen0.8b_parallel_hard", "qwen2b_parallel_hard", "qwen4b_parallel_hard", "qwen9b_parallel_hard"]
+    qwen = ["qwen0.8b_parallel_hard", "qwen2b_parallel_hard", "qwen4b_parallel_hard", "qwen9b_parallel_hard"]
+    assert list(res) == ["single_5step", "gemma31b_parallel_hard", *qwen]
     assert spec.tasks == PILOT_TASKS and spec.rounds == 3 and spec.jobs_dir == REPO / "jobs/prime_size"
+    # The anchors are the pilot's conditions exactly, interleaved in every round.
+    pilot = sweep.resolve_conditions(sweep.load_spec(SWEEPS / "pilot.yaml"))
+    for anchor in ("single_5step", "gemma31b_parallel_hard"):
+        assert res[anchor] == pilot[anchor]
+    order = sweep.condition_order(list(spec.conditions), spec.rounds, spec.order_seed)
+    assert all(sorted(o) == sorted(res) for o in order.values())
     sizes = []
-    for cfg in res.values():
+    for cfg in (res[c] for c in qwen):
         o, s = cfg["orchestrator"], cfg["subagent"]
         assert (o["model"], o["provider"], o["completion_window"]) == ("deepseek-ai/DeepSeek-V4.1-Flash", "sail", "balanced")
         assert (s["strategy"], s["scope"]) == ("parallel", "hard")
@@ -478,6 +533,21 @@ def test_build_harbor_command_exact():
     assert oracle[oracle.index("-a") + 1] == "oracle" and oracle[oracle.index("-e") + 1] == "daytona"
 
 
+def test_cmd_settings_ignores_where_the_job_dir_is():
+    def cmd(jobs_dir, job, n=4):
+        return sweep.build_harbor_command(
+            harbor="/a/harbor", dataset="d@1", tasks=["b", "a"], agent=sweep.AGENT_IMPORT_PATH, env="docker",
+            n_concurrent=n, jobs_dir=jobs_dir, job=job, agent_timeout_multiplier=4.0, extra_args=["--debug"])
+
+    tasks, rest = sweep.cmd_settings(cmd("jobs/pilot", "pilot__r1__x"))
+    assert tasks == {"a", "b"}
+    assert rest == ["run", "-d", "d@1", "-a", sweep.AGENT_IMPORT_PATH, "-e", "docker", "-n", "4", "-k", "1",
+                    "--agent-timeout-multiplier", "4.0", "-y", "-q", "--debug"]
+    # A renamed jobs dir or another harbor path compares equal; settings do not.
+    assert sweep.cmd_settings(["/other/harbor", *cmd("jobs/pilot_old", "pilot__r1__x")[1:]]) == (tasks, rest)
+    assert sweep.cmd_settings(cmd("jobs/pilot", "pilot__r1__x", n=2))[1] != rest
+
+
 def test_harbor_executable_prefers_venv_sibling(tmp_path, monkeypatch):
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -542,10 +612,28 @@ def test_job_status_cases(tmp_path):
     st = sweep.job_status(tmp_path / "ok")
     assert st.complete and (st.n_total, st.n_completed, st.n_errored, st.n_trial_results) == (2, 2, 0, 2)
 
-    # harbor 0.24.0 counts errored trials inside n_completed_trials: complete.
+    # harbor 0.24.0 counts errored trials inside n_completed_trials. An agent
+    # timeout is an outcome (harbor still runs the verifier): complete.
     make_job(tmp_path / "err", ["a", "b"], mode="errored")
     st = sweep.job_status(tmp_path / "err")
-    assert st.complete and (st.n_completed, st.n_errored) == (2, 1)
+    assert st.complete and (st.n_completed, st.n_errored) == (2, 1) and st.retry_trials == {}
+
+    # Finished, but a trial did not measure the condition: needs_retry.
+    make_job(tmp_path / "bill", ["a", "b"], mode="billing")
+    st = sweep.job_status(tmp_path / "bill")
+    assert (st.state, st.retry_trials) == ("needs_retry", {"a__abc0": ["billing"]})
+    assert st.reason == "2/2 trials finished (1 errored); 1 to rerun (billing 1)" and not st.complete
+
+    # Two harbor runs in one job dir: more trial dirs than trials, or a task twice.
+    make_job(tmp_path / "dup", ["a", "b"])
+    shutil.copytree(tmp_path / "dup" / "a__abc0", tmp_path / "dup" / "a__xyz9")
+    st = sweep.job_status(tmp_path / "dup")
+    assert (st.state, st.reason, st.n_trial_dirs) == ("duplicate", "3 trial dirs for 2 trials", 3)
+    shutil.rmtree(tmp_path / "dup" / "b__abc1")
+    assert sweep.job_status(tmp_path / "dup").reason == "task(s) run more than 1x: ['a']"
+    # ... even while running (the other harbor is still writing into it).
+    (tmp_path / "dup" / "result.json").write_text(json.dumps(harbor_result(2, 1, running=1, finished=False)))
+    assert sweep.job_status(tmp_path / "dup").state == "duplicate"
 
     make_job(tmp_path / "part", ["a", "b", "c"], mode="partial")
     st = sweep.job_status(tmp_path / "part")
@@ -574,14 +662,14 @@ def test_job_status_on_real_oracle_job_layout():
     assert {r["task"] for r in sweep.trial_rewards(job).values()} == {"fix-git", "prove-plus-comm"}
 
 
-def test_move_partial_increments(tmp_path):
+def test_move_aside_increments(tmp_path):
     jobs = tmp_path / "jobs"
-    for k in (1, 2):
+    for kind, k in (("partial", 1), ("partial", 2), ("retry", 1)):
         (jobs / "t__r1__x").mkdir(parents=True)
-        (jobs / "t__r1__x" / "marker").write_text(str(k))
-        dest = sweep.move_partial(jobs / "t__r1__x", jobs)
-        assert dest == jobs / "_partial" / f"t__r1__x.partial.{k}"
-        assert (dest / "marker").read_text() == str(k)
+        (jobs / "t__r1__x" / "marker").write_text(f"{kind}{k}")
+        dest = sweep.move_aside(jobs / "t__r1__x", jobs, kind)
+        assert dest == jobs / "_partial" / f"t__r1__x.{kind}.{k}"
+        assert (dest / "marker").read_text() == f"{kind}{k}"
         assert not (jobs / "t__r1__x").exists()
 
 
@@ -832,11 +920,15 @@ def test_dry_run_prints_plan_and_writes_nothing(tmp_path, fake_harbor, stub_conf
     text = "\n".join(lines)
     assert fake_harbor.popen_calls == []
     assert sorted(p.name for p in spec.jobs_dir.iterdir()) == ["t__r1__single"]  # nothing written
-    assert "Plan: 4 jobs (3 to run, 1 complete -> skip, 0 partial -> move aside and rerun); 6 episodes to run" in text
+    assert ("Plan: 4 jobs (3 to run, 1 complete -> skip, 0 partial -> move aside and rerun, "
+            "0 to retry -> move aside and rerun); 6 episodes to run") in text
     assert "Config validation: OK (2 conditions" in text
+    # The complete job was not run by this launcher: no fingerprint to compare.
+    assert "Resume check: 1 issue(s)" in text and "NOTE" not in text
+    assert "WARNING: 1 complete job(s) (t__r1__single) record no source fingerprint" in text
     assert "SUBAGENTS_BENCH_CONFIG=jobs/t/configs/par.yaml /fake/bin/harbor run -d terminal-bench@2.0 -i fix-git -i prove-plus-comm" in text
     assert "--job-name t__r2__par --agent-timeout-multiplier 4.0 -y -q" in text
-    assert "ROUGH estimate" in text and "NOT a measurement" in text
+    assert "ROUGH estimate" in text and "calibrated from the smoke sweep" in text and "not a measurement" in text
     assert "TOTAL:" in text and "Runtime:" in text
 
 
@@ -853,7 +945,368 @@ def test_real_pilot_dry_run_counts(fake_harbor, stub_config, monkeypatch):
     monkeypatch.setattr(spec, "jobs_dir", Path("/nonexistent/jobs/pilot"))
     lines: list[str] = []
     sweep.run_sweep(spec, dry_run=True, out=lines.append)
-    assert "Plan: 45 jobs (45 to run, 0 complete -> skip, 0 partial -> move aside and rerun); 450 episodes to run" in "\n".join(lines)
+    assert ("Plan: 45 jobs (45 to run, 0 complete -> skip, 0 partial -> move aside and rerun, "
+            "0 to retry -> move aside and rerun); 450 episodes to run") in "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# retries: trials that did not measure the condition
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "mode, reasons",
+    [
+        ("complete", {}),
+        ("errored", {}),  # agent timeout: harbor verified it, an outcome
+        ("billing", {"a__abc0": ["billing"]}),
+        ("provider", {"a__abc0": ["provider"]}),
+        ("sub_provider", {"a__abc0": ["provider"]}),  # verified, but a subagent call failed
+        ("infra", {"a__abc0": ["infrastructure"]}),
+        ("crash", {"a__abc0": ["agent_exception"]}),
+        ("outage", {"a__abc0": ["provider"], "b__abc1": ["provider"]}),
+    ],
+)
+def test_trial_retry_reasons(tmp_path, mode, reasons):
+    make_job(tmp_path / "j", ["a", "b"], mode=mode)
+    assert sweep.trial_retry_reasons(tmp_path / "j") == reasons
+    assert sweep.job_status(tmp_path / "j").state == ("needs_retry" if reasons else "complete")
+
+
+def test_retry_reasons_of_records_before_schema_3(tmp_path):
+    """Live-sweep records (schema 2) have no n_provider_errors: a provider
+    failure shows in calls.jsonl (`LLMError: ...`) or in the episode error."""
+    make_job(tmp_path / "j", ["a", "b"])
+    agent = tmp_path / "j" / "a__abc0" / "agent"
+    (agent / "episode.json").write_text(json.dumps({"exit_reason": "finished", "schema_version": 2}))
+    (agent / "calls.jsonl").write_text(
+        json.dumps({"role": "orchestrator", "error": None}) + "\n"
+        + json.dumps({"role": "subagent", "error": "LLMError: sail nvidia/Gemma-4-31B-IT-NVFP4: giving up after 9 attempts"}) + "\n"
+    )
+    assert sweep.trial_retry_reasons(tmp_path / "j") == {"a__abc0": ["provider"]}
+    (agent / "calls.jsonl").write_text(json.dumps({"role": "subagent", "error": "ContextLengthError: too long"}) + "\n")
+    assert sweep.trial_retry_reasons(tmp_path / "j") == {}
+    (agent / "episode.json").write_text(json.dumps({"exit_reason": "error", "error": "LLMError: HTTP 503 [HTTP 503]"}))
+    assert sweep.trial_retry_reasons(tmp_path / "j") == {"a__abc0": ["provider"]}
+
+
+def test_retry_rules_match_the_analysis_and_runtime():
+    from subagents_bench.analysis.tables import OUTSIDE_AGENT_EXCEPTIONS
+    from subagents_bench.telemetry import PROVIDER_ERROR_PREFIX
+
+    assert sweep.INFRA_EXCEPTIONS == OUTSIDE_AGENT_EXCEPTIONS
+    assert sweep.PROVIDER_ERROR_PREFIX == PROVIDER_ERROR_PREFIX
+
+
+def test_resume_after_a_billing_abort_reruns_the_job(tmp_path, fake_harbor, stub_config):
+    """The billing-errored trials of the aborted job are rerun on resume
+    (harbor finished the job, so it used to be skipped as complete)."""
+    spec = sweep.load_spec(make_project(tmp_path))
+    order = sweep.condition_order(["single", "par"], 2, 0)
+    first = f"t__r1__{order[1][0]}"
+    fake_harbor.modes[first] = "billing"
+    assert sweep.run_sweep(spec, out=lambda s: None) == sweep.EXIT_BILLING
+    assert sweep.job_status(spec.jobs_dir / first).state == "needs_retry"
+
+    fake_harbor.modes.clear()  # topped up
+    lines: list[str] = []
+    assert sweep.run_sweep(spec, out=lines.append) == 0
+    assert [_arg(c, "--job-name") for c, _, _ in fake_harbor.popen_calls] == [first] + [
+        f"t__r{r}__{c}" for r in (1, 2) for c in order[r]]
+    assert sweep.job_status(spec.jobs_dir / first).complete
+    old = spec.jobs_dir / "_partial" / f"{first}.retry.1"
+    assert json.loads((old / "fix-git__abc0" / "result.json").read_text())["exception_info"]["exception_type"] == "BillingError"
+    retried = [m for m in read_manifest(spec) if m["event"] == "retried"]
+    assert len(retried) == 1 and retried[0]["job"] == first
+    assert retried[0]["retry_trials"] == {"fix-git__abc0": ["billing"]}
+    assert retried[0]["moved_to"] == f"jobs/t/_partial/{first}.retry.1"
+    assert any(f"{first}: needs a retry" in s for s in lines)
+    sj = json.loads((spec.jobs_dir / "sweep.json").read_text())
+    assert (sj["status"], sj["jobs_complete"]) == ("complete", 4)
+
+
+def test_provider_outage_aborts_with_exit_4_and_resume_reruns(tmp_path, fake_harbor, stub_config):
+    spec = sweep.load_spec(make_project(tmp_path))
+    order = sweep.condition_order(["single", "par"], 2, 0)
+    first = f"t__r1__{order[1][0]}"
+    fake_harbor.modes[first] = "outage"  # every trial: provider failure
+    lines: list[str] = []
+    assert sweep.run_sweep(spec, out=lines.append) == sweep.EXIT_PROVIDER == 4
+    assert len(fake_harbor.popen_calls) == 1
+    run = read_manifest(spec)[-1]
+    assert run["retry_trials"] == {"fix-git__abc0": ["provider"], "prove-plus-comm__abc1": ["provider"]}
+    assert run["state"] == "needs_retry" and run["complete"] is False and run["n_provider_error_trials"] == 2
+    assert json.loads((spec.jobs_dir / "sweep.json").read_text())["status"] == "aborted_provider"
+    assert any("ABORT: provider failures in 2/2 trials" in s for s in lines)
+    fake_harbor.modes.clear()
+    assert sweep.run_sweep(spec, out=lambda s: None) == 0
+    assert (spec.jobs_dir / "_partial" / f"{first}.retry.1").is_dir()
+
+
+def test_a_minority_of_provider_failures_fails_the_job_but_not_the_sweep(tmp_path, fake_harbor, stub_config):
+    spec = sweep.load_spec(make_project(tmp_path))
+    fake_harbor.modes["t__r1__par"] = "sub_provider"  # 1 of 2 trials: not over half
+    lines: list[str] = []
+    assert sweep.run_sweep(spec, out=lines.append) == sweep.EXIT_FAIL
+    assert len(fake_harbor.popen_calls) == 4  # the sweep went on
+    sj = json.loads((spec.jobs_dir / "sweep.json").read_text())
+    assert (sj["status"], sj["jobs_complete"], sj["invocations"][-1]["n_failed"]) == ("incomplete", 3, 1)
+    assert any("t__r1__par: 1 to rerun (provider 1); re-run the sweep" in s for s in lines)
+    fake_harbor.modes.clear()
+    fake_harbor.popen_calls.clear()
+    assert sweep.run_sweep(spec, out=lambda s: None) == 0
+    assert [_arg(c, "--job-name") for c, _, _ in fake_harbor.popen_calls] == ["t__r1__par"]
+
+
+def test_dry_run_shows_retries(tmp_path, fake_harbor, stub_config):
+    spec = sweep.load_spec(make_project(tmp_path))
+    make_job(spec.jobs_dir / "t__r1__par", spec.tasks, mode="infra")
+    lines: list[str] = []
+    sweep.run_sweep(spec, dry_run=True, out=lines.append)
+    text = "\n".join(lines)
+    assert "1 to retry -> move aside and rerun); 8 episodes to run" in text
+    assert "retry           t__r1__par  (2/2 trials finished (1 errored); 1 to rerun (infrastructure 1))" in text
+    assert "rerun: fix-git__abc0: infrastructure" in text
+
+
+def test_job_with_duplicate_trials_is_reported_not_run(tmp_path, fake_harbor, stub_config):
+    spec = sweep.load_spec(make_project(tmp_path))
+    make_job(spec.jobs_dir / "t__r1__par", spec.tasks)
+    shutil.copytree(spec.jobs_dir / "t__r1__par" / "fix-git__abc0", spec.jobs_dir / "t__r1__par" / "fix-git__zzz9")
+    lines: list[str] = []
+    assert sweep.run_sweep(spec, out=lines.append) == sweep.EXIT_FAIL
+    assert "t__r1__par" not in [_arg(c, "--job-name") for c, _, _ in fake_harbor.popen_calls]
+    assert (spec.jobs_dir / "t__r1__par" / "fix-git__zzz9").is_dir()  # left for the operator
+    dup = [m for m in read_manifest(spec) if m["event"] == "duplicate_trials"]
+    assert len(dup) == 1 and dup[0]["status_reason"] == "3 trial dirs for 2 trials"
+    assert any("ERROR: 3 trial dirs for 2 trials" in s for s in lines)
+
+
+# ---------------------------------------------------------------------------
+# one sweep per jobs dir
+# ---------------------------------------------------------------------------
+
+
+def test_second_sweep_on_a_locked_jobs_dir_is_refused(tmp_path, fake_harbor, stub_config):
+    spec = sweep.load_spec(make_project(tmp_path))
+    make_job(spec.jobs_dir / "t__r1__par", spec.tasks, mode="partial")  # what the first sweep is running
+    holder = sweep.SweepLock(spec.jobs_dir, invocation_id="first-sweep").acquire()
+    try:
+        lines: list[str] = []
+        assert sweep.run_sweep(spec, out=lines.append) == sweep.EXIT_CONFIG
+        assert fake_harbor.popen_calls == []
+        assert not (spec.jobs_dir / "_partial").exists()  # the running job was not moved aside
+        msg = "\n".join(lines)
+        assert f"another sweep holds {spec.jobs_dir / '.sweep.lock'}: pid {sweep.os.getpid()}" in msg
+        assert "invocation first-sweep" in msg
+        # preflight --oracle (which moves _oracle) is refused too.
+        assert sweep.run_preflight(spec, oracle=True, skip_llm=True, out=lines.append) == sweep.EXIT_CONFIG
+        # A dry run says so, and creates nothing.
+        lines.clear()
+        sweep.run_sweep(spec, dry_run=True, out=lines.append)
+        assert any("NOTE        a sweep holds jobs/t/.sweep.lock (pid" in s for s in lines)
+        assert sweep.lock_holder(spec.jobs_dir)["invocation_id"] == "first-sweep"
+    finally:
+        holder.release()
+    assert sweep.lock_holder(spec.jobs_dir) is None
+    assert sweep.run_sweep(spec, out=lambda s: None) == 0
+    # harbor keeps the lock's descriptor, so the lock outlives a killed sweep.
+    fds = [kw.get("pass_fds") for kw in fake_harbor.popen_kwargs]
+    assert len(fds) == 4 and all(f and len(f) == 1 for f in fds)
+    assert (spec.jobs_dir / ".sweep.lock").read_text() == ""  # released and cleared
+    assert sweep.lock_holder(spec.jobs_dir) is None
+
+
+def test_harbor_child_keeps_the_lock_when_the_sweep_dies(tmp_path):
+    """Real processes: the job inherits the lock's descriptor, so a sweep
+    killed mid-job (its descriptor closed without unlocking) does not free
+    the jobs dir while harbor still runs."""
+    lock = sweep.SweepLock(tmp_path).acquire()
+    child = subprocess.Popen(
+        [sys.executable, "-c", f"import os, time; os.fstat({lock.fd}); time.sleep(30)"], pass_fds=(lock.fd,))
+    try:
+        time.sleep(0.3)
+        assert child.poll() is None  # the descriptor is open in the child
+        os.close(lock.fd)  # what the kernel does when the sweep process dies
+        lock.fd = None
+        with pytest.raises(sweep.SweepLocked, match=f"pid {os.getpid()}"):
+            sweep.SweepLock(tmp_path).acquire()
+    finally:
+        child.kill()
+        child.wait()
+    sweep.SweepLock(tmp_path).acquire().release()  # free once the job is gone
+    # run_job_process hands the descriptor over.
+    with sweep.SweepLock(tmp_path) as held:
+        code = f"import os, sys; os.fstat({held.fd}); sys.exit(7)"
+        assert sweep.run_job_process([sys.executable, "-c", code], env=dict(os.environ), cwd=tmp_path,
+                                     pass_fds=(held.fd,)) == 7
+
+
+# ---------------------------------------------------------------------------
+# provenance: which code ran
+# ---------------------------------------------------------------------------
+
+
+def _git(root, *args):
+    return REAL_RUN(["git", "-C", str(root), *args], capture_output=True, text=True, check=True).stdout
+
+
+def test_dirty_tree_is_saved_as_a_patch_that_restores_the_code(tmp_path, fake_harbor, stub_config, code_root):
+    fake_harbor.real_git = True
+    for cmd in (["init", "-q"], ["config", "user.email", "t@example.com"], ["config", "user.name", "t"],
+                ["add", "-A"], ["commit", "-q", "-m", "init"]):
+        _git(code_root, *cmd)
+    (code_root / "subagents_bench" / "__init__.py").write_text("VERSION = 2  # uncommitted\n")
+    (code_root / "subagents_bench" / "new_module.py").write_text("X = 1\n")  # untracked
+    (code_root / "notes.txt").write_text("not source\n")
+    spec = sweep.load_spec(make_project(tmp_path))
+    assert sweep.run_sweep(spec, only=["par"], rounds=[1], out=lambda s: None) == 0
+
+    sj = json.loads((spec.jobs_dir / "sweep.json").read_text())
+    prov = sj["provenance"]
+    from subagents_bench import provenance
+
+    fp = provenance.source_fingerprint(code_root)
+    assert prov["source_sha256"] == fp and prov["git_dirty"] is True
+    assert prov["untracked_source_files"] == ["subagents_bench/new_module.py"]
+    assert prov["source_patch"] == f"provenance/{prov['invocation_id']}.patch"
+    assert prov["source_files_record"] == f"provenance/source_{fp[:16]}.json"
+    assert sj["source_sha256s"] == [fp] and sj["mixed_source"] is False
+    run = [m for m in read_manifest(spec) if m["event"] == "run"][0]
+    assert (run["source_sha256"], run["git_dirty"], run["invocation_id"]) == (fp, True, prov["invocation_id"])
+    assert run["tasks"] == spec.tasks and run["harbor"]["n_concurrent"] == 4
+
+    # A clean checkout of the commit plus the patch is the code that ran.
+    clone = tmp_path / "clone"
+    REAL_RUN(["git", "clone", "-q", str(code_root), str(clone)], check=True)
+    assert provenance.source_fingerprint(clone) != fp
+    patch = spec.jobs_dir / prov["source_patch"]
+    REAL_RUN(["git", "-C", str(clone), "apply", str(patch)], check=True)
+    assert provenance.source_fingerprint(clone) == fp
+
+
+def test_resume_refuses_changed_code_unless_allowed(tmp_path, fake_harbor, stub_config, code_root):
+    spec = sweep.load_spec(make_project(tmp_path))
+    assert sweep.run_sweep(spec, only=["par"], rounds=[1], out=lambda s: None) == 0
+    (code_root / "subagents_bench" / "__init__.py").write_text("VERSION = 2\n")
+    lines: list[str] = []
+    assert sweep.run_sweep(spec, out=lines.append) == sweep.EXIT_CONFIG
+    assert len(fake_harbor.popen_calls) == 1
+    msg = "\n".join(lines)
+    assert "resume refused: the harness source changed since 1 complete job(s) ran (t__r1__par)" in msg
+    assert "changed files: subagents_bench/__init__.py" in msg
+    assert sweep.run_sweep(spec, dry_run=True, out=lines.append) == sweep.EXIT_CONFIG
+    assert any("REFUSE (unless --allow-code-change)" in s for s in lines)
+
+    assert sweep.run_sweep(spec, allow_code_change=True, out=lines.append) == 0
+    sj = json.loads((spec.jobs_dir / "sweep.json").read_text())
+    assert sj["mixed_source"] is True and len(sj["source_sha256s"]) == 2
+
+
+def test_code_edited_during_a_sweep_stops_it(tmp_path, fake_harbor, stub_config, code_root):
+    spec = sweep.load_spec(make_project(tmp_path))
+    fake_harbor.on_job = lambda job: (code_root / "subagents_bench" / "__init__.py").write_text(f"EDITED = {job!r}\n")
+    lines: list[str] = []
+    assert sweep.run_sweep(spec, out=lines.append) == sweep.EXIT_CONFIG
+    assert len(fake_harbor.popen_calls) == 1  # the edit lands during job 1; job 2 does not start
+    assert json.loads((spec.jobs_dir / "sweep.json").read_text())["status"] == "aborted_code_change"
+    assert any("ABORT: the harness source changed during the sweep" in s and "subagents_bench/__init__.py" in s
+               for s in lines)
+    # Allowed: the sweep goes on, recording each job's fingerprint.
+    assert sweep.run_sweep(spec, allow_code_change=True, out=lambda s: None) == 0
+    shas = {m["job"]: m["source_sha256"] for m in read_manifest(spec) if m["event"] == "run"}
+    assert len(shas) == 4 and len(set(shas.values())) == 4  # every job saw a different edit
+
+
+def test_edits_outside_the_runtime_neither_stop_nor_refuse_a_sweep(tmp_path, fake_harbor, stub_config, code_root):
+    """Analysis, plots, launcher, scripts and configs are never imported or
+    read by an episode: editing them mid-sweep or before a resume only adds a
+    fingerprint. A runtime edit is still refused."""
+    for rel in ("subagents_bench/analysis/tables.py", "configs/sweeps/other.yaml", "scripts/analyze.sh"):
+        (code_root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (code_root / rel).write_text("v1\n")
+    spec = sweep.load_spec(make_project(tmp_path))
+    fake_harbor.on_job = lambda job: (code_root / "subagents_bench/analysis/tables.py").write_text(f"after {job}\n")
+    lines: list[str] = []
+    assert sweep.run_sweep(spec, only=["par"], out=lines.append) == 0
+    assert len(fake_harbor.popen_calls) == 2
+    assert any(s.startswith("NOTE: only files episodes do not use changed during the sweep")
+               and "subagents_bench/analysis/tables.py" in s for s in lines)
+    fake_harbor.on_job = None
+    (code_root / "configs/sweeps/other.yaml").write_text("v2\n")
+    (code_root / "scripts/analyze.sh").write_text("v2\n")
+    lines.clear()
+    assert sweep.run_sweep(spec, out=lines.append) == 0  # resume: not refused
+    assert len(fake_harbor.popen_calls) == 4
+    assert any("but only in files episodes do not use (configs/sweeps/other.yaml, scripts/analyze.sh" in s
+               for s in lines)
+    sj = json.loads((spec.jobs_dir / "sweep.json").read_text())
+    assert len(sj["source_sha256s"]) == 3 and sj["mixed_source"] is False
+    assert sj["status"] == "complete"
+    # The same check still refuses an edit to the code under test.
+    (code_root / "subagents_bench" / "__init__.py").write_text("VERSION = 2\n")
+    lines.clear()
+    assert sweep.run_sweep(spec, out=lines.append) == sweep.EXIT_CONFIG
+    assert any("resume refused: the harness source changed" in s and "subagents_bench/__init__.py" in s
+               for s in lines)
+
+
+def test_mixed_source_counts_episode_fingerprints(tmp_path, fake_harbor, stub_config):
+    spec = sweep.load_spec(make_project(tmp_path))
+    assert sweep.run_sweep(spec, out=lambda s: None) == 0
+    sj = json.loads((spec.jobs_dir / "sweep.json").read_text())
+    assert sj["mixed_source"] is False and len(sj["source_sha256s"]) == 1
+    # An episode that ran other code (the harbor process imported an edit).
+    ep = spec.jobs_dir / "t__r2__par" / "fix-git__abc0" / "agent" / "episode.json"
+    ep.write_text(json.dumps({**json.loads(ep.read_text()), "source_sha256": "f" * 64}))
+    assert sweep.run_sweep(spec, allow_code_change=True, out=lambda s: None) == 0
+    sj = json.loads((spec.jobs_dir / "sweep.json").read_text())
+    assert sj["mixed_source"] is True and "f" * 64 in sj["source_sha256s"]
+
+
+# ---------------------------------------------------------------------------
+# resume: task list and harbor arguments
+# ---------------------------------------------------------------------------
+
+
+def test_tasks_meta_is_merged_not_replaced(tmp_path):
+    spec = sweep.load_spec(make_project(tmp_path))
+    meta = {"dataset": "terminal-bench@2.0", "tasks": {t: {"difficulty": "easy"} for t in ("a", "b", "c")}}
+    sweep.write_tasks_meta(spec, meta, ["a", "b"])
+    sweep.write_tasks_meta(spec, meta, ["c"])
+    assert list(sweep.read_tasks_meta(spec)["tasks"]) == ["a", "b", "c"]
+
+
+@pytest.mark.parametrize(
+    "change, expect",
+    [
+        ({"tasks": ["fix-git", "crack-7z-hash"]}, "the task list differs from 1 complete job(s) (t__r1__par): "
+                                                  "added ['crack-7z-hash'], removed ['prove-plus-comm']"),
+        ({"harbor": {"n_concurrent": 2}}, "the harbor arguments differ from 1 complete job(s) (t__r1__par): "),
+    ],
+)
+def test_resume_refuses_changed_tasks_or_harbor_args_unless_allowed(tmp_path, fake_harbor, stub_config, change, expect):
+    spec = sweep.load_spec(make_project(tmp_path))
+    assert sweep.run_sweep(spec, only=["par"], rounds=[1], out=lambda s: None) == 0
+    spec = sweep.load_spec(make_project(tmp_path, **change))
+    lines: list[str] = []
+    assert sweep.run_sweep(spec, out=lines.append) == sweep.EXIT_CONFIG
+    assert len(fake_harbor.popen_calls) == 1
+    assert any(s.startswith("resume refused: " + expect) for s in lines), lines
+    if "harbor" in change:
+        assert any("-n 4 -k 1" in s and "-> " in s and "-n 2 -k 1" in s for s in lines)
+    assert sweep.run_sweep(spec, allow_task_change=True, out=lines.append) == 0
+    assert any(s.startswith("WARNING (allowed): " + expect) for s in lines)
+    inv = json.loads((spec.jobs_dir / "sweep.json").read_text())["invocations"]
+    assert inv[0]["tasks"] == ["fix-git", "prove-plus-comm"] and inv[-1]["tasks"] == spec.tasks
+    if "tasks" in change:
+        # Earlier tasks keep their metadata for their trials.
+        assert set(sweep.read_tasks_meta(spec)["tasks"]) == {"fix-git", "prove-plus-comm", "crack-7z-hash"}
+        # Without the manifest the task list comes from harbor's own job config.json.
+        (spec.jobs_dir / sweep.MANIFEST_NAME).unlink()
+        lines.clear()
+        assert sweep.run_sweep(spec, dry_run=True, out=lines.append) == sweep.EXIT_CONFIG
+        assert any("REFUSE (unless --allow-task-change): " + expect in s for s in lines)
 
 
 # ---------------------------------------------------------------------------
@@ -864,23 +1317,49 @@ def test_real_pilot_dry_run_counts(fake_harbor, stub_config, monkeypatch):
 def test_estimate_episode_shapes():
     spec = sweep.load_spec(SWEEPS / "pilot.yaml")
     res = sweep.resolve_conditions(spec)
+    rm = sweep.RoughModel()
     single = sweep.estimate_episode(res["single_5step"])
     assert single.calls == {"orch": 5, "sub": 0.0, "arb": 0.0, "deb": 0.0}
-    rm = sweep.RoughModel()
     prompt = 5 * rm.orch_prompt_base + rm.orch_prompt_growth * 10
     expect = ((1 - rm.cached_frac) * prompt * 0.07 + rm.cached_frac * prompt * 0.005 + 5 * rm.orch_completion * 0.22) / 1e6
     assert single.cost["orch"] == pytest.approx(expect)
+    # A finishing orchestrator stops early: single_matched typically uses 12 of 40 steps.
+    assert sweep.estimate_episode(res["single_matched"]).calls["orch"] == rm.typical_steps_max == 12
+    assert sweep.estimate_episode(res["single_matched"], upper=True).calls["orch"] == 40
+    # An orchestrator with all its tools does not delegate (smoke: 0 of 18 episodes) ...
     par = sweep.estimate_episode(res["gemma31b_parallel_hard"])
-    seq = sweep.estimate_episode(res["gemma31b_sequential_hard"])
-    arb = sweep.estimate_episode(res["gemma31b_arbiter_hard"])
+    assert par.calls["sub"] == 0 and par.cost_total == pytest.approx(single.cost_total)
+    # ... a manager must.
+    assert not sweep.is_manager(res["gemma31b_parallel_hard"]) and sweep.is_manager(res["manager_parallel_hard"])
+    assert not sweep.is_manager(res["single_5step"])
+    mpar = sweep.estimate_episode(res["manager_parallel_hard"])
+    mseq = sweep.estimate_episode(res["manager_sequential_hard"])
+    marb = sweep.estimate_episode(res["manager_arbiter_hard"])
+    assert mpar.calls["sub"] == pytest.approx(15 * 0.4 * 6)  # 6 dispatches x ceil(8 * 0.7) steps
+    assert mseq.seconds > mpar.seconds  # sequential runs dispatches one at a time
+    assert marb.calls["arb"] > 0 and marb.calls["deb"] > 0
     up = sweep.estimate_episode(res["gemma31b_parallel_hard"], upper=True)
-    assert par.calls["sub"] == 7.5 * 6 and up.calls["sub"] == 15 * 8
-    assert up.cost_total > par.cost_total > single.cost_total
-    assert seq.seconds > par.seconds  # sequential runs dispatches one at a time
-    assert arb.calls["arb"] > 0 and arb.calls["deb"] > 0
+    assert up.calls["sub"] == 15 * 8
+    assert up.cost_total > mpar.cost_total > single.cost_total
     nop = copy.deepcopy(res["single_5step"])
     nop["orchestrator"]["price_in"] = None
     assert sweep.estimate_episode(nop).cost_total is None  # unknown price -> unknown cost
+
+
+def test_rough_model_reproduces_the_smoke_measurements():
+    """The calibration's own data (smoke sweep 2026-10-11/12, Sail balanced):
+    all-tools episodes cost ~$0.0009 and took ~70 s per trial (agent ~38 s
+    + ~33 s harbor overhead); manager_arbiter_hard cost $0.015-0.025 and ran
+    6-17 min. The model must land in those ranges."""
+    res = sweep.resolve_conditions(sweep.load_spec(SWEEPS / "pilot.yaml"))
+    for cond in ("single_5step", "gemma31b_parallel_hard", "gemma31b_arbiter_hard", "samemodel_parallel_hard"):
+        est = sweep.estimate_episode(res[cond])
+        assert 0.0005 < est.cost_total < 0.0015, cond
+        assert 50 < est.seconds < 100, cond
+    matched = sweep.estimate_episode(res["single_matched"])
+    assert 0.001 < matched.cost_total < 0.004 and 80 < matched.seconds < 160  # measured $0.0016-0.0020, 79-129 s
+    marb = sweep.estimate_episode(res["manager_arbiter_hard"])
+    assert 0.01 < marb.cost_total < 0.04 and 6 * 60 < marb.seconds < 17 * 60
 
 
 # ---------------------------------------------------------------------------
@@ -988,15 +1467,32 @@ def test_preflight_oracle_reports_failing_tasks_and_reuses_job(tmp_path, fake_ha
     pf = json.loads((spec.jobs_dir / "preflight.json").read_text())
     assert pf["oracle"]["failing_tasks"] == ["prove-plus-comm"]
     assert pf["oracle"]["mean_reward"] == 0.5
-    # Second preflight reuses the complete _oracle job instead of rerunning.
+    # A failed oracle job is not cached: the next preflight moves it aside and
+    # reruns it (the cause may have been transient: an image pull, memory).
     sweep.run_preflight(spec, oracle=True, skip_llm=True, out=lines.append)
-    assert len(fake_harbor.popen_calls) == 1
-    assert json.loads((spec.jobs_dir / "preflight.json").read_text())["oracle"]["reused"] is True
+    assert len(fake_harbor.popen_calls) == 2
+    pf = json.loads((spec.jobs_dir / "preflight.json").read_text())
+    assert pf["oracle"]["reused"] is False and pf["oracle"]["moved_partial_to"] == "jobs/t/_partial/_oracle.retry.1"
+    assert any("failing: ['prove-plus-comm']" in s for s in lines)
+
+    # Fixed: the rerun passes, and a passing oracle job is reused.
+    monkeypatch.setattr(sweep.subprocess, "Popen", fake_harbor.popen)
+    assert sweep.run_preflight(spec, oracle=True, skip_llm=True, out=lines.append) == 0
+    assert sweep.run_preflight(spec, oracle=True, skip_llm=True, out=lines.append) == 0
+    assert len(fake_harbor.popen_calls) == 3
+    pf = json.loads((spec.jobs_dir / "preflight.json").read_text())
+    assert pf["oracle"]["reused"] is True and pf["oracle"]["failing_tasks"] == []
+    # --redo-oracle reruns even a passing job (and implies --oracle).
+    assert sweep.run_preflight(spec, redo_oracle=True, skip_llm=True, out=lines.append) == 0
+    assert len(fake_harbor.popen_calls) == 4
+    assert json.loads((spec.jobs_dir / "preflight.json").read_text())["oracle"]["moved_partial_to"] == \
+        "jobs/t/_partial/_oracle.retry.3"
+
     # A task added to the spec makes the old oracle job stale: moved aside, rerun.
     spec.tasks = ["fix-git", "prove-plus-comm", "crack-7z-hash"]
     ok, info = sweep.run_oracle(spec, spec.tasks, "/fake/bin/harbor", out=lines.append)
-    assert len(fake_harbor.popen_calls) == 2 and info["reused"] is False
-    assert info["moved_partial_to"] == "jobs/t/_partial/_oracle.partial.1"
+    assert len(fake_harbor.popen_calls) == 5 and info["reused"] is False
+    assert info["moved_partial_to"] == "jobs/t/_partial/_oracle.retry.4"
 
 
 def test_register_cli_parses_subcommands():
@@ -1006,8 +1502,12 @@ def test_register_cli_parses_subcommands():
     sweep.register_cli(parser.add_subparsers(dest="cmd"))
     a = parser.parse_args(["sweep", "configs/sweeps/pilot.yaml", "--dry-run", "--only", "single_5step", "samemodel_parallel_hard", "--rounds", "1,3"])
     assert (a.cmd, a.dry_run, a.only, a.rounds, a.max_consecutive_failures) == ("sweep", True, ["single_5step", "samemodel_parallel_hard"], [1, 3], 3)
+    assert (a.allow_config_change, a.allow_task_change, a.allow_code_change) == (False, False, False)
+    a = parser.parse_args(["sweep", "x.yaml", "--allow-task-change", "--allow-code-change"])
+    assert (a.allow_task_change, a.allow_code_change) == (True, True)
     p = parser.parse_args(["preflight", "configs/sweeps/smoke.yaml", "--oracle"])
-    assert (p.cmd, p.oracle, p.skip_llm) == ("preflight", True, False)
+    assert (p.cmd, p.oracle, p.redo_oracle, p.skip_llm) == ("preflight", True, False, False)
+    assert parser.parse_args(["preflight", "x.yaml", "--redo-oracle"]).redo_oracle is True
     t = parser.parse_args(["tasks"])
     assert t.dataset == "terminal-bench@2.0"
 

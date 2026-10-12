@@ -1,9 +1,21 @@
 # Optional subagent-SIZE sweep: Qwen3.5 {0.8, 2, 4, 9}B on Prime Intellect as
 # subagents; the orchestrator stays DeepSeek-V4.1-Flash on Sail (balanced).
 # Strategy x scope is fixed at parallel x hard, so only the subagent model
-# varies. Same 10 tasks and 3 rounds as the pilot -> 4 x 10 x 3 = 120 episodes.
-# Compare against the pilot's single_5step / gemma31b_parallel_hard /
-# samemodel_parallel_hard (same tasks, same orchestrator).
+# varies. Same 10 tasks and 3 rounds as the pilot.
+#
+# Two anchor conditions run in the same rounds, shuffled in with the Qwen
+# arms: single_5step (no subagents) and gemma31b_parallel_hard (the pilot's
+# Gemma-4-31B subagents on Sail). Size effects are estimated WITHIN this
+# sweep, so drift in DeepSeek's behaviour or latency between the pilot and
+# this sweep (hours to days apart) cannot pose as a size effect. Keep in mind
+# that the subagent provider differs too: Gemma runs on Sail (NVFP4), the
+# Qwen models on Prime, so provider is a covariate of the Gemma-vs-Qwen gap.
+# 6 conditions x 10 tasks x 3 rounds = 180 episodes, 18 harbor jobs.
+#
+#   scripts/run_experiment.sh configs/sweeps/prime_size.yaml
+#   scripts/analyze.sh jobs/prime_size        # within-sweep: anchors + Qwen sizes
+#
+# docs/REPRODUCE.md ("Size sweep") also shows the pilot side by side.
 #
 # Prime credentials: PRIME_API_KEY + PRIME_TEAM_ID in .env, or a logged-in
 # `prime` CLI (~/.prime/config.json). Requests carry X-Prime-Team-ID.
@@ -35,6 +47,14 @@ order_seed: 0
 base: configs/sail/base.yaml
 
 conditions:
+  # --- anchors, interleaved with the size arms (the pilot's own overrides) ---
+  single_5step:
+    topology: single
+  gemma31b_parallel_hard:          # Gemma-4-31B on Sail, from base
+    topology: subagents
+    subagent: {strategy: parallel, scope: hard}
+
+  # --- Qwen3.5 subagents on Prime, by size --------------------------------
   qwen0.8b_parallel_hard:
     topology: subagents
     subagent:

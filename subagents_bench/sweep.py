@@ -12,14 +12,21 @@ launcher turns it into one ``harbor run`` job per (round, condition):
   (interleaving, so provider drift over the sweep is spread across conditions);
 * a job whose ``result.json`` shows every trial finished is skipped, so a sweep
   is resumable; a partial job dir is moved aside to
-  ``<jobs_dir>/_partial/<job>.partial.<k>`` and rerun;
-* after every job, ``*/agent/episode.json`` is scanned for
-  ``exit_reason == "billing_error"`` and the sweep aborts if one is found;
+  ``<jobs_dir>/_partial/<job>.partial.<k>`` and rerun, and so is a finished
+  job with a trial that did not measure the condition (billing or provider
+  failure, an infrastructure error, an agent crash before the verifier), to
+  ``<job>.retry.<k>`` (:func:`trial_retry_reasons`);
+* after every job, the sweep aborts on a billing error (exit 3) or when
+  provider failures hit more than half the job's trials (exit 4);
+* one sweep at a time per jobs dir: ``<jobs_dir>/.sweep.lock`` (``flock``);
 * every job event is appended to ``<jobs_dir>/sweep_manifest.jsonl`` and the
-  sweep's provenance (git commit, versions, lockfile hash, spec, resolved
-  configs, order seed, date) is kept in ``<jobs_dir>/sweep.json``.
+  sweep's provenance (source fingerprint, git commit, versions, lockfile
+  hash, spec, resolved configs, order seed, date) is kept in
+  ``<jobs_dir>/sweep.json``, with uncommitted source changes saved under
+  ``<jobs_dir>/provenance/``; a resume refuses to mix code versions, task
+  lists or harbor settings with the jobs already complete unless told to.
 
-Subcommands (``register_cli``): ``preflight SPEC [--oracle]``,
+Subcommands (``register_cli``): ``preflight SPEC [--oracle] [--redo-oracle]``,
 ``sweep SPEC [--dry-run] [--only COND ...] [--rounds 1,2]`` and
 ``tasks [DATASET]``. See ``docs/DESIGN.md`` section 5 and
 ``docs/REPRODUCE.md``.
@@ -59,16 +66,25 @@ from typing import Any, Callable, Iterable
 
 import yaml
 
+from . import provenance as source_prov
+
+try:  # POSIX only; without it the sweep runs unlocked (Windows is untested anyway)
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None  # type: ignore[assignment]
+
 AGENT_IMPORT_PATH = "subagents_bench.harness.harbor_agent:OrchestratorAgent"
 PINNED_HARBOR_VERSION = "0.24.0"
 DEFAULT_DATASET = "terminal-bench@2.0"
 ORACLE_JOB = "_oracle"
 PARTIAL_DIR = "_partial"
 CONFIGS_DIR = "configs"
+PROVENANCE_DIR = "provenance"
 MANIFEST_NAME = "sweep_manifest.jsonl"
 SWEEP_JSON_NAME = "sweep.json"
 TASKS_META_NAME = "tasks_meta.json"
 PREFLIGHT_JSON_NAME = "preflight.json"
+LOCK_NAME = ".sweep.lock"
 LOCKFILE_NAMES = ("uv.lock", "requirements.lock")
 # Job names are <sweep>__r<round>__<condition>; "__" is the separator.
 JOB_SEP = "__"
@@ -89,7 +105,25 @@ EXIT_OK = 0
 EXIT_FAIL = 1
 EXIT_CONFIG = 2
 EXIT_BILLING = 3
+EXIT_PROVIDER = 4
 EXIT_INTERRUPTED = 130
+
+# Why a finished trial does not measure its condition, so its job is rerun
+# (trial_retry_reasons). Checked in this order; a trial gets the first match.
+RETRY_BILLING = "billing"  # BillingError: the account ran out
+RETRY_PROVIDER = "provider"  # a model call failed after all retries (outage, 401/403, missing key)
+RETRY_INFRA = "infrastructure"  # harbor failed outside the agent (environment start, image pull, build)
+RETRY_AGENT_EXCEPTION = "agent_exception"  # the agent raised and the verifier never ran (harness bug)
+# harbor exceptions raised before/around the agent rather than by it. Kept
+# equal to analysis.tables.OUTSIDE_AGENT_EXCEPTIONS (a test checks), without
+# importing the analysis stack here.
+INFRA_EXCEPTIONS = frozenset({
+    "EnvironmentStartTimeoutError", "AgentSetupTimeoutError", "SandboxBuildFailedError",
+    "HealthcheckError", "CancelledError", "DockerBuildError",
+})
+# telemetry.PROVIDER_ERROR_PREFIX: how a provider failure starts in calls.jsonl
+# `error` (and in episode.json `error` before schema 3); a test checks it.
+PROVIDER_ERROR_PREFIX = "LLMError:"
 
 
 class SpecError(ValueError):
@@ -527,7 +561,10 @@ def build_harbor_command(
 
 @dataclass
 class JobStatus:
-    """State of a harbor job dir: ``absent``, ``complete`` or ``partial``."""
+    """State of a harbor job dir: ``absent``, ``complete``, ``partial``,
+    ``needs_retry`` (finished, but some trial did not measure the condition:
+    see ``retry_trials``) or ``duplicate`` (more trial dirs than trials, or a
+    task run more often than its attempts: two harbor runs wrote into it)."""
 
     state: str
     reason: str
@@ -539,17 +576,62 @@ class JobStatus:
     n_running: int | None = None
     n_pending: int | None = None
     n_trial_results: int | None = None
+    n_trial_dirs: int | None = None
+    # trial name -> reasons (RETRY_*), for every trial that needs a rerun.
+    retry_trials: dict[str, list[str]] = field(default_factory=dict)
 
     @property
     def complete(self) -> bool:
         return self.state == "complete"
 
 
+def _read_json(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _trial_dirs(job_dir: Path) -> list[Path]:
+    """Every trial dir of a job (harbor writes only trial dirs as sub-dirs)."""
+    return sorted(d for d in job_dir.iterdir() if d.is_dir())
+
+
+def _trial_task(trial_dir: Path) -> str:
+    """Task of a trial: its result.json ``task_name``, else ``<task>__<suffix>``."""
+    res = _read_json(trial_dir / "result.json")
+    name = res.get("task_name") if isinstance(res, dict) else None
+    return name or trial_dir.name.rsplit(JOB_SEP, 1)[0]
+
+
+def _duplicate_trials(job_dir: Path, trial_dirs: list[Path], n_total: int) -> str | None:
+    """Why ``job_dir`` holds more trials than one harbor run makes, else None.
+
+    Two runs into one job dir (two sweeps, or a job relaunched while the old
+    harbor still ran) leave extra trial dirs that analysis would count twice.
+    """
+    if len(trial_dirs) > n_total:
+        return f"{len(trial_dirs)} trial dirs for {n_total} trials"
+    cfg = _read_json(job_dir / "config.json")
+    attempts = cfg.get("n_attempts", 1) if isinstance(cfg, dict) else 1
+    attempts = attempts if isinstance(attempts, int) and attempts > 0 else 1
+    counts: dict[str, int] = {}
+    for d in trial_dirs:
+        t = _trial_task(d)
+        counts[t] = counts.get(t, 0) + 1
+    dup = sorted(t for t, n in counts.items() if n > attempts)
+    if dup:
+        return f"task(s) run more than {attempts}x: {dup}"
+    return None
+
+
 def job_status(job_dir: Path) -> JobStatus:
-    """Classify a job dir. Complete means: ``result.json`` parses, the job has
+    """Classify a job dir. Finished means: ``result.json`` parses, the job has
     ``finished_at``, no trial is running or pending, every trial finished
     (``n_completed_trials >= n_total_trials``; harbor counts errored trials
-    as completed) and every trial dir has its own ``result.json``."""
+    as completed) and every trial dir has its own ``result.json``. A finished
+    job is ``complete`` unless a trial needs a rerun (``needs_retry``, see
+    :func:`trial_retry_reasons`). Extra trials make it ``duplicate``."""
     if not job_dir.exists():
         return JobStatus("absent", "no job dir")
     rp = job_dir / "result.json"
@@ -569,9 +651,14 @@ def job_status(job_dir: Path) -> JobStatus:
         n_running=stats.get("n_running_trials"),
         n_pending=stats.get("n_pending_trials"),
     )
-    st.n_trial_results = sum(1 for d in job_dir.iterdir() if d.is_dir() and (d / "result.json").is_file())
+    trials = _trial_dirs(job_dir)
+    st.n_trial_dirs = len(trials)
+    st.n_trial_results = sum(1 for d in trials if (d / "result.json").is_file())
+    dup = _duplicate_trials(job_dir, trials, st.n_total) if isinstance(st.n_total, int) and st.n_total > 0 else None
     if not isinstance(st.n_total, int) or st.n_total <= 0:
         st.reason = "n_total_trials missing or 0"
+    elif dup:
+        st.state, st.reason = "duplicate", dup
     elif st.n_running or st.n_pending:
         st.reason = f"{st.n_running or 0} running / {st.n_pending or 0} pending trials"
     elif not isinstance(st.n_completed, int) or st.n_completed < st.n_total:
@@ -581,19 +668,130 @@ def job_status(job_dir: Path) -> JobStatus:
     elif st.n_trial_results < st.n_total:
         st.reason = f"only {st.n_trial_results}/{st.n_total} trial result.json files"
     else:
-        st.state, st.reason = "complete", f"{st.n_completed}/{st.n_total} trials finished ({st.n_errored or 0} errored)"
+        done = f"{st.n_completed}/{st.n_total} trials finished ({st.n_errored or 0} errored)"
+        st.retry_trials = trial_retry_reasons(job_dir)
+        if st.retry_trials:
+            st.state, st.reason = "needs_retry", f"{done}; {_retry_summary(st.retry_trials)}"
+        else:
+            st.state, st.reason = "complete", done
     return st
 
 
-def move_partial(job_dir: Path, jobs_dir: Path) -> Path:
-    """Move a partial job dir to ``<jobs_dir>/_partial/<job>.partial.<k>``
-    (k = 1, 2, ...) and return the new path. Nothing is deleted."""
+def _retry_summary(retry: dict[str, list[str]]) -> str:
+    counts: dict[str, int] = {}
+    for reasons in retry.values():
+        for r in reasons:
+            counts[r] = counts.get(r, 0) + 1
+    return f"{len(retry)} to rerun (" + ", ".join(f"{r} {n}" for r, n in sorted(counts.items())) + ")"
+
+
+def _calls_have_provider_error(calls_path: Path) -> bool:
+    try:
+        with calls_path.open() as f:
+            for line in f:
+                if PROVIDER_ERROR_PREFIX in line:
+                    try:
+                        err = json.loads(line).get("error")
+                    except ValueError:
+                        continue
+                    if isinstance(err, str) and err.startswith(PROVIDER_ERROR_PREFIX):
+                        return True
+    except OSError:
+        return False
+    return False
+
+
+def _provider_failed(ep: dict[str, Any], agent_dir: Path) -> bool:
+    """Whether a provider failure touched the episode: exit_reason
+    ``provider_error``, or ``n_provider_errors > 0``. Records from before
+    schema 3 have neither, so their ``error`` and calls.jsonl are checked."""
+    if ep.get("exit_reason") == "provider_error":
+        return True
+    n = ep.get("n_provider_errors")
+    if isinstance(n, int):
+        return n > 0
+    err = ep.get("error")
+    if ep.get("exit_reason") == "error" and isinstance(err, str) and err.startswith(PROVIDER_ERROR_PREFIX):
+        return True
+    return _calls_have_provider_error(agent_dir / "calls.jsonl")
+
+
+def _exception_outside_agent(res: dict[str, Any], exc: dict[str, Any]) -> bool:
+    """harbor's exception happened outside the agent (environment build or
+    start, setup, cancel): the rule of analysis.tables.exception_outside_agent."""
+    if exc.get("exception_type") in INFRA_EXCEPTIONS:
+        return True
+    ae = res.get("agent_execution")
+    started = ae.get("started_at") if isinstance(ae, dict) else None
+    if not started:
+        return True  # the agent never started
+    occurred, start = _iso_ts(exc.get("occurred_at")), _iso_ts(started)
+    return bool(occurred is not None and start is not None and occurred < start)
+
+
+def _iso_ts(v: Any) -> float | None:
+    """Epoch seconds of one of harbor's ISO timestamps (naive ones are UTC)."""
+    if not isinstance(v, str) or not v:
+        return None
+    try:
+        dt = datetime.fromisoformat(v.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).timestamp()
+
+
+def trial_retry_reasons(job_dir: Path) -> dict[str, list[str]]:
+    """trial name -> why the trial must be rerun, for every trial whose
+    outcome does not measure its condition:
+
+    * ``billing``: episode exit_reason ``billing_error`` or harbor exception
+      ``BillingError``;
+    * ``provider``: exit_reason ``provider_error``, ``n_provider_errors > 0``
+      (any role's call failed after all retries) or harbor exception
+      ``ProviderUnavailableError``;
+    * ``infrastructure``: harbor's exception happened outside the agent
+      (:data:`INFRA_EXCEPTIONS`, or before the agent started);
+    * ``agent_exception``: the agent raised and the verifier never ran.
+
+    An agent timeout is an outcome, not a retry reason: harbor still runs
+    the verifier after it. Trials without ``result.json`` (still running)
+    count only through their episode.json.
+    """
+    out: dict[str, list[str]] = {}
+    if not job_dir.is_dir():
+        return out
+    for trial in _trial_dirs(job_dir):
+        res = _read_json(trial / "result.json")
+        res = res if isinstance(res, dict) else {}
+        ep = _read_json(trial / "agent" / "episode.json")
+        ep = ep if isinstance(ep, dict) else {}
+        exc = res.get("exception_info")
+        exc = exc if isinstance(exc, dict) else None
+        etype = exc.get("exception_type") if exc else None
+        if ep.get("exit_reason") == "billing_error" or etype == "BillingError":
+            reason = RETRY_BILLING
+        elif etype == "ProviderUnavailableError" or (ep and _provider_failed(ep, trial / "agent")):
+            reason = RETRY_PROVIDER
+        elif exc and res and _exception_outside_agent(res, exc):
+            reason = RETRY_INFRA
+        elif exc and res and not (isinstance(res.get("verifier"), dict) and res["verifier"].get("started_at")):
+            reason = RETRY_AGENT_EXCEPTION
+        else:
+            continue
+        out[trial.name] = [reason]
+    return out
+
+
+def move_aside(job_dir: Path, jobs_dir: Path, kind: str = "partial") -> Path:
+    """Move a job dir to ``<jobs_dir>/_partial/<job>.<kind>.<k>`` (k = 1, 2,
+    ...) and return the new path. Nothing is deleted. ``kind`` is
+    ``partial`` (unfinished) or ``retry`` (finished, rerun)."""
     dest_root = jobs_dir / PARTIAL_DIR
     dest_root.mkdir(parents=True, exist_ok=True)
     k = 1
-    while (dest_root / f"{job_dir.name}.partial.{k}").exists():
+    while (dest_root / f"{job_dir.name}.{kind}.{k}").exists():
         k += 1
-    dest = dest_root / f"{job_dir.name}.partial.{k}"
+    dest = dest_root / f"{job_dir.name}.{kind}.{k}"
     shutil.move(str(job_dir), str(dest))
     return dest
 
@@ -656,14 +854,18 @@ def _run(cmd: list[str], *, timeout: float | None = 60, cwd: Path | None = None,
         return subprocess.CompletedProcess(cmd, 124, "", f"timed out after {e.timeout}s")
 
 
-def run_job_process(cmd: list[str], *, env: dict[str, str], cwd: Path, grace_sec: float = 120.0) -> int:
+def run_job_process(
+    cmd: list[str], *, env: dict[str, str], cwd: Path, grace_sec: float = 120.0, pass_fds: tuple[int, ...] = ()
+) -> int:
     """Run a harbor job with inherited stdout/stderr; return its exit code.
 
     On Ctrl-C harbor (same process group) receives SIGINT too; we give it
     ``grace_sec`` to cancel trials and remove containers before terminating
-    it, then re-raise KeyboardInterrupt.
+    it, then re-raise KeyboardInterrupt. ``pass_fds`` stay open in harbor
+    (the sweep lock).
     """
-    proc = subprocess.Popen(cmd, env=env, cwd=cwd)
+    kw: dict[str, Any] = {"pass_fds": pass_fds} if pass_fds else {}
+    proc = subprocess.Popen(cmd, env=env, cwd=cwd, **kw)
     try:
         return proc.wait()
     except KeyboardInterrupt:
@@ -749,14 +951,111 @@ def sha256_file(path: Path) -> str | None:
         return None
 
 
-def git_info(root: Path) -> tuple[str | None, bool | None]:
-    """(commit, dirty) of the repo at ``root``; (None, None) without git."""
-    head = _run(["git", "-C", str(root), "rev-parse", "HEAD"], timeout=20)
-    if head.returncode != 0:
-        return None, None
-    status = _run(["git", "-C", str(root), "status", "--porcelain"], timeout=30)
-    dirty = bool(status.stdout.strip()) if status.returncode == 0 else None
-    return head.stdout.strip() or None, dirty
+def code_root() -> Path:
+    """Root of the harness code that harbor jobs import (the repository this
+    package runs from): what the source fingerprint and git state describe."""
+    return source_prov.repo_root()
+
+
+def source_state(root: Path) -> dict[str, Any]:
+    """``{source_sha256, git_commit, git_dirty, untracked_source_files}`` of
+    the code at ``root`` (:mod:`subagents_bench.provenance`; never raises).
+    ``source_sha256`` identifies the code even when it is uncommitted;
+    ``git_dirty`` covers tracked source files only."""
+    return {"source_sha256": source_prov.source_fingerprint(root), **source_prov.git_info(root)}
+
+
+def source_file_hashes(root: Path) -> dict[str, str]:
+    """relative path -> sha256 of every source file the fingerprint covers."""
+    out = {}
+    for rel in source_prov.source_files(root):
+        h = sha256_file(root / rel)
+        if h is not None:
+            out[rel] = h
+    return out
+
+
+def write_source_record(jobs_dir: Path, root: Path, state: dict[str, Any], name: str) -> dict[str, str | None]:
+    """Save what is needed to recover the code that ran, under
+    ``<jobs_dir>/provenance/``, and return the paths written (relative to
+    ``jobs_dir``):
+
+    * ``source_<sha16>.json``: per-file sha256 of the fingerprinted source,
+      once per fingerprint (lets a refusal name the files that changed);
+    * ``<name>.patch``, only when tracked source differs from HEAD or there
+      are untracked source files: ``git diff HEAD`` of the source paths plus
+      every untracked source file as a new-file diff. ``git apply`` on a
+      checkout of ``git_commit`` restores the tree. Nothing outside git.
+    """
+    out: dict[str, str | None] = {"files": None, "patch": None}
+    pdir = jobs_dir / PROVENANCE_DIR
+    fp = state.get("source_sha256")
+    if fp:
+        files_path = pdir / f"source_{fp[:16]}.json"
+        if not files_path.is_file():
+            write_json_atomic(files_path, {"source_sha256": fp, "root": str(root), "files": source_file_hashes(root)})
+        out["files"] = _rel(files_path, jobs_dir)
+    untracked = state.get("untracked_source_files") or []
+    if state.get("git_commit") and (state.get("git_dirty") or untracked):
+        parts = [
+            f"# Uncommitted harness source of {name}: apply with `git apply` on a checkout of\n"
+            f"# {state['git_commit']} (source_sha256 {fp}).\n"
+        ]
+        diff = _run(["git", "-C", str(root), "diff", "--binary", "HEAD", "--", *source_prov.SOURCE_PATHS], timeout=60)
+        parts.append(diff.stdout if diff.returncode == 0 else f"# git diff HEAD failed: {diff.stderr.strip()[:300]}\n")
+        for rel in untracked:
+            # Exit code 1 means "differs", which a new file always does.
+            new_file = _run(["git", "diff", "--no-index", "--binary", "--", "/dev/null", rel], timeout=60, cwd=root)
+            parts.append(new_file.stdout if new_file.returncode in (0, 1) else f"# cannot diff {rel}\n")
+        patch_path = pdir / f"{name}.patch"
+        patch_path.parent.mkdir(parents=True, exist_ok=True)
+        patch_path.write_text("".join(parts))
+        out["patch"] = _rel(patch_path, jobs_dir)
+    return out
+
+
+def _source_record(jobs_dir: Path, sha: str) -> dict[str, str] | None:
+    """The per-file hashes recorded for fingerprint ``sha``
+    (``provenance/source_<sha16>.json``), or None."""
+    rec = _read_json(jobs_dir / PROVENANCE_DIR / f"source_{sha[:16]}.json")
+    if not isinstance(rec, dict) or not isinstance(rec.get("files"), dict) or rec.get("source_sha256") != sha:
+        return None
+    return rec["files"]
+
+
+def source_changes(jobs_dir: Path, old_sha: str, root: Path) -> list[str] | None:
+    """Every file that differs between the source recorded for ``old_sha``
+    and the code at ``root`` now; None when that record does not exist."""
+    before = _source_record(jobs_dir, old_sha)
+    if before is None:
+        return None
+    now = source_file_hashes(root)
+    return sorted(f for f in set(before) | set(now) if before.get(f) != now.get(f))
+
+
+def _listing(files: list[str], limit: int = 12) -> list[str]:
+    """``files`` cut to ``limit`` names for a message."""
+    return files[:limit] + ([f"... {len(files) - limit} more"] if len(files) > limit else [])
+
+
+def outside_runtime(changed: list[str] | None) -> bool:
+    """True when a source change is known and touches only files no episode
+    imports or reads (analysis, plots, the launcher, scripts, configs:
+    :data:`subagents_bench.provenance.NON_RUNTIME_PATHS`), so the code under
+    test is unchanged."""
+    return bool(changed) and not any(source_prov.affects_runtime(f) for f in changed)
+
+
+def runtime_versions(jobs_dir: Path, shas: Iterable[str]) -> set[str]:
+    """The distinct versions of the code under test among source
+    fingerprints ``shas``: each one's runtime fingerprint from its provenance
+    record, or the fingerprint itself when it has no record (then it counts
+    as different)."""
+    out = set()
+    for sha in shas:
+        files = _source_record(jobs_dir, sha)
+        out.add(sha if files is None else "runtime:" + source_prov.runtime_fingerprint(files))
+    return out
 
 
 def harbor_version(harbor: str | None = None) -> str | None:
@@ -795,13 +1094,14 @@ def docker_info() -> dict[str, Any] | None:
 
 
 def provenance(root: Path, harbor: str | None, *, with_docker: bool) -> dict[str, Any]:
-    commit, dirty = git_info(root)
+    """One invocation's provenance; ``root`` is the harness code's root
+    (:func:`code_root`)."""
+    state = source_state(root)
     lock_name, lock_sha = lockfile_info(root)
     return {
         "invocation_id": uuid.uuid4().hex,
         "date": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "git_commit": commit,
-        "git_dirty": dirty,
+        **state,
         "python_version": platform.python_version(),
         "python_executable": sys.executable,
         "harbor_version": harbor_version(harbor),
@@ -835,6 +1135,117 @@ def append_manifest(path: Path, record: dict[str, Any]) -> None:
         f.write(json.dumps(record, default=str) + "\n")
         f.flush()
         os.fsync(f.fileno())
+
+
+# ---------------------------------------------------------------------------
+# One sweep at a time per jobs dir
+# ---------------------------------------------------------------------------
+
+
+class SweepLocked(RuntimeError):
+    """Another process holds the jobs dir's sweep lock."""
+
+
+class SweepLock:
+    """Exclusive, non-blocking ``flock`` on ``<jobs_dir>/.sweep.lock``, held
+    while a sweep (or ``preflight --oracle``) changes the jobs dir.
+
+    Without it a second invocation would see the first one's running job as
+    partial, move it aside and relaunch it while the first harbor keeps
+    writing trials into the new dir. The kernel drops the lock when the
+    holder exits, however it exits, so a stale file never blocks anything;
+    harbor jobs inherit the descriptor (``fd`` for ``pass_fds``), so the
+    lock also outlives a sweep process killed while its harbor job runs.
+    The file names the holder (pid, host, invocation id, command, start).
+    """
+
+    def __init__(self, jobs_dir: Path, *, invocation_id: str | None = None, what: str = "sweep"):
+        self.path = jobs_dir / LOCK_NAME
+        self.info = {
+            "pid": os.getpid(),
+            "host": platform.node(),
+            "invocation_id": invocation_id,
+            "what": what,
+            "argv": sys.argv,
+            "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        self.fd: int | None = None
+
+    def acquire(self) -> SweepLock:
+        if fcntl is None:
+            return self
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            holder = _read_lock_info(fd)
+            os.close(fd)
+            raise SweepLocked(
+                f"another {holder.get('what') or 'sweep'} holds {self.path}: {describe_lock_holder(holder)}. "
+                "Wait for it to finish or stop it: two sweeps on one jobs dir move each other's "
+                "running jobs aside and write duplicate trials."
+            ) from None
+        os.ftruncate(fd, 0)
+        os.write(fd, (json.dumps(self.info, default=str) + "\n").encode())
+        self.fd = fd
+        return self
+
+    def release(self) -> None:
+        if self.fd is None:
+            return
+        try:
+            os.ftruncate(self.fd, 0)  # still held: nobody reads a half-cleared file
+            fcntl.flock(self.fd, fcntl.LOCK_UN)
+        finally:
+            os.close(self.fd)
+            self.fd = None
+
+    def __enter__(self) -> SweepLock:
+        return self.acquire()
+
+    def __exit__(self, *exc: Any) -> None:
+        self.release()
+
+
+def _read_lock_info(fd: int) -> dict[str, Any]:
+    try:
+        os.lseek(fd, 0, os.SEEK_SET)
+        data = json.loads(os.read(fd, 65536).decode() or "{}")
+    except (OSError, ValueError, UnicodeDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def describe_lock_holder(info: dict[str, Any]) -> str:
+    if not info:
+        return "holder unknown"
+    cmd = " ".join(str(a) for a in info.get("argv") or [])
+    return (
+        f"pid {info.get('pid')} on {info.get('host')}, invocation {info.get('invocation_id')}, "
+        f"since {info.get('started_at')}" + (f", command: {cmd}" if cmd else "")
+    )
+
+
+def lock_holder(jobs_dir: Path) -> dict[str, Any] | None:
+    """Who holds ``<jobs_dir>/.sweep.lock`` right now (its info, possibly
+    empty), or None if nobody does. Creates nothing."""
+    path = jobs_dir / LOCK_NAME
+    if fcntl is None or not path.is_file():
+        return None
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return None
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except OSError:
+            return _read_lock_info(fd)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return None
+    finally:
+        os.close(fd)
 
 
 # ---------------------------------------------------------------------------
@@ -962,11 +1373,15 @@ def select_tasks(spec: SweepSpec, dataset_meta: dict[str, Any] | None) -> list[s
 
 
 def write_tasks_meta(spec: SweepSpec, dataset_meta: dict[str, Any], tasks: list[str]) -> Path:
+    """Write ``<jobs_dir>/tasks_meta.json`` for ``tasks``, keeping the entries
+    of tasks an earlier invocation wrote: their trials stay in the jobs dir
+    and still need their difficulty and category."""
     missing = [t for t in tasks if t not in dataset_meta["tasks"]]
     if missing:
         raise SpecError(f"tasks not in {spec.dataset}: {missing}")
     meta = dict(dataset_meta)
-    meta["tasks"] = {t: dataset_meta["tasks"][t] for t in tasks}
+    earlier = (read_tasks_meta(spec) or {}).get("tasks")
+    meta["tasks"] = {**(earlier if isinstance(earlier, dict) else {}), **{t: dataset_meta["tasks"][t] for t in tasks}}
     path = spec.jobs_dir / TASKS_META_NAME
     write_json_atomic(path, meta)
     return path
@@ -987,46 +1402,82 @@ def read_tasks_meta(spec: SweepSpec) -> dict[str, Any] | None:
 
 @dataclass(frozen=True)
 class RoughModel:
-    """ASSUMED sizes and latencies for ``sweep --dry-run`` planning numbers.
+    """Token and latency model behind ``sweep --dry-run``'s planning numbers.
 
-    These are not measurements and not derived from any run. They exist so a
-    dry-run can say "dollars, not thousands of dollars" and "hours, not
-    days". Replace them with values from the smoke sweep's ``episodes.csv``
-    before quoting a budget.
+    ROUGH, calibrated from the smoke sweep of 2026-10-11/12 (Sail balanced
+    tier; fix-git and prove-plus-comm; 1 round): the 24 episodes of the
+    all-tools conditions (``jobs/smoke_v1_alltools``: 133 orchestrator
+    calls) and the first 2 ``manager_arbiter_hard`` episodes (``jobs/smoke``,
+    one cancelled by its timeout: 63 subagent, 5 judge, 6 debate calls). Two
+    easy tasks and two manager episodes are a thin base, so quote orders of
+    magnitude only, and re-fit from a larger sweep's ``calls.csv`` and
+    ``episodes.csv`` before quoting a budget. No all-tools orchestrator
+    delegated (0 of 18 subagent-condition episodes), so the subagent, judge
+    and debate numbers come from the manager episodes alone.
 
     Token model, per agent chain of n calls: the prompt of call k (0-based)
     is ``base + k * growth`` tokens (history grows by one step of tool output
-    per call), a ``cached_frac`` share of all prompt tokens is billed at the
-    cached price, and every call emits a fixed number of completion tokens.
-    "typical" uses the ``*_frac`` usage shares below; "upper" assumes every
-    budget is exhausted (all orchestrator steps, all dispatches, all subagent
-    steps, every debate round).
+    per call), a ``*cached_frac`` share of the orchestrator's and subagents'
+    prompt tokens is billed at the cached price (judge and debate prompts are
+    not cached), and every call emits a fixed number of completion tokens.
+    "typical" uses the measured usage below; "upper" assumes every budget is
+    exhausted (all orchestrator steps, all dispatches, all subagent steps,
+    every debate round). A *manager* orchestrator (``tools.orchestrator_tools``
+    without ``bash`` and ``edit_file``) must delegate; one with all its tools
+    is assumed not to (``typical_dispatch_frac``).
     """
 
-    orch_prompt_base: int = 4000
-    orch_prompt_growth: int = 2500
-    orch_completion: int = 1500
-    sub_prompt_base: int = 2500
-    sub_prompt_growth: int = 1500
-    sub_completion: int = 500
+    # Orchestrator (all-tools episodes; prompt fitted per step).
+    orch_prompt_base: int = 2400
+    orch_prompt_growth: int = 700
+    orch_completion: int = 450
+    manager_orch_completion: int = 1400  # a manager writes the instructions
+    # Subagent (Gemma-4-31B) chains, fitted within each dispatch.
+    sub_prompt_base: int = 2000
+    sub_prompt_growth: int = 500
+    sub_completion: int = 300
+    # Judge (the orchestrator model, reasoning: long completions) and debate.
     judge_prompt_base: int = 2000
-    judge_prompt_per_candidate: int = 1500
-    judge_completion: int = 800
-    debate_prompt_base: int = 2000
+    judge_prompt_per_candidate: int = 1200
+    judge_completion: int = 4800
+    debate_prompt_base: int = 1500
     debate_prompt_per_candidate: int = 1000
-    debate_completion: int = 800
-    cached_frac: float = 0.6
+    debate_completion: int = 1500
+    cached_frac: float = 0.75
+    sub_cached_frac: float = 0.6
+    # Usage. Steps: 5-step budgets ran out; single_matched finished after 12
+    # of its 40 steps. Dispatches: all-tools 0 of 15; manager 5-6 of 15, with
+    # ~5.7 of 8 steps per subagent; 2 of 3 arbitrations debated.
     typical_steps_frac: float = 1.0
-    typical_dispatch_frac: float = 0.5
-    typical_sub_steps_frac: float = 0.75
-    typical_debate_frac: float = 0.5
-    # Seconds per orchestrator / subagent / judge call and per tool call, and
-    # harbor's per-trial overhead (environment start + verifier).
-    orch_call_sec: float = 25.0
-    sub_call_sec: float = 10.0
-    judge_call_sec: float = 15.0
-    tool_sec: float = 10.0
-    trial_overhead_sec: float = 60.0
+    typical_steps_max: int = 12
+    typical_dispatch_frac: float = 0.0
+    manager_dispatch_frac: float = 0.4
+    typical_sub_steps_frac: float = 0.7
+    typical_debate_frac: float = 0.67
+    # Mean seconds per call (Gemma on Sail is heavy-tailed: median 3 s, time
+    # to first token up to 73 s), per tool call (own tools of the
+    # orchestrator, and each subagent step's), and harbor's per-trial
+    # overhead (environment start with the image present, agent setup and
+    # verifier: trial time minus agent wall-clock).
+    orch_call_sec: float = 6.0
+    manager_orch_call_sec: float = 15.0
+    sub_call_sec: float = 16.5
+    judge_call_sec: float = 53.0
+    debate_call_sec: float = 42.0
+    tool_sec: float = 1.0
+    trial_overhead_sec: float = 33.0
+
+
+ROUGH_MODEL_SOURCE = "calibrated from the smoke sweep of 2026-10-11/12 (2 easy tasks), not a measurement of this sweep"
+
+
+def is_manager(cfg: dict[str, Any]) -> bool:
+    """A subagents condition whose orchestrator has neither ``bash`` nor
+    ``edit_file`` (``tools.orchestrator_tools``), so it must delegate."""
+    if cfg.get("topology", "subagents") != "subagents":
+        return False
+    tools = (cfg.get("tools") or {}).get("orchestrator_tools")
+    return isinstance(tools, list) and not ({"bash", "edit_file"} & set(tools))
 
 
 def _chain_prompt(n: float, base: int, growth: int) -> float:
@@ -1066,18 +1517,19 @@ def estimate_episode(cfg: dict[str, Any], rm: RoughModel = RoughModel(), *, uppe
     budget = cfg.get("budget") or {}
     steps = int(budget.get("orchestrator_steps", 5))
     sub = cfg.get("subagent") or {}
+    manager = is_manager(cfg)
     f_steps = 1.0 if upper else rm.typical_steps_frac
-    f_disp = 1.0 if upper else rm.typical_dispatch_frac
+    f_disp = 1.0 if upper else (rm.manager_dispatch_frac if manager else rm.typical_dispatch_frac)
     f_sub = 1.0 if upper else rm.typical_sub_steps_frac
     f_deb = 1.0 if upper else rm.typical_debate_frac
 
-    n_orch = steps * f_steps
+    n_orch = steps * f_steps if upper else min(steps, rm.typical_steps_max) * f_steps
     p_orch = _chain_prompt(n_orch, rm.orch_prompt_base, rm.orch_prompt_growth)
-    c_orch = n_orch * rm.orch_completion
+    c_orch = n_orch * (rm.manager_orch_completion if manager else rm.orch_completion)
     calls = {"orch": n_orch, "sub": 0.0, "arb": 0.0, "deb": 0.0}
     tokens = {"orch": p_orch + c_orch, "sub": 0.0, "arb": 0.0, "deb": 0.0}
     cost: dict[str, float | None] = {"orch": _cost(orch, p_orch, rm.cached_frac * p_orch, c_orch)}
-    seconds = rm.trial_overhead_sec + n_orch * (rm.orch_call_sec + rm.tool_sec)
+    seconds = rm.trial_overhead_sec + n_orch * ((rm.manager_orch_call_sec if manager else rm.orch_call_sec) + rm.tool_sec)
 
     if cfg.get("topology", "subagents") == "subagents":
         sub_model = sub.get("model") or orch
@@ -1090,7 +1542,7 @@ def estimate_episode(cfg: dict[str, Any], rm: RoughModel = RoughModel(), *, uppe
         c_sub = dispatches * per_disp_calls * rm.sub_completion
         calls["sub"] = dispatches * per_disp_calls
         tokens["sub"] = p_sub + c_sub
-        cost["sub"] = _cost(sub_model, p_sub, rm.cached_frac * p_sub, c_sub)
+        cost["sub"] = _cost(sub_model, p_sub, rm.sub_cached_frac * p_sub, c_sub)
         chain_sec = per_disp_calls * (rm.sub_call_sec + rm.tool_sec)
         strategy = sub.get("strategy", "parallel")
         if strategy == "arbiter":
@@ -1109,7 +1561,7 @@ def estimate_episode(cfg: dict[str, Any], rm: RoughModel = RoughModel(), *, uppe
             cost["deb"] = _cost(sub_model, p_deb, 0.0, n_deb * rm.debate_completion)
             per_group = max(1, max_conc // max(n_cand, 1))
             n_groups = math.ceil(arbitrations / per_group) if arbitrations else 0
-            seconds += n_groups * (chain_sec + (1 + f_deb * rounds) * rm.judge_call_sec + f_deb * rounds * rm.sub_call_sec)
+            seconds += n_groups * (chain_sec + (1 + f_deb * rounds) * rm.judge_call_sec + f_deb * rounds * rm.debate_call_sec)
         elif strategy == "sequential":
             seconds += dispatches * chain_sec
         else:
@@ -1135,7 +1587,10 @@ class PlannedJob:
 
     @property
     def action(self) -> str:
-        return {"complete": "skip", "partial": "move-aside+run", "absent": "run"}[self.status.state]
+        return {
+            "complete": "skip", "partial": "move-aside+run", "needs_retry": "retry", "absent": "run",
+            "duplicate": "ERROR",
+        }[self.status.state]
 
 
 def parse_rounds_arg(s: str) -> list[int]:
@@ -1202,6 +1657,161 @@ def plan_jobs(
     return plan
 
 
+def read_manifest_runs(jobs_dir: Path) -> dict[str, dict[str, Any]]:
+    """job name -> its last ``run`` line in ``sweep_manifest.jsonl``."""
+    out: dict[str, dict[str, Any]] = {}
+    try:
+        lines = (jobs_dir / MANIFEST_NAME).read_text().splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(rec, dict) and rec.get("event") == "run" and rec.get("job"):
+            out[rec["job"]] = rec
+    return out
+
+
+def cmd_settings(cmd: list[str]) -> tuple[set[str], list[str]]:
+    """(task set, the other arguments) of a ``harbor run`` argv: what decides
+    which trials a job ran and how. Left out: the executable, and where the
+    job dir is (``-o``, ``--job-name``), so a moved jobs dir still resumes."""
+    tasks: set[str] = set()
+    rest: list[str] = []
+    i = 1
+    while i < len(cmd):
+        if cmd[i] in ("-i", "-o", "--job-name") and i + 1 < len(cmd):
+            if cmd[i] == "-i":
+                tasks.add(cmd[i + 1])
+            i += 2
+            continue
+        rest.append(cmd[i])
+        i += 1
+    return tasks, rest
+
+
+def job_ran_settings(job_dir: Path, run_line: dict[str, Any] | None) -> tuple[set[str] | None, list[str] | None]:
+    """(tasks, other harbor args) a finished job ran with: from its last
+    manifest ``run`` line's ``cmd``, else the tasks in harbor's job
+    ``config.json`` or its trials (args unknown then)."""
+    if run_line and isinstance(run_line.get("cmd"), list):
+        return cmd_settings([str(a) for a in run_line["cmd"]])
+    cfg = _read_json(job_dir / "config.json")
+    names = set()
+    if isinstance(cfg, dict):
+        for ds in cfg.get("datasets") or []:
+            if isinstance(ds, dict):
+                names.update(t for t in ds.get("task_names") or [] if isinstance(t, str))
+    if not names and job_dir.is_dir():
+        names = {_trial_task(d) for d in _trial_dirs(job_dir)}
+    return (names or None), None
+
+
+def job_source_shas(job_dir: Path, run_line: dict[str, Any] | None) -> set[str]:
+    """Source fingerprints a job ran with: its manifest ``run`` line's and
+    every episode's ``source_sha256`` (absent in records before schema 3)."""
+    shas = set()
+    if run_line and isinstance(run_line.get("source_sha256"), str):
+        shas.add(run_line["source_sha256"])
+    for ep in job_dir.glob("*/agent/episode.json"):
+        d = _read_json(ep)
+        if isinstance(d, dict) and isinstance(d.get("source_sha256"), str):
+            shas.add(d["source_sha256"])
+    return shas
+
+
+@dataclass
+class ResumeCheck:
+    """What a resume would mix with the sweep's complete jobs."""
+
+    task_problems: list[str] = field(default_factory=list)  # task list or harbor args differ
+    code_problems: list[str] = field(default_factory=list)  # harness source differs
+    warnings: list[str] = field(default_factory=list)
+    complete_shas: set[str] = field(default_factory=set)
+
+
+def _jobs_listing(jobs: list[str], limit: int = 3) -> str:
+    return ", ".join(jobs[:limit]) + (f" and {len(jobs) - limit} more" if len(jobs) > limit else "")
+
+
+def resume_check(
+    spec: SweepSpec,
+    tasks: list[str],
+    plan: list[PlannedJob],
+    *,
+    harbor: str | None,
+    current_sha: str | None,
+    root: Path,
+) -> ResumeCheck:
+    """Compare every complete job of the sweep (all rounds and conditions,
+    not only the planned ones) with what this invocation would run: the task
+    set and the other ``harbor run`` arguments (from the job's last manifest
+    ``run`` line), and the harness source fingerprint (manifest line and
+    episodes). Differences mean the conditions would end up compared on
+    different tasks, settings or code."""
+    check = ResumeCheck()
+    planned = {j.job: j for j in plan}
+    runs = read_manifest_runs(spec.jobs_dir)
+    task_diffs: dict[str, list[str]] = {}
+    arg_diffs: dict[str, list[str]] = {}
+    sha_jobs: dict[str, list[str]] = {}
+    unknown_sha: list[str] = []
+    for r in range(1, spec.rounds + 1):
+        for cname in spec.conditions:
+            job = job_name(spec.name, r, cname)
+            job_dir = spec.jobs_dir / job
+            st = planned[job].status if job in planned else job_status(job_dir)
+            if not st.complete:
+                continue
+            new_tasks, new_rest = cmd_settings(build_harbor_command(
+                harbor=harbor or "harbor", dataset=spec.dataset, tasks=tasks, agent=AGENT_IMPORT_PATH,
+                env=spec.harbor.env, n_concurrent=spec.harbor.n_concurrent, jobs_dir=_rel(spec.jobs_dir, spec.root),
+                job=job, agent_timeout_multiplier=spec.harbor.agent_timeout_multiplier, extra_args=spec.harbor.extra_args,
+            ))
+            old_tasks, old_rest = job_ran_settings(job_dir, runs.get(job))
+            if old_tasks is not None and old_tasks != new_tasks:
+                added, removed = sorted(new_tasks - old_tasks), sorted(old_tasks - new_tasks)
+                task_diffs.setdefault(f"added {added}, removed {removed}", []).append(job)
+            if old_rest is not None and old_rest != new_rest:
+                arg_diffs.setdefault(f"{shlex.join(old_rest)}  ->  {shlex.join(new_rest)}", []).append(job)
+            shas = job_source_shas(job_dir, runs.get(job))
+            if not shas:
+                unknown_sha.append(job)
+            for sha in shas:
+                sha_jobs.setdefault(sha, []).append(job)
+    for diff, jobs in task_diffs.items():
+        check.task_problems.append(f"the task list differs from {len(jobs)} complete job(s) ({_jobs_listing(jobs)}): {diff}")
+    for diff, jobs in arg_diffs.items():
+        check.task_problems.append(
+            f"the harbor arguments differ from {len(jobs)} complete job(s) ({_jobs_listing(jobs)}): {diff}")
+    check.complete_shas = set(sha_jobs)
+    if current_sha:
+        for sha, jobs in sha_jobs.items():
+            if sha == current_sha:
+                continue
+            changed = source_changes(spec.jobs_dir, sha, root)
+            if outside_runtime(changed):
+                check.warnings.append(
+                    f"the source changed since {len(jobs)} complete job(s) ran ({_jobs_listing(jobs)}), but only in "
+                    f"files episodes do not use ({', '.join(_listing(changed))}): the code under test is the same"
+                )
+                continue
+            files = (f"; changed files: {', '.join(_listing(changed))}" if changed
+                     else ("; no change found" if changed == [] else ""))
+            check.code_problems.append(
+                f"the harness source changed since {len(jobs)} complete job(s) ran ({_jobs_listing(jobs)}): "
+                f"source_sha256 {sha[:12]} -> {current_sha[:12]}{files}"
+            )
+    if unknown_sha:
+        check.warnings.append(
+            f"{len(unknown_sha)} complete job(s) ({_jobs_listing(unknown_sha)}) record no source fingerprint "
+            "(an older launcher and runtime): cannot check that they ran the current code"
+        )
+    return check
+
+
 def _fmt_usd(x: float | None) -> str:
     if x is None:
         return "n/a"
@@ -1220,11 +1830,14 @@ def print_plan(
     problems: dict[str, list[str]],
     *,
     harbor: str | None,
+    check: ResumeCheck | None = None,
+    holder: dict[str, Any] | None = None,
     out: Callable[[str], None] = print,
 ) -> None:
-    """The --dry-run report: settings, validation, jobs + commands, estimate."""
+    """The --dry-run report: settings, validation, resume checks, jobs +
+    commands, estimate."""
     n_tasks = len(tasks)
-    to_run = [j for j in plan if j.status.state != "complete"]
+    to_run = [j for j in plan if j.status.state not in ("complete", "duplicate")]
     out(f"Sweep {spec.name!r}  (spec {_rel(spec.spec_path, spec.root)})")
     out(f"  dataset     {spec.dataset}")
     out(f"  tasks       {n_tasks}: {', '.join(tasks)}")
@@ -1234,6 +1847,9 @@ def print_plan(
         f"  harbor      env={spec.harbor.env} n_concurrent={spec.harbor.n_concurrent} "
         f"agent_timeout_multiplier={spec.harbor.agent_timeout_multiplier} executable={harbor or 'NOT FOUND'}"
     )
+    if holder is not None:
+        out(f"  NOTE        a sweep holds {_rel(spec.jobs_dir / LOCK_NAME, spec.root)} ({describe_lock_holder(holder)}); "
+            "a real run now is refused")
     out("")
     bad = {c: p for c, p in problems.items() if p}
     if bad:
@@ -1243,19 +1859,34 @@ def print_plan(
                 out(f"  {c}: {p}")
     else:
         out(f"Config validation: OK ({len(resolved)} conditions load into ExperimentConfig losslessly)")
+    if check is not None:
+        issues = (
+            [f"REFUSE (unless --allow-task-change): {p}" for p in check.task_problems]
+            + [f"REFUSE (unless --allow-code-change): {p}" for p in check.code_problems]
+            + [f"WARNING: {w}" for w in check.warnings]
+        )
+        out("Resume check: " + ("OK" if not issues else f"{len(issues)} issue(s)"))
+        for line in issues:
+            out(f"  {line}")
     out("")
     n_skip = sum(1 for j in plan if j.status.state == "complete")
     n_part = sum(1 for j in plan if j.status.state == "partial")
+    n_retry = sum(1 for j in plan if j.status.state == "needs_retry")
+    n_dup = sum(1 for j in plan if j.status.state == "duplicate")
     out(
         f"Plan: {len(plan)} jobs ({len(to_run)} to run, {n_skip} complete -> skip, "
-        f"{n_part} partial -> move aside and rerun); {len(to_run) * n_tasks} episodes to run"
+        f"{n_part} partial -> move aside and rerun, {n_retry} to retry -> move aside and rerun"
+        + (f", {n_dup} with duplicate trials -> not run (ERROR)" if n_dup else "")
+        + f"); {len(to_run) * n_tasks} episodes to run"
     )
     for j in plan:
         out(f"  [{j.index:>3}] r{j.round} {j.condition:<28} {j.action:<15} {j.job}  ({j.status.reason})")
+        for trial, reasons in list(j.status.retry_trials.items())[:5]:
+            out(f"        rerun: {trial}: {', '.join(reasons)}")
         env_prefix = f"SUBAGENTS_BENCH_CONFIG={shlex.quote(_rel(j.config_path, spec.root))}"
         out(f"        $ {env_prefix} {shlex.join(j.cmd)}")
     out("")
-    out("ROUGH estimate -- assumed token/latency model, NOT a measurement (subagents_bench.sweep.RoughModel):")
+    out(f"ROUGH estimate -- token/latency model {ROUGH_MODEL_SOURCE} (subagents_bench.sweep.RoughModel):")
     header = f"  {'condition':<28} {'jobs':>4} {'episodes':>8} {'$/ep typ':>9} {'$/ep upper':>10} {'$ typ':>9} {'$ upper':>9} {'min/ep typ':>10}"
     out(header)
     tot_typ: float | None = 0.0
@@ -1298,7 +1929,11 @@ def write_sweep_json(
 ) -> Path:
     """Write (or update) ``<jobs_dir>/sweep.json``. Earlier invocations of a
     resumed sweep are kept under ``invocations``; the newest provenance is
-    also at top level. A change of git commit between invocations is flagged."""
+    also at top level. ``source_sha256s`` lists the harness source
+    fingerprints the sweep's jobs ran with (manifest ``run`` lines and
+    episodes); ``mixed_source`` is set when they hold more than one version
+    of the code under test (:func:`runtime_versions`), so an analysis-only
+    edit between jobs adds a fingerprint but does not set it."""
     path = spec.jobs_dir / SWEEP_JSON_NAME
     old: dict[str, Any] = {}
     if path.is_file():
@@ -1320,6 +1955,8 @@ def write_sweep_json(
         key=lambda k: tuple(str(x) for x in k),
     )
     all_jobs = [job_name(spec.name, r, c) for r in range(1, spec.rounds + 1) for c in spec.conditions]
+    runs = read_manifest_runs(spec.jobs_dir)
+    shas = sorted({sha for j in all_jobs if (spec.jobs_dir / j).is_dir() for sha in job_source_shas(spec.jobs_dir / j, runs.get(j))})
     obj = {
         "sweep_json_version": 1,
         "name": spec.name,
@@ -1347,6 +1984,8 @@ def write_sweep_json(
         "tasks_meta_path": _rel(spec.jobs_dir / TASKS_META_NAME, spec.root),
         "manifest_path": _rel(spec.jobs_dir / MANIFEST_NAME, spec.root),
         "provenance": prov,
+        "source_sha256s": shas,
+        "mixed_source": len(runtime_versions(spec.jobs_dir, shas)) > 1,
         "mixed_git_commits": len(commits) > 1,
         "invocations": invocations,
     }
@@ -1383,13 +2022,18 @@ def run_sweep(
     rounds: list[int] | None = None,
     dry_run: bool = False,
     allow_config_change: bool = False,
+    allow_task_change: bool = False,
+    allow_code_change: bool = False,
     max_consecutive_failures: int = 3,
     dotenv_path: Path | None = None,
     out: Callable[[str], None] = print,
 ) -> int:
     """Run (or with ``dry_run`` only print) every planned job. Exit codes:
-    0 all selected jobs complete, 1 some failed, 2 config/spec error,
-    3 aborted on a billing error, 130 interrupted."""
+    0 all selected jobs complete, 1 some failed or still need a retry,
+    2 config/spec error, a refused resume (changed task list, harbor
+    arguments or code) or another sweep holding the jobs dir, 3 aborted on a
+    billing error, 4 aborted on provider failures in over half a job's
+    trials, 130 interrupted."""
     load_env_files(dotenv_path)
     harbor = harbor_executable()
     resolved = resolve_conditions(spec)
@@ -1403,11 +2047,15 @@ def run_sweep(
     if spec.tasks is None and dataset_meta is None and not dry_run:
         dataset_meta = load_dataset_meta(spec, harbor)
     tasks = select_tasks(spec, dataset_meta)
-    plan = plan_jobs(spec, tasks, only=only, rounds=rounds, harbor=harbor)
+    root = code_root()
 
     if dry_run:
-        print_plan(spec, tasks, plan, resolved, problems, harbor=harbor, out=out)
-        return EXIT_CONFIG if any(problems.values()) else EXIT_OK
+        plan = plan_jobs(spec, tasks, only=only, rounds=rounds, harbor=harbor)
+        check = resume_check(spec, tasks, plan, harbor=harbor, current_sha=source_prov.source_fingerprint(root), root=root)
+        print_plan(spec, tasks, plan, resolved, problems, harbor=harbor, check=check,
+                   holder=lock_holder(spec.jobs_dir), out=out)
+        refused = (check.task_problems and not allow_task_change) or (check.code_problems and not allow_code_change)
+        return EXIT_CONFIG if (any(problems.values()) or refused) else EXIT_OK
 
     if any(problems.values()):
         for c, ps in problems.items():
@@ -1419,7 +2067,59 @@ def run_sweep(
         out("harbor executable not found; run scripts/setup.sh")
         return EXIT_CONFIG
 
-    spec.jobs_dir.mkdir(parents=True, exist_ok=True)
+    prov = provenance(root, harbor, with_docker=spec.harbor.env == "docker")
+    try:
+        lock = SweepLock(spec.jobs_dir, invocation_id=prov["invocation_id"]).acquire()
+    except SweepLocked as e:
+        out(f"Refusing to run: {e}")
+        return EXIT_CONFIG
+    try:
+        return _run_sweep_locked(
+            spec, tasks, dataset_meta, full, harbor, prov, root, lock,
+            only=only, rounds=rounds, allow_config_change=allow_config_change, allow_task_change=allow_task_change,
+            allow_code_change=allow_code_change, max_consecutive_failures=max_consecutive_failures, out=out,
+        )
+    finally:
+        lock.release()
+
+
+def _run_sweep_locked(
+    spec: SweepSpec,
+    tasks: list[str],
+    dataset_meta: dict[str, Any] | None,
+    full: dict[str, dict[str, Any]],
+    harbor: str,
+    prov: dict[str, Any],
+    root: Path,
+    lock: SweepLock,
+    *,
+    only: list[str] | None,
+    rounds: list[int] | None,
+    allow_config_change: bool,
+    allow_task_change: bool,
+    allow_code_change: bool,
+    max_consecutive_failures: int,
+    out: Callable[[str], None],
+) -> int:
+    """:func:`run_sweep` once the jobs dir's lock is held: plan (job states
+    cannot change under us now), check the resume, then run job by job."""
+    plan = plan_jobs(spec, tasks, only=only, rounds=rounds, harbor=harbor)
+    check = resume_check(spec, tasks, plan, harbor=harbor, current_sha=prov.get("source_sha256"), root=root)
+    for w in check.warnings:
+        out(f"WARNING: {w}")
+    refusals = [*([] if allow_task_change else check.task_problems), *([] if allow_code_change else check.code_problems)]
+    if refusals:
+        for r in refusals:
+            out(f"resume refused: {r}")
+        out(
+            "Refusing to run: these jobs would be compared with jobs that ran differently. Restore what changed, "
+            "use a new jobs_dir, or pass --allow-task-change / --allow-code-change to mix them anyway "
+            "(sweep.json then records it)."
+        )
+        return EXIT_CONFIG
+    for p in [*check.task_problems, *check.code_problems]:
+        out(f"WARNING (allowed): {p}")
+
     config_paths = materialize_configs(spec, full, allow_change=allow_config_change)
 
     meta_path = spec.jobs_dir / TASKS_META_NAME
@@ -1428,19 +2128,25 @@ def run_sweep(
         dataset_meta = dataset_meta or load_dataset_meta(spec, harbor)
         meta_path = write_tasks_meta(spec, dataset_meta, tasks)
 
-    need_prime = any(model_key(m)[1] in PRIME_PROVIDERS for cfg in resolved.values() for m in models_used(cfg))
-    prov = provenance(spec.root, harbor, with_docker=spec.harbor.env == "docker")
-    inv_extra = {"only": only, "rounds": rounds}
+    need_prime = any(model_key(m)[1] in PRIME_PROVIDERS for cfg in full.values() for m in models_used(cfg))
+    inv_id = prov["invocation_id"]
+    record = write_source_record(spec.jobs_dir, root, prov, inv_id)
+    prov.update(source_files_record=record["files"], source_patch=record["patch"])
+    harbor_settings = dataclasses.asdict(spec.harbor)
+    inv_extra: dict[str, Any] = {"only": only, "rounds": rounds, "tasks": tasks, "harbor": harbor_settings}
     sweep_json = write_sweep_json(
         spec, tasks=tasks, config_paths=config_paths, resolved=full, prov=prov, status="running",
         harbor=harbor, extra_invocation=inv_extra,
     )
-    if json.loads(sweep_json.read_text()).get("mixed_git_commits"):
-        out("WARNING: this sweep's jobs now span more than one git commit (see sweep.json invocations).")
+    if json.loads(sweep_json.read_text()).get("mixed_source"):
+        out("WARNING: this sweep's jobs ran more than one version of the harness code (sweep.json source_sha256s).")
+    if record["patch"]:
+        out(f"Uncommitted harness source saved to {_rel(spec.jobs_dir / record['patch'], spec.root)}")
     manifest = spec.jobs_dir / MANIFEST_NAME
     out(f"Sweep {spec.name!r}: {len(plan)} jobs, tasks metadata {_rel(meta_path, spec.root)}")
 
     n_ran = n_skipped = n_failed = consecutive = 0
+    current_sha = prov.get("source_sha256")
     final = "complete"
     code = EXIT_OK
     for j in plan:
@@ -1450,17 +2156,48 @@ def run_sweep(
             append_manifest(manifest, _manifest_record(spec, j, "skipped_complete", t_start=time.time()))
             n_skipped += 1
             continue
-        if j.status.state == "partial":
-            moved = move_partial(j.job_dir, spec.jobs_dir)
-            out(f"{prefix}: partial ({j.status.reason}) -> moved to {_rel(moved, spec.root)}, rerunning")
-            append_manifest(
-                manifest, _manifest_record(spec, j, "moved_partial", t_start=time.time(), moved_to=_rel(moved, spec.root))
-            )
+        if j.status.state == "duplicate":
+            out(f"{prefix}: ERROR: {j.status.reason} (two harbor runs wrote into it?). Not run: inspect it, "
+                f"move it out of {_rel(spec.jobs_dir, spec.root)} and re-run to rerun the job.")
+            append_manifest(manifest, _manifest_record(spec, j, "duplicate_trials", t_start=time.time(),
+                                                       status_reason=j.status.reason))
+            n_failed += 1
+            continue
+        # The code harbor imports is whatever is on disk when the job starts.
+        state = source_state(root)
+        sha = state.get("source_sha256")
+        if sha and current_sha and sha != current_sha:
+            changed = source_changes(spec.jobs_dir, current_sha, root)
+            what = (f"source_sha256 {current_sha[:12]} -> {sha[:12]}"
+                    + (f"; changed files: {', '.join(_listing(changed))}" if changed else ""))
+            if outside_runtime(changed):
+                out(f"NOTE: only files episodes do not use changed during the sweep ({what}); going on.")
+            elif not allow_code_change:
+                out(f"ABORT: the harness source changed during the sweep ({what}). Finish or revert the edit, "
+                    "then re-run to resume (or pass --allow-code-change to mix code versions).")
+                final, code = "aborted_code_change", EXIT_CONFIG
+                break
+            else:
+                out(f"WARNING (allowed): the harness source changed during the sweep ({what}).")
+            write_source_record(spec.jobs_dir, root, state, f"{inv_id}.{j.job}")
+            current_sha = sha
+        if j.status.state in ("partial", "needs_retry"):
+            kind = "partial" if j.status.state == "partial" else "retry"
+            moved = move_aside(j.job_dir, spec.jobs_dir, kind)
+            if kind == "partial":
+                out(f"{prefix}: partial ({j.status.reason}) -> moved to {_rel(moved, spec.root)}, rerunning")
+                append_manifest(manifest, _manifest_record(
+                    spec, j, "moved_partial", t_start=time.time(), moved_to=_rel(moved, spec.root)))
+            else:
+                out(f"{prefix}: needs a retry ({j.status.reason}) -> moved to {_rel(moved, spec.root)}, rerunning")
+                append_manifest(manifest, _manifest_record(
+                    spec, j, "retried", t_start=time.time(), moved_to=_rel(moved, spec.root),
+                    retry_trials=j.status.retry_trials, status_reason=j.status.reason))
         env = build_subprocess_env(j.config_path, need_prime=need_prime)
         out(f"{prefix}: running ({len(tasks)} trials)")
         t0 = time.time()
         try:
-            rc = run_job_process(j.cmd, env=env, cwd=spec.root)
+            rc = run_job_process(j.cmd, env=env, cwd=spec.root, pass_fds=(lock.fd,) if lock.fd is not None else ())
         except KeyboardInterrupt:
             st = job_status(j.job_dir)
             append_manifest(
@@ -1476,29 +2213,43 @@ def run_sweep(
         t1 = time.time()
         st = job_status(j.job_dir)
         billing = scan_billing_errors(j.job_dir)
+        retry = trial_retry_reasons(j.job_dir)
+        n_provider = sum(1 for reasons in retry.values() if RETRY_PROVIDER in reasons)
         n_episodes = len(list(j.job_dir.glob("*/agent/episode.json"))) if j.job_dir.is_dir() else 0
         append_manifest(
             manifest,
             _manifest_record(
                 spec, j, "run", t_start=t0, t_end=t1, duration_sec=t1 - t0, return_code=rc,
                 n_trials=st.n_total, n_completed=st.n_completed, n_errors=st.n_errored, complete=st.complete,
-                status_reason=st.reason, n_episode_json=n_episodes, billing_error_trials=billing,
-                git_commit=prov.get("git_commit"),
+                state=st.state, status_reason=st.reason, n_episode_json=n_episodes, billing_error_trials=billing,
+                retry_trials=retry, n_provider_error_trials=n_provider, invocation_id=inv_id, tasks=tasks,
+                harbor=harbor_settings,
+                source_sha256=sha, git_commit=state.get("git_commit"), git_dirty=state.get("git_dirty"),
             ),
         )
         n_ran += 1
         out(f"{prefix}: exit {rc}, {st.state} ({st.reason}), {t1 - t0:.0f}s")
         if billing:
-            out(f"ABORT: billing error in {j.job}: {billing}. Top up the provider account, then re-run to resume.")
+            out(f"ABORT: billing error in {j.job}: {billing}. Top up the provider account, then re-run to resume "
+                "(the job is rerun).")
             final, code = "aborted_billing", EXIT_BILLING
+            break
+        n_total = st.n_total or len(tasks)
+        if n_provider * 2 > n_total:
+            out(f"ABORT: provider failures in {n_provider}/{n_total} trials of {j.job}: likely an outage (or a "
+                "rejected key: 401/403, see the trials' calls.jsonl errors). Re-run later to resume (the job is rerun).")
+            final, code = "aborted_provider", EXIT_PROVIDER
             break
         if st.complete and rc == 0:
             consecutive = 0
         else:
+            if st.state == "needs_retry":
+                out(f"{prefix}: {_retry_summary(st.retry_trials)}; re-run the sweep to retry this job.")
             n_failed += 1
             consecutive += 1
             if consecutive >= max_consecutive_failures:
-                out(f"ABORT: {consecutive} consecutive jobs failed; check Docker/harbor (see {j.job_dir}/job.log).")
+                out(f"ABORT: {consecutive} consecutive jobs failed or need a retry; check Docker, harbor and the "
+                    f"providers (see {j.job_dir}/job.log and the reasons above).")
                 final, code = "aborted_failures", EXIT_FAIL
                 break
     else:
@@ -1512,6 +2263,8 @@ def run_sweep(
     out(f"Sweep {spec.name!r} {final}: ran {n_ran}, skipped {n_skipped} complete, failed {n_failed}.")
     if code == EXIT_OK:
         out(f"Next: scripts/analyze.sh {_rel(spec.jobs_dir, spec.root)}")
+    elif final == "incomplete":
+        out("Re-run the same command to rerun the jobs that failed or need a retry.")
     return code
 
 
@@ -1631,19 +2384,38 @@ def ping_model(model_cfg: Any) -> dict[str, Any]:
     return rec
 
 
-def run_oracle(spec: SweepSpec, tasks: list[str], harbor: str, out: Callable[[str], None] = print) -> tuple[bool, dict[str, Any]]:
-    """``harbor run -a oracle`` on every task into ``<jobs_dir>/_oracle``; a
-    complete earlier oracle job is reused. Passes iff every task's reward is
-    1.0."""
+def _oracle_rewards(job_dir: Path, tasks: list[str]) -> tuple[dict[str, dict[str, Any]], list[str], float | None]:
+    """(trial rewards, tasks without a 1.0 reward on every trial, mean reward)."""
+    rewards = trial_rewards(job_dir)
+    by_task: dict[str, list[float]] = {t: [] for t in tasks}
+    for r in rewards.values():
+        if r["task"] in by_task:
+            by_task[r["task"]].append(float(r["reward"]) if isinstance(r["reward"], (int, float)) else 0.0)
+    failing = sorted(t for t, rs in by_task.items() if not rs or min(rs) < 1.0)
+    all_r = [x for rs in by_task.values() for x in rs]
+    return rewards, failing, (sum(all_r) / len(all_r) if all_r else None)
+
+
+def run_oracle(
+    spec: SweepSpec, tasks: list[str], harbor: str, out: Callable[[str], None] = print, *, redo: bool = False,
+    pass_fds: tuple[int, ...] = (),
+) -> tuple[bool, dict[str, Any]]:
+    """``harbor run -a oracle`` on every task into ``<jobs_dir>/_oracle``.
+    An earlier oracle job is reused only if it finished and passed on every
+    task; otherwise (and always with ``redo``) it is moved aside and rerun,
+    so a transient failure (an image pull timeout, too little memory) is not
+    cached. Passes iff every task's reward is 1.0."""
     job_dir = spec.jobs_dir / ORACLE_JOB
     st = job_status(job_dir)
     moved = None
-    covered = {r["task"] for r in trial_rewards(job_dir).values()}
-    if st.state == "partial" or (st.complete and not set(tasks) <= covered):
-        # Interrupted, or run for an older task list (harbor will not reuse a
-        # job dir whose config changed): keep it aside and rerun.
-        moved = move_partial(job_dir, spec.jobs_dir)
-        out(f"  oracle: earlier job ({st.reason}) moved to {_rel(moved, spec.root)}")
+    _, old_failing, _ = _oracle_rewards(job_dir, tasks)
+    if st.state != "absent" and (redo or not st.complete or old_failing):
+        # Unfinished, failed (maybe transiently), run for an older task list
+        # (harbor will not reuse a job dir whose config changed), or --redo-oracle:
+        # keep it aside and rerun.
+        why = "--redo-oracle" if redo else (f"failing: {old_failing}" if st.complete else st.reason)
+        moved = move_aside(job_dir, spec.jobs_dir, "partial" if st.state == "partial" else "retry")
+        out(f"  oracle: earlier job ({why}) moved to {_rel(moved, spec.root)}")
         st = job_status(job_dir)
     reused = st.complete
     rc = None
@@ -1654,15 +2426,8 @@ def run_oracle(spec: SweepSpec, tasks: list[str], harbor: str, out: Callable[[st
             extra_args=spec.harbor.extra_args,
         )
         out(f"  oracle: $ {shlex.join(cmd)}")
-        rc = run_job_process(cmd, env=build_subprocess_env(None), cwd=spec.root)
-    rewards = trial_rewards(job_dir)
-    by_task: dict[str, list[float]] = {t: [] for t in tasks}
-    for r in rewards.values():
-        if r["task"] in by_task:
-            by_task[r["task"]].append(float(r["reward"]) if isinstance(r["reward"], (int, float)) else 0.0)
-    failing = sorted(t for t, rs in by_task.items() if not rs or min(rs) < 1.0)
-    all_r = [x for rs in by_task.values() for x in rs]
-    mean = sum(all_r) / len(all_r) if all_r else None
+        rc = run_job_process(cmd, env=build_subprocess_env(None), cwd=spec.root, pass_fds=pass_fds)
+    rewards, failing, mean = _oracle_rewards(job_dir, tasks)
     info = {
         "job_dir": _rel(job_dir, spec.root),
         "reused": reused,
@@ -1679,12 +2444,42 @@ def run_preflight(
     spec: SweepSpec,
     *,
     oracle: bool = False,
+    redo_oracle: bool = False,
     skip_llm: bool = False,
     dotenv_path: Path | None = None,
     out: Callable[[str], None] = print,
 ) -> int:
     """Run every check, write ``<jobs_dir>/preflight.json``, print a
-    PASS/FAIL checklist. Returns 0 iff every required check passed."""
+    PASS/FAIL checklist. Returns 0 iff every required check passed, 2 if
+    the oracle job is needed and another sweep holds the jobs dir.
+    ``redo_oracle`` implies ``oracle``."""
+    oracle = oracle or redo_oracle
+    lock = None
+    if oracle:
+        # The oracle job moves and writes <jobs_dir>/_oracle: one process at a time.
+        try:
+            lock = SweepLock(spec.jobs_dir, what="preflight --oracle").acquire()
+        except SweepLocked as e:
+            out(f"Refusing to run preflight --oracle: {e}")
+            return EXIT_CONFIG
+    try:
+        return _run_preflight(spec, oracle=oracle, redo_oracle=redo_oracle, skip_llm=skip_llm,
+                              dotenv_path=dotenv_path, lock=lock, out=out)
+    finally:
+        if lock is not None:
+            lock.release()
+
+
+def _run_preflight(
+    spec: SweepSpec,
+    *,
+    oracle: bool,
+    redo_oracle: bool,
+    skip_llm: bool,
+    dotenv_path: Path | None,
+    lock: SweepLock | None,
+    out: Callable[[str], None],
+) -> int:
     checks: list[Check] = []
     record: dict[str, Any] = {"spec": _rel(spec.spec_path, spec.root), "date": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     env_status = load_env_files(dotenv_path)
@@ -1758,7 +2553,8 @@ def run_preflight(
         if harbor is None or not tasks:
             checks.append(Check("oracle solves all tasks", False, "needs harbor and the task list"))
         else:
-            ok, info = run_oracle(spec, tasks, harbor, out=out)
+            fds = (lock.fd,) if lock is not None and lock.fd is not None else ()
+            ok, info = run_oracle(spec, tasks, harbor, out=out, redo=redo_oracle, pass_fds=fds)
             record["oracle"] = info
             detail = f"mean reward {info['mean_reward']}" + (" (reused earlier _oracle job)" if info["reused"] else "")
             if info["failing_tasks"]:
@@ -1794,7 +2590,8 @@ def _cmd_preflight(args: argparse.Namespace) -> int:
     except SpecError as e:
         print(f"spec error: {e}", file=sys.stderr)
         return EXIT_CONFIG
-    return run_preflight(spec, oracle=args.oracle, skip_llm=args.skip_llm, dotenv_path=_default_dotenv(spec, args.env_file))
+    return run_preflight(spec, oracle=args.oracle, redo_oracle=args.redo_oracle, skip_llm=args.skip_llm,
+                         dotenv_path=_default_dotenv(spec, args.env_file))
 
 
 def _cmd_sweep(args: argparse.Namespace) -> int:
@@ -1806,6 +2603,8 @@ def _cmd_sweep(args: argparse.Namespace) -> int:
             rounds=args.rounds,
             dry_run=args.dry_run,
             allow_config_change=args.allow_config_change,
+            allow_task_change=args.allow_task_change,
+            allow_code_change=args.allow_code_change,
             max_consecutive_failures=args.max_consecutive_failures,
             dotenv_path=_default_dotenv(spec, args.env_file),
         )
@@ -1854,7 +2653,9 @@ def _cmd_tasks(args: argparse.Namespace) -> int:
 def register_cli(subparsers: Any) -> None:
     p = subparsers.add_parser("preflight", help="check Docker, harbor, dataset, credentials and models before a sweep")
     p.add_argument("spec", help="sweep spec YAML (configs/sweeps/*.yaml)")
-    p.add_argument("--oracle", action="store_true", help="also run harbor's oracle agent on every task (reuses a complete _oracle job)")
+    p.add_argument("--oracle", action="store_true",
+                   help="also run harbor's oracle agent on every task (reuses an earlier _oracle job only if it passed)")
+    p.add_argument("--redo-oracle", action="store_true", help="rerun the oracle job even if an earlier one passed (implies --oracle)")
     p.add_argument("--skip-llm", action="store_true", help="skip the one-request-per-model check")
     p.add_argument("--env-file", default=None, help="dotenv file to load (default: <repo>/.env)")
     p.set_defaults(func=_cmd_preflight)
@@ -1865,6 +2666,10 @@ def register_cli(subparsers: Any) -> None:
     s.add_argument("--only", nargs="+", metavar="COND", help="run only these conditions")
     s.add_argument("--rounds", type=parse_rounds_arg, help="comma-separated rounds to run, e.g. 1,2")
     s.add_argument("--allow-config-change", action="store_true", help="allow a condition's resolved config to change on resume")
+    s.add_argument("--allow-task-change", action="store_true",
+                   help="allow the task list or harbor arguments to differ from the sweep's complete jobs")
+    s.add_argument("--allow-code-change", action="store_true",
+                   help="allow the harness source to differ from the code the sweep's complete jobs ran")
     s.add_argument("--max-consecutive-failures", type=int, default=3, help="abort after this many failed jobs in a row (default 3)")
     s.add_argument("--env-file", default=None, help="dotenv file to load (default: <repo>/.env)")
     s.set_defaults(func=_cmd_sweep)
