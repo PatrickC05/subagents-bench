@@ -424,8 +424,11 @@ reward is rounded to 4 places, so 5 of 14 bugs would give 0.3571 x 14 =
 `conditions.csv` adds `n_bugs`, `bugs_fixed`, `bug_fix_rate` (bugs fixed over
 bugs in the valid trials, the micro-average SWE-sweep reports), `n_regressed`
 and `reward_mean`. `resolved` stays reward >= 1, every bug of the task fixed,
-which is rare there (frontier models fix 2-12% of bugs), so the resolve-rate
-figures say little for this benchmark; read `bug_fix_rate`. Terminal-Bench
+which is rare there: in the SWE-sweep paper no model fully repairs any of the
+100 repositories (Table 16), and the best agent, Sol 5.6 (xhigh), fixes 4.7%
+of all bugs (Table 4) and 14.9% in the repositories with fewer than 25 bugs,
+as all ten here are (Table 5). So the resolve-rate figures say little for
+this benchmark; read `bug_fix_rate`. Terminal-Bench
 trials leave the bug columns empty.
 
 **Cost.** Tokens times per-model prices from `configs/pricing.yaml`, per role

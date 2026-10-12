@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -171,6 +172,17 @@ def test_swe_sweep_larger_budget_hint(tmp_path, monkeypatch):
     steps = {c: cfg.budget.orchestrator_steps for c, cfg in s.configs.items()}
     assert steps.pop("single_matched") == 30 * s.configs["gemma31b_parallel_hard"].subagent.max_steps
     assert set(steps.values()) == {30} and len(steps) == 14
+
+
+def test_swe_sweep_bug_counts_in_the_docs():
+    """README's bug counts are the spec's per-task comments, which are the tasks' own (if cloned)."""
+    s = sweep.load_spec(REPO / "configs/sweeps/swe_sweep.yaml")
+    text = (REPO / "configs/sweeps/swe_sweep.yaml").read_text()
+    bugs = {t: int(re.search(rf"- {t} +# \w+, (\d+)\n", text)[1]) for t in s.tasks}
+    readme = " ".join((REPO / "README.md").read_text().split())
+    assert f"{min(bugs.values())}-{max(bugs.values())} bugs each, {sum(bugs.values())} in all" in readme
+    if s.dataset_path.is_dir():
+        assert bugs == {t: sweep.n_subtasks(s.dataset_path / t) for t in s.tasks}
 
 
 DOCKERFILE = "FROM docker.io/library/alpine:3.20 AS src\nRUN true\nFROM --platform=$BUILDPLATFORM golang:1.20\n"

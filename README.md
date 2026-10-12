@@ -134,7 +134,7 @@ scripts/run_experiment.sh configs/sweeps/swe_sweep.yaml
 
 [`configs/sweeps/swe_sweep.yaml`](configs/sweeps/swe_sweep.yaml) is the
 pilot's 15 conditions on 10 small repositories (Go, Python, JavaScript, C;
-4-14 bugs each, about 100 in all) x 3 rounds. It copies the 10 tasks to
+6-14 bugs each, 106 in all) x 3 rounds. It copies the 10 tasks to
 `jobs/swe_sweep/tasks/` with every Dockerfile `FROM` pinned to `linux/amd64`
 (the verifier image ships an x86-64 Python; `jobs/swe_sweep/tasks.json`
 records the clone's commit, a hash per task and its bugs) and passes that
