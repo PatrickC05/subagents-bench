@@ -104,7 +104,7 @@ def orchestrator_prompt(cfg: ExperimentConfig, workdir: str) -> str:
                                              copy=ARBITER_COPY if hard else ""),
         scope=SCOPE[s.scope],
         per_call=max(1, s.max_concurrent // n) if arbiter else s.max_concurrent,
-        order=" (each by its candidates)" if arbiter else " (in order)" if s.strategy == "sequential" else "",
+        order=f", each by {n} candidates" if arbiter else " (in order)" if s.strategy == "sequential" else "",
         max_dispatches=s.max_dispatches,
         per_run="; every candidate counts as one run" if arbiter else "",
     )

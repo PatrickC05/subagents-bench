@@ -114,6 +114,20 @@ def test_dispatch_budget_across_steps(tmp_path):
     assert [s["granted"] for s in r["spawns"]] == [2, 1, 0] and len(r["dispatches"]) == 3
 
 
+def test_arbiter_grant_is_per_call_and_counts_every_candidate(tmp_path):
+    spawn = Reply("", [tc("spawn_subagents", instructions=["a", "b"])])
+    verdict = '{"winner": 0, "confidence": 1, "agreement": true}'
+
+    def orch(system, messages, tools):
+        return Reply(verdict) if system.startswith("You are an impartial") else orch_steps.pop(0)
+
+    orch_steps = [spawn, spawn, Reply("", [tc("finish")])]
+    _, r, f = go(tmp_path, {ORCH: orch, SUB: lambda *a: Reply("report")},
+                 subagent={"strategy": "arbiter", "scope": "easy", "max_dispatches": 4})
+    assert [s["granted"] for s in r["spawns"]] == [1, 0] and len(r["dispatches"]) == 3
+    assert "at most 1 instruction(s) per call" in f[ORCH].requests[0]["system"]
+
+
 def test_subagent_scope_cut_off_and_last_step_note(tmp_path):
     _, r, f = go(tmp_path, {
         ORCH: [Reply("", [tc("spawn_subagents", instructions=["look"])]), Reply("", [tc("finish")])],
