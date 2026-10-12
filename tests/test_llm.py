@@ -519,7 +519,11 @@ def test_in_stream_error_object(env):
         (402, {"error": "Payment Required"}),
         (400, {"error": {"message": "Insufficient balance. Please top up your account."}}),
         (403, {"error": {"message": "Your credit limit has been reached"}}),
-        (429, {"error": {"message": "You exceeded your current quota"}}),
+        # OpenAI-style insufficient_quota arrives as a 429.
+        (429, {"error": {"message": "You exceeded your current quota, please check your plan and billing details.",
+                         "type": "insufficient_quota", "code": "insufficient_quota"}}),
+        (429, {"error": {"message": "insufficient_quota"}}),
+        (429, {"error": {"message": "Account balance exhausted"}}),
     ],
 )
 def test_billing_errors_not_retried(env, status, body):
@@ -533,13 +537,75 @@ def test_billing_errors_not_retried(env, status, body):
     assert ei.value.request is not None and ei.value.request.n_messages == 1
 
 
-def test_context_length_error(env):
-    body = {"error": {"message": "This model's maximum context length is 16384 tokens. However, you requested 20000 tokens."}}
-    server = Server(httpx.Response(400, json=body))
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Rate limit reached: requests per minute quota exceeded, retry in 5s",
+        "Quota exceeded for tokens per minute",
+        "rate limited",
+    ],
+)
+def test_429_rate_limit_quota_wording_is_retried(env, message):
+    # A bare 'quota' on a 429 is a rate limit, not billing: retried, honoring Retry-After.
+    sleeps: list[float] = []
+    server = Server(
+        httpx.Response(429, headers={"retry-after": "5"}, json={"error": {"message": message}}),
+        simple_ok("fine"),
+    )
+    resp = make(server, sleeps).complete("s", USER, [])
+    assert resp.text == "fine" and len(server.requests) == 2
+    assert sleeps == [5.0]
+    assert [a.error_type for a in resp.attempts] == ["RateLimited", None]
+    assert resp.attempts[0].retry_after_sec == 5.0
+
+
+def test_429_quota_wording_exhausts_retries_as_llm_error(env):
+    server = Server(*[httpx.Response(429, json={"error": {"message": "per-minute quota exceeded"}}) for _ in range(3)])
+    with pytest.raises(LLMError) as ei:
+        make(server, max_retries=2).complete("s", USER, [])
+    assert type(ei.value) is LLMError and ei.value.status == 429 and len(ei.value.attempts) == 3
+
+
+@pytest.mark.parametrize(
+    "status,message",
+    [
+        (400, "This model's maximum context length is 16384 tokens. However, you requested 20000 tokens."),
+        (400, "context_length_exceeded"),
+        (400, "Input is longer than the model's context window"),
+        (400, "prompt is too long: 210000 tokens > 200000 maximum"),
+        (400, "Please reduce the length of the messages or completion."),
+        (400, "Input validation error: `inputs` tokens + `max_new_tokens` must be <= 32768"),
+        (400, "max_tokens plus input tokens exceed the limit"),
+        (400, "The decoder prompt (length 140000) is longer than the maximum model length of 131072."),
+        # Sail's served-window message (docs/PRICING_SOURCES.md).
+        (400, "exceeds safe limit of 15872 tokens for model context window of 16384 tokens"),
+        (413, "Request too long for this model"),
+    ],
+)
+def test_context_length_error(env, status, message):
+    server = Server(httpx.Response(status, json={"error": {"message": message}}))
     with pytest.raises(ContextLengthError) as ei:
         make(server).complete("s", USER, [])
-    assert ei.value.status == 400 and len(ei.value.attempts) == 1
+    assert ei.value.status == status and len(ei.value.attempts) == 1
+    assert ei.value.attempts[0].error_type == "ContextLength"
     assert isinstance(ei.value, LLMError) and not isinstance(ei.value, BillingError)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Invalid request: 'tool_choice' requires 'tools'; max tokens must be positive",
+        "maximum of 128 tools exceeded",
+        "unknown field 'tokens'",
+        "invalid value for 'context'",
+    ],
+)
+def test_unrelated_400_is_not_a_context_overflow(env, message):
+    # Generic words (maximum, tokens, context) alone no longer mean a context overflow.
+    server = Server(httpx.Response(400, json={"error": {"message": message}}))
+    with pytest.raises(LLMError) as ei:
+        make(server).complete("s", USER, [])
+    assert type(ei.value) is LLMError and ei.value.attempts[0].error_type == "HTTP400"
 
 
 def test_other_4xx_fails_fast(env):

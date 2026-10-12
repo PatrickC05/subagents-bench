@@ -120,7 +120,24 @@ RETRY_AFTER_MAX_SEC = 600.0
 # Error bodies/messages stored on Attempt records are truncated to this.
 ERROR_TEXT_MAX = 2000
 _BILLING_WORDS = ("balance", "billing", "credit", "quota", "payment")
-_CONTEXT_WORDS = ("context", "maximum", "too long", "tokens")
+# A 429 is a rate limit (retried, honoring Retry-After) unless it carries an
+# explicit billing marker: OpenAI-style "insufficient_quota" arrives as 429,
+# but so do per-minute limits worded "... quota exceeded".
+_BILLING_WORDS_429 = ("insufficient_quota", "insufficient quota", "billing", "balance", "payment", "credit")
+# Explicit context-overflow phrases, matched after "_" -> " " (so the
+# "context_length_exceeded" code matches too). Generic words such as
+# "maximum" or "tokens" also appear in unrelated validation errors.
+_CONTEXT_PHRASES = (
+    "context length",
+    "context window",
+    "maximum context",
+    "too long",
+    "reduce the length",
+    # vLLM engine: "The decoder prompt (length N) is longer than the maximum
+    # model length of M. Make sure that `max_model_len` is no smaller ..."
+    "maximum model length",
+)
+_MAX_TOKENS_WORDS = ("max tokens", "max new tokens", "max completion tokens")
 _CONTEXT_STATUS = frozenset({400, 413})
 
 
@@ -340,12 +357,30 @@ def _status_error_type(status: int) -> str:
     }.get(status, "ServerError" if 500 <= status < 600 else f"HTTP{status}")
 
 
+def _is_billing(status: int | None, low: str) -> bool:
+    if status == 402:
+        return True
+    if status == 429:
+        return any(w in low for w in _BILLING_WORDS_429)
+    return status is not None and 400 <= status < 500 and any(w in low for w in _BILLING_WORDS)
+
+
+def _is_context_overflow(status: int | None, low: str) -> bool:
+    if status not in _CONTEXT_STATUS:
+        return False
+    words = low.replace("_", " ")
+    if any(p in words for p in _CONTEXT_PHRASES):
+        return True
+    # "max_tokens + input tokens must be <= ..." style limits.
+    return "input" in words and any(w in words for w in _MAX_TOKENS_WORDS)
+
+
 def _classify(status: int | None, text: str) -> tuple[type[LLMError] | None, str]:
     """(exception class to raise now, or None to retry; error_type)."""
     low = text.lower()
-    if status == 402 or (status is not None and 400 <= status < 500 and any(w in low for w in _BILLING_WORDS)):
+    if _is_billing(status, low):
         return BillingError, "Billing"
-    if status in _CONTEXT_STATUS and any(w in low for w in _CONTEXT_WORDS):
+    if _is_context_overflow(status, low):
         return ContextLengthError, "ContextLength"
     if status is None or status in RETRYABLE_STATUS:
         return None, "StreamError" if status is None else _status_error_type(status)
