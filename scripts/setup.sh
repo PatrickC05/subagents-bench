@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-time setup for subagents-bench. Idempotent: safe to re-run at any time.
 #
-#   scripts/setup.sh
+#   scripts/setup.sh            (no arguments; -h/--help prints this help)
 #
 # 1. checks uv and Docker (installed and running);
 # 2. creates .venv with Python 3.13 and installs the package plus the exact
@@ -12,10 +12,20 @@
 # 5. pre-downloads the Terminal-Bench 2.0 task definitions.
 # It ends with a PASS/WARN/FAIL checklist and exits nonzero on any FAIL.
 #
-# Env: SKIP_TESTS=1 skips step 4.
+# Env: SKIP_TESTS=1 skips step 4; SUBAGENTS_BENCH_DATASET_CACHE=DIR uses (and
+# downloads to) DIR instead of .cache/datasets.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+usage() { awk 'NR > 1 && /^set -euo/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"; }
+for arg in "$@"; do
+  case "$arg" in
+    -h | --help) usage; exit 0 ;;
+    *) echo "[FAIL] unknown argument: $arg (setup.sh takes no arguments; see scripts/setup.sh --help)" >&2; exit 2 ;;
+  esac
+done
+
 cd "$ROOT"
 
 PYTHON_VERSION="3.13"
@@ -154,7 +164,11 @@ section "Dataset ($DATASET)"
 if ds_out="$("$VENV_PY" -m subagents_bench.sweep tasks "$DATASET" 2>&1)"; then
   record PASS "dataset" "$(printf '%s\n' "$ds_out" | head -1)"
 else
-  record FAIL "dataset" "download failed: $(printf '%s\n' "$ds_out" | tail -1)"
+  # The cause is in harbor's own message (network, proxy, GitHub rate limit,
+  # missing git), which comes before the final "not available" line.
+  printf '%s\n' "$ds_out" | head -20 | sed 's/^/    /' >&2
+  cause="$(printf '%s\n' "$ds_out" | grep -m1 'download failed' || printf '%s\n' "$ds_out" | tail -1)"
+  record FAIL "dataset" "$(printf '%s' "$cause" | cut -c1-240) (output above; the download needs network access to GitHub, or set SUBAGENTS_BENCH_DATASET_CACHE to an existing export)"
 fi
 
 summary || exit 1
