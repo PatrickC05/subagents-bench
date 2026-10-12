@@ -14,8 +14,9 @@ attempts), run with the earlier, larger version of this harness.
   so a cost fixed at run time would be one arbitrary price list.
 - **Budgets are steps.** The orchestrator has 5 steps, a subagent 8. An
   episode has no token budget or wall-clock cap of its own: harbor's agent
-  timeout (x4, `agent_timeout_multiplier`) is its only time limit, so provider
-  latency never changes a trajectory unless it is extreme.
+  timeout (x2, `agent_timeout_multiplier`: 30 min for most pilot tasks) is
+  its only time limit, so provider latency never changes a trajectory unless
+  it is extreme.
 - **One provider.** Both models are on Sail's `balanced` tier, through one
   OpenAI-compatible client.
 - **An invalid trial is rerun, never scored.** A trial that a provider or
@@ -285,11 +286,11 @@ docs/DATA.md.
 ## Sweep (`sweep.py`, `cli.py`)
 
 A spec names the base config, dataset, tasks, rounds, `order_seed`, harbor
-settings (`n_concurrent` 4, `agent_timeout_multiplier` 4.0) and conditions;
+settings (`n_concurrent` 4, `agent_timeout_multiplier` 2.0) and conditions;
 `extends:` merges it over another spec (smoke extends pilot). A job is one
 (round, condition): `harbor run -d terminal-bench@2.0 -i <task>... -a
 <agent> -e docker -n 4 -k 1 -o jobs/<sweep> --job-name <sweep>__r<k>__<cond>
---agent-timeout-multiplier 4.0 -y -q` with `SUBAGENTS_BENCH_CONFIG` set.
+--agent-timeout-multiplier 2.0 -y -q` with `SUBAGENTS_BENCH_CONFIG` set.
 Each round shuffles the condition order with its own draw from the seed, so
 drift over time (provider load, caches) does not line up with a condition,
 and `--rounds`/`--only` never change an order.
