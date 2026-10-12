@@ -1,10 +1,13 @@
-# Unified experiment config, shared by Terminal-Bench 4.0 and ExploitBench.
+# Unified experiment config, shared by Terminal-Bench and ExploitBench.
 #
-# This is the primary configuration: a frontier orchestrator directing smaller
-# subagents served by vLLM. Switch `benchmark` to exploit_bench and `sandbox`
-# accordingly to run the other benchmark with the same orchestrator setup.
+# A frontier orchestrator directing a smaller subagent model. Switch
+# `benchmark` to exploit_bench and `sandbox` accordingly to run the other
+# benchmark with the same orchestrator setup (see configs/exploitbench.yaml).
 #
-# Every field is documented in subagents_bench/config.py.
+# This is a standalone single-config example (`subagents-bench validate/run`).
+# The study's sweeps start from configs/sail/base.yaml instead
+# (configs/sweeps/*.yaml). Every field is documented in
+# subagents_bench/config.py and docs/DESIGN.md section 2.
 
 name: unified-opus-orch-small-sub
 
@@ -24,31 +27,47 @@ orchestrator:
   price_cache_read: 1.5
 
 # Smaller subagent model, served by a hosted OpenAI-compatible endpoint.
-# provider: prime -> Prime Intellect (https://api.pinference.ai/api/v1, PRIME_API_KEY)
+# provider: prime -> Prime Intellect (https://api.pinference.ai/api/v1, PRIME_API_KEY + PRIME_TEAM_ID)
 # provider: sail  -> Sail Research  (https://api.sailresearch.com/v1, SAIL_API_KEY)
-# Both report USD cost in the usage object, so leaving price_in/out at 0 reports
-# the endpoint's actual cost. Override base_url/api_key_env to point elsewhere
-# (e.g. a local vLLM server: provider: vllm, base_url: http://localhost:8000/v1).
+# Neither reliably reports USD cost in the usage object (Prime returns 0.0, Sail
+# omits it), so set list prices explicitly. Override base_url/api_key_env to point
+# elsewhere (e.g. a local vLLM server: provider: vllm, base_url: http://localhost:8000/v1).
 subagent:
   model:
-    model: Qwen/Qwen3-8B
+    model: Qwen/Qwen3.5-2B
     provider: prime               # prime | sail | vllm | openai
     max_output_tokens: 4096
     temperature: 0.2
-    price_in: 0.0                 # 0 -> use provider-reported cost
-    price_out: 0.0
-  max_concurrent: 3              # instruct-to-spawn count for the IF eval
+    price_in: 0.06                # Prime list price, USD / 1M tokens (2026-10)
+    price_out: 0.18
+    price_cache_read: 0.054
+  strategy: parallel             # parallel | sequential | arbiter
+  scope: hard                    # easy | medium | hard (subagent tool set)
+  max_concurrent: 3              # max subagents live at once
   max_dispatches: null           # null -> max_concurrent * orchestrator_steps
   max_steps: 8
+  token_budget: null
+  max_output_chars: 12000
+  arbiter:                       # used only with strategy: arbiter
+    n_candidates: 3
+    debate_rounds: 1
+    confidence_threshold: 0.8
+    model: null                  # null -> orchestrator model
+    max_copy_mb: 500
 
 budget:
   orchestrator_steps: 5          # the study fixes episodes at 5 steps
   total_token_budget: 2000000
   timeout_sec: 1800
+  command_timeout_sec: 180
+  max_command_timeout_sec: 900
+
+tools:
+  max_output_chars: 12000
 
 sandbox:
   kind: harbor                   # harbor | exploitbench | local_docker | local_shell
-  workdir: /app
+  workdir: auto                  # auto -> the container's WORKDIR (`pwd`)
   network: false
 
 # Task selection. Empty lists = all tasks in the subset.

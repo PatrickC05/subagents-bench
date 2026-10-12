@@ -1,6 +1,6 @@
 # Baseline 1: the orchestrator model as a single agent, same tools/sandbox/budget.
-# No subagents. Compare its resolve rate against the model's published
-# SWE-bench Verified result to validate the harness.
+# No subagents. (The pilot sweep's versions are `single_5step` and the
+# compute-matched `single_matched` in configs/sweeps/pilot.yaml.)
 
 name: baseline-single-opus
 
@@ -22,10 +22,12 @@ budget:
   orchestrator_steps: 5
   total_token_budget: 2000000
   timeout_sec: 1800
+  command_timeout_sec: 180
+  max_command_timeout_sec: 900
 
 sandbox:
   kind: harbor
-  workdir: /app
+  workdir: auto
   network: false
 
 task_ids: []

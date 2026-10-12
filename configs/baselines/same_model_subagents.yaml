@@ -1,6 +1,8 @@
 # Baseline 2: orchestrator with subagents of ITS OWN model. Separates the
 # effect of having subagents from the effect of subagent size. Leave the
 # subagent model unset so it defaults to the orchestrator's.
+# (The pilot sweep's version of this control is `samemodel_parallel_hard` in
+# configs/sweeps/pilot.yaml.)
 
 name: baseline-same-model-subagents
 
@@ -20,6 +22,8 @@ orchestrator:
 
 subagent:
   model: null                    # <- defaults to the orchestrator model
+  strategy: parallel
+  scope: hard
   max_concurrent: 3
   max_dispatches: null
   max_steps: 8
@@ -28,10 +32,12 @@ budget:
   orchestrator_steps: 5
   total_token_budget: 2000000
   timeout_sec: 1800
+  command_timeout_sec: 180
+  max_command_timeout_sec: 900
 
 sandbox:
   kind: harbor
-  workdir: /app
+  workdir: auto
   network: false
 
 task_ids: []
