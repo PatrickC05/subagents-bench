@@ -410,8 +410,10 @@ counts next to it in harbor's `result.json`. `episodes.csv` adds
 `n_subtasks` (the task's bugs: the subtasks of its `tests/swesweep_eval.json`,
 recorded in `tasks.json` by the sweep; the grader's own count is 0 when the
 agent's patch breaks the build, which would drop those bugs from the
-denominator and raise `bug_fix_rate`), `bugs_fixed` (reward x n_subtasks)
-and `regressed`;
+denominator and raise `bug_fix_rate`), `bugs_fixed` (the grader's
+`n_resolved`, 0 on a regression, as SWE-sweep's own scoring counts it; the
+reward is rounded to 4 places, so 5 of 14 bugs would give 0.3571 x 14 =
+4.9994) and `regressed`;
 `conditions.csv` adds `n_bugs`, `bugs_fixed`, `bug_fix_rate` (bugs fixed over
 bugs in the valid trials, the micro-average SWE-sweep reports), `n_regressed`
 and `reward_mean`. `resolved` stays reward >= 1, every bug of the task fixed,

@@ -512,7 +512,7 @@ def _unsolved(spec: Spec, job_dir: Path) -> list[str]:
 
 def rewards(res: dict[str, Any]) -> dict[str, Any]:
     """The verifier's reward file: ``reward`` (Terminal-Bench: 1 or 0; SWE-sweep: the fraction of
-    bugs fixed, 0 on a regression) and, from SWE-sweep's grader, ``n_subtasks``, ``visible_ok``,
+    bugs fixed, 0 on a regression) and, from SWE-sweep's grader, ``n_resolved``, ``visible_ok``,
     ``grader_failed`` among others."""
     return (res.get("verifier_result") or {}).get("rewards") or {}
 

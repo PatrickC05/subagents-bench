@@ -56,11 +56,13 @@ def invalid_reason(t: Trial) -> str | None:
 def outcome(t: Trial) -> dict[str, Any]:
     """valid, invalid_reason, harbor_exception, reward, resolved (an unscored valid trial is unsolved)
     and, for SWE-sweep, n_subtasks (the task's bugs, from the task: the grader reports 0 when the
-    patch breaks the build), bugs_fixed (reward x n_subtasks) and regressed (the visible tests
-    failed, which sets the reward to 0); null for other benchmarks."""
+    patch breaks the build), bugs_fixed (the grader's n_resolved, 0 when the visible tests failed,
+    as SWE-sweep's own scoring counts them; the reward is rounded) and regressed (the visible
+    tests failed, which sets the reward to 0); null for other benchmarks."""
     why, r, g, n = invalid_reason(t), reward(t.result), rewards(t.result or {}), t.n_subtasks
     resolved = (1 if r >= 1.0 else 0) if r is not None else (0 if why is None else None)
+    fixed = g.get("n_resolved", 0) if g.get("visible_ok", 0) >= 1 else 0
     return {"valid": why is None, "invalid_reason": why, "harbor_exception": exception_type(t.result),
             "reward": r, "resolved": resolved, "n_subtasks": n,
-            "bugs_fixed": None if r is None or n is None else r * n,
+            "bugs_fixed": None if r is None or n is None else fixed,
             "regressed": None if g.get("visible_ok") is None else int(not g["visible_ok"])}

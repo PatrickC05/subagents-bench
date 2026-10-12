@@ -143,11 +143,12 @@ ask for 16 and 64 GB), gives commands 600 s (test suites run emulated) and
 the agent one hour. The
 orchestrator's step budget is the sweep's `overrides.budget.orchestrator_steps`
 (5, as in the pilot; the larger budget is a one-line change there). The
-analysis adds the bugs fixed (reward x bugs) and regressions per episode and
-the micro-averaged `bug_fix_rate` per condition, SWE-sweep's own metric;
-`resolved` keeps meaning every bug of the task fixed. Expect 5-20 minutes and
-about ten times the tokens of a Terminal-Bench episode, and an image build of
-a few minutes per task the first time (1-2.5 GB each).
+analysis adds the bugs fixed (the grader's count, 0 on a regression) and
+regressions per episode and the micro-averaged `bug_fix_rate` per condition,
+SWE-sweep's own metric; `resolved` keeps meaning every bug of the task fixed.
+Expect 5-20 minutes and about ten times the tokens of a Terminal-Bench
+episode, and an image build of a few minutes per task the first time
+(1-2.5 GB each).
 
 ## Where data and figures land
 

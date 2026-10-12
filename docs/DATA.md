@@ -33,7 +33,7 @@ bugs come from `tasks.json`.
 | File | Fields used |
 |---|---|
 | job `result.json` | `n_total_trials`, `finished_at` (null while the job runs): a job is complete when both are set and every trial has finished |
-| trial `result.json` | `task_name`, `trial_name`, `started_at`, `finished_at`, `exception_info.exception_type`, `exception_info.occurred_at`, `agent_execution.started_at`, `verifier.started_at`, `verifier_environment_mode` (`shared`, or `separate`: the verifier's own container), `verifier_result.rewards.reward`, and from SWE-sweep's grader `verifier_result.rewards.{visible_ok, grader_failed}` |
+| trial `result.json` | `task_name`, `trial_name`, `started_at`, `finished_at`, `exception_info.exception_type`, `exception_info.occurred_at`, `agent_execution.started_at`, `verifier.started_at`, `verifier_environment_mode` (`shared`, or `separate`: the verifier's own container), `verifier_result.rewards.reward`, and from SWE-sweep's grader `verifier_result.rewards.{n_resolved, visible_ok, grader_failed}` |
 | trial `config.json` | `task.path` (its last component is the task name) |
 
 harbor timestamps are ISO 8601 strings (`...Z`). The trial's `result.json`
@@ -228,7 +228,7 @@ Every per-trial and per-record table starts with the **keys**: `sweep`,
 | `invalid_reason` | `no_episode`, `no_result`, `billing_error`, `provider_error` (an exit `provider_error`, harbor's `ProviderUnavailableError`, or any provider error in a call), `harbor_exception` (before the agent started, or a job cancel), `agent_crash` (an exception before the verifier), `grader_failed` (SWE-sweep's grader could not grade), `verifier_failed` (a harbor exception without a reward from a `separate` verifier: its container failed to build or start, it timed out or wrote no reward); empty when valid. Exactly the trials the sweep reruns are invalid, plus those without an episode or result; an agent timeout is valid |
 | `harbor_exception` | harbor's exception type (`AgentTimeoutError` on a timeout), else empty |
 | `reward`, `resolved` | the verifier's reward (Terminal-Bench: 1 or 0; SWE-sweep: the fraction of the task's bugs fixed, 0 on a regression); resolved = 1 if reward >= 1, else 0 (a valid unscored trial is 0, an invalid one empty) |
-| `n_subtasks`, `bugs_fixed`, `regressed` | SWE-sweep only (else empty): the task's bugs (from `tasks.json`, so a trial whose patch breaks the build, which the grader reports as 0 subtasks, keeps them), reward x n_subtasks, and 1 if a visible test regressed (`visible_ok` 0) |
+| `n_subtasks`, `bugs_fixed`, `regressed` | SWE-sweep only (else empty): the task's bugs (from `tasks.json`, so a trial whose patch breaks the build, which the grader reports as 0 subtasks, keeps them), the grader's `n_resolved` (0 if a visible test regressed, as SWE-sweep's scoring counts it; reward x n_subtasks would carry the reward's rounding to 4 places), and 1 if a visible test regressed (`visible_ok` 0) |
 | `t_start`, `wall_clock_sec` | the episode's |
 | `steps`, `spawns`, `dispatches`, `arbitrations` | record counts |
 | `delegated` | 1 if the orchestrator spawned at least once |
