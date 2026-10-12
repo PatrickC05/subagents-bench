@@ -333,7 +333,7 @@ def test_copy_isolation_debate_reports_original_plus_revision(tmp_path):
     assert "weigh them over claims in the revised reports" in judge2 and "+answer-from-cand1" in judge2
 
 
-@pytest.mark.parametrize("round2", [LLMError("judge provider down"), Reply("I cannot decide.")], ids=["error", "unparseable"])
+@pytest.mark.parametrize("round2", [Reply("I cannot decide.")], ids=["unparseable"])
 def test_failed_later_round_keeps_the_earlier_judgement(tmp_path, round2):
     cfg = arb_config(tmp_path, arbiter={"debate_rounds": 1})
     work = tmp_path / "work"
@@ -439,7 +439,7 @@ def test_judge_cut_off_at_the_output_limit_gets_one_retry(tmp_path):
     assert cp.parts["arb_llm"] >= 0.05
 
 
-@pytest.mark.parametrize("retry", [Reply("", finish_reason="length"), LLMError("judge provider down")], ids=["cut-again", "error"])
+@pytest.mark.parametrize("retry", [Reply("", finish_reason="length")], ids=["cut-again"])
 def test_judge_retry_is_made_once_and_its_failure_keeps_the_fallback(tmp_path, retry):
     cfg = arb_config(tmp_path, scope="easy", arbiter={"debate_rounds": 0})
     f = FakeFactory({ORCH: orchestrator([Reply("", finish_reason="length"), retry]),
@@ -454,18 +454,32 @@ def test_judge_retry_is_made_once_and_its_failure_keeps_the_fallback(tmp_path, r
     assert (rnd["winner"], rnd["parse_ok"], a["final_winner"], a["final_from_round"]) == (0, False, 0, None)
 
 
-def test_judge_failure_keeps_episode_going(tmp_path):
+def test_debate_provider_failure_stops_the_episode(tmp_path):
+    cfg = arb_config(tmp_path, scope="easy", arbiter={"debate_rounds": 1})
+    f = FakeFactory({ORCH: orchestrator([{"winner": 1, "confidence": 0.5, "agreement": False, "rationale": "-"}]),
+                     SUB: lambda s, m, t, c: LLMError("debate provider down") if not t
+                     else Reply("", [tc("submit", report="x")])})
+    res = run(cfg, f)
+    r = assert_valid(res.episode_dir)
+    assert res.exit_reason == "provider_error" and r["episode"]["n_provider_errors"] >= 1
+    assert r["episode"]["orchestrator_steps"] == 1
+
+
+def test_judge_provider_failure_stops_the_episode(tmp_path):
     cfg = arb_config(tmp_path, scope="easy")
     f = FakeFactory({ORCH: orchestrator([LLMError("judge provider down")]),
                      SUB: lambda s, m, t, c: Reply("", [tc("submit", report="x")])})
     res = run(cfg, f)
     r = assert_valid(res.episode_dir)
-    assert res.exit_reason == "finished"
+    # A provider failure makes the trial invalid: the episode ends instead of finishing.
+    assert res.exit_reason == "provider_error" and str(res.cause) == "judge provider down"
     a = r["arbitrations"][0]
     assert (a["final_winner"], a["final_confidence"], len(a["rounds"]), a["rounds"][0]["parse_ok"]) == (0, None, 1, False)
     assert a["final_from_round"] is None and a["rounds"][0]["rationale"].startswith("judge call failed: ")
     judge = [c for c in r["calls"] if c["role"] == "arbiter"][0]
     assert judge["error"].startswith("LLMError") and a["rounds"][0]["judge_call_id"] == judge["call_id"]
+    assert r["episode"]["n_provider_errors"] == 1 and not a["applied"]
+    assert r["episode"]["orchestrator_steps"] == 1  # no step after the spawn
 
 
 def test_shared_fallback_when_workdir_too_big(tmp_path):

@@ -30,8 +30,11 @@ and ``timeout`` (safety caps, checked before each step), ``cancelled`` (the
 stop event), ``billing_error`` (recorded, then re-raised), ``provider_error``
 and ``error``. A provider failure that survived every retry (a plain
 :class:`LLMError`: retries exhausted, a non-retryable 4xx, a missing key)
-ends the episode with ``provider_error`` without raising; the exception is
-kept on :attr:`EpisodeResult.cause` so the harbor agent can raise
+in a call of ANY role (orchestrator, subagent, judge, debate) ends the
+episode at once with ``provider_error``: such a trial cannot measure the
+condition (the analysis marks it invalid), so the stop event is set, every
+agent unwinds, and nothing more is spent on it. It is not raised; the first
+failure is kept on :attr:`EpisodeResult.cause` so the harbor agent can raise
 :class:`~subagents_bench.types.ProviderUnavailableError` after finalizing.
 A :class:`ContextLengthError` of the orchestrator ends it with ``error`` (its
 context outgrew the model: an outcome of the condition, not an outage). Any
@@ -183,6 +186,10 @@ class Orchestrator:
         )
         self.max_dispatches = config.resolved_max_dispatches()
         self.used_dispatches = 0
+        # The first provider failure of any role (see on_provider_error).
+        self.provider_failure: LLMError | None = None
+        self._failure_lock = threading.Lock()
+        recorder.on_provider_error = self._on_provider_error
         self.log = AgentLog(recorder, "orchestrator", "orchestrator", stop_event=self.stop_event)
         self.ctx = ToolContext(
             env=env,
@@ -257,7 +264,12 @@ class Orchestrator:
             else:
                 exit_reason = "max_steps"
         except AgentStopped:
-            exit_reason = "cancelled"
+            if self.provider_failure is not None:
+                # Stopped by _on_provider_error (a subagent, judge or debate call).
+                cause = self.provider_failure
+                exit_reason, error = "provider_error", llm_error_text(cause)
+            else:
+                exit_reason = "cancelled"
         except BillingError as e:
             exit_reason, error, pending = "billing_error", f"{type(e).__name__}: {e}", e
         except LLMError as e:
@@ -307,6 +319,18 @@ class Orchestrator:
             recorder=rec,
             cause=cause if record.get("exit_reason") == "provider_error" else None,
         )
+
+    def _on_provider_error(self, e: BaseException) -> None:
+        """A call failed with a provider error after its retries: stop the
+        episode now (exit ``provider_error``) instead of spending more on a
+        trial that cannot measure the condition."""
+        with self._failure_lock:
+            first = self.provider_failure is None
+            if first and isinstance(e, LLMError):
+                self.provider_failure = e
+        if first:
+            log.warning("provider failure, stopping the episode: %s", str(e)[:300])
+        self.stop_event.set()
 
     def _close_clients(self) -> None:
         for c in self._clients.values():

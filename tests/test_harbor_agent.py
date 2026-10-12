@@ -473,7 +473,7 @@ def test_provider_error_raises_after_finalizing(tmp_path, monkeypatch):
 
 
 @pytestmark_harbor
-def test_subagent_provider_error_counts_but_does_not_raise(tmp_path, monkeypatch):
+def test_subagent_provider_error_stops_the_episode_and_raises(tmp_path, monkeypatch):
     logs, work, env = trial(tmp_path, monkeypatch, {})
     ctx = AgentContext()
     f = FakeFactory({
@@ -486,13 +486,17 @@ def test_subagent_provider_error_counts_but_does_not_raise(tmp_path, monkeypatch
         await agent.setup(env)
         await agent.run("task", env, ctx)
 
-    asyncio.run(main())
+    with pytest.raises(ProviderUnavailableError) as ei:
+        asyncio.run(main())
+    assert ei.value.status == 401
     r = assert_valid(logs)
     ep = r["episode"]
-    assert ep["exit_reason"] == "finished" and ep["n_provider_errors"] == 1
+    assert ep["exit_reason"] == "provider_error" and ep["n_provider_errors"] == 1
+    assert ep["error"].startswith("LLMError: sail s: HTTP401")
     (d,) = r["dispatches"]
     assert d["status"] == "error" and d["error"].startswith("LLMError:")
-    assert ctx.metadata["n_provider_errors"] == 1
+    assert ctx.metadata["n_provider_errors"] == 1 and ctx.metadata["exit_reason"] == "provider_error"
+    assert len(f[ORCH].requests) == 1  # the orchestrator's second step never ran
 
 
 @pytestmark_harbor

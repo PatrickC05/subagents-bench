@@ -4,6 +4,8 @@ ContextLengthError trim-and-retry, budgets and the DispatchRecord contents."""
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from fakes import ORCH, SUB, FakeFactory, Reply, assert_valid, make_config, run, tc
@@ -174,25 +176,47 @@ def test_context_overflow_after_second_failure(tmp_path):
     assert "ContextLengthError" in d["error"] and res.exit_reason == "finished"
 
 
-def test_provider_error_and_crash_fail_only_the_dispatch(tmp_path):
+def test_a_client_crash_fails_only_the_dispatch(tmp_path):
     cfg = make_config(tmp_path, subagent={"strategy": "sequential"})
-    calls = {"n": 0}
-
-    def sub(system, messages, tools, client):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            return LLMError("server error after retries", status=503)
-        return RuntimeError("bug in the client")
-
-    f = FakeFactory({ORCH: one_spawn(["a", "b"]), SUB: sub})
+    f = FakeFactory({ORCH: one_spawn(["a", "b"]), SUB: [RuntimeError("bug in the client"), Reply("", [tc("submit", report="ok")])]})
     res = run(cfg, f)
     r = assert_valid(res.episode_dir)
-    assert res.exit_reason == "finished"
+    d1, d2 = r["dispatches"]
+    assert d1["status"] == "error" and "RuntimeError: bug in the client" in d1["error"] and "Traceback" in d1["error"]
+    assert d2["status"] == "submitted"
+    # A harness error, not a provider failure: the episode carries on.
+    assert r["episode"]["n_provider_errors"] == 0 and res.exit_reason == "finished"
+
+
+def test_a_provider_failure_stops_the_episode_at_once(tmp_path):
+    cfg = make_config(tmp_path, subagent={"strategy": "sequential"})
+    f = FakeFactory({ORCH: one_spawn(["a", "b"]), SUB: [LLMError("server error after retries", status=503)]})
+    res = run(cfg, f)
+    r = assert_valid(res.episode_dir)
+    # The trial cannot measure the condition: no second dispatch, no second orchestrator step.
+    assert res.exit_reason == "provider_error" and res.cause is not None and res.cause.status == 503
+    assert r["episode"]["error"].startswith("LLMError: server error") and r["episode"]["n_provider_errors"] == 1
     d1, d2 = r["dispatches"]
     assert d1["status"] == "error" and d1["error"].startswith("LLMError: server error")
-    assert d2["status"] == "error" and "RuntimeError: bug in the client" in d2["error"] and "Traceback" in d2["error"]
-    # Only the provider failure counts (the client bug is a harness error); the episode carries on.
-    assert r["episode"]["n_provider_errors"] == 1 and r["episode"]["exit_reason"] == "finished"
+    assert d2["status"] == "cancelled" and d2["steps_used"] == 0
+    assert r["episode"]["orchestrator_steps"] == 1 and len(f[ORCH].requests) == 1
+
+
+def test_a_provider_failure_stops_parallel_siblings_promptly(tmp_path):
+    cfg = make_config(tmp_path, subagent={"strategy": "parallel"})
+
+    def sub(system, messages, tools, client):
+        if "fail" in messages[0].content:
+            return LLMError("giving up after 5 attempts", status=None)
+        return Reply("", [tc("submit", report="slow")], latency=30.0)
+
+    f = FakeFactory({ORCH: one_spawn(["fail now", "slow one", "slow two"]), SUB: sub})
+    t0 = time.time()
+    res = run(cfg, f)
+    assert time.time() - t0 < 10  # the 30 s siblings were abandoned
+    r = assert_valid(res.episode_dir)
+    assert res.exit_reason == "provider_error"
+    assert sorted(d["status"] for d in r["dispatches"]) == ["cancelled", "cancelled", "error"]
 
 
 def test_metered_env_union_counts_overlapping_execs_once():

@@ -240,8 +240,8 @@ thread-safe: one instance is shared by concurrent subagent threads.
   exhausted, a non-retryable 4xx such as 401/403, or a missing API key. It
   means the provider did not serve the call. The runtime counts such calls
   in `EpisodeRecord.n_provider_errors` (their `CallRecord.error` starts with
-  `LLMError:`); one that ends the orchestrator gives
-  `exit_reason="provider_error"` (section 4).
+  `LLMError:`), and the first one, in a call of any role, ends the episode
+  at once with `exit_reason="provider_error"` (section 4).
 - **Errors carry the request.** `LLMError` (and its subclasses) has
   `attempts`, `status` and `request` (the `RequestInfo` of what was sent), so
   a failed call's `CallRecord` has the same request hashes as a successful
@@ -517,9 +517,14 @@ it is set, `exec` raises `AgentStopped`. The constructor is
 - Exit reasons: `finished`, `max_steps`, `no_tool_call`, `token_budget`,
   `timeout` (safety cap), `cancelled` (stop event), `billing_error` (re-raised
   after logging), `provider_error`, `error`. A provider failure that survived
-  every retry (a plain `LLMError`, section 3) ends the episode with
-  `provider_error`; `episode.error` keeps the exception class and HTTP
-  status, and `EpisodeResult.cause` the exception. It is not re-raised by the
+  every retry (a plain `LLMError`, section 3) in a call of ANY role
+  (orchestrator, subagent, judge, debate) ends the episode at once with
+  `provider_error`: such a trial cannot measure the condition (the analysis
+  marks it invalid), so the recorder's `on_provider_error` hook sets the
+  stop event, every agent unwinds (in-flight siblings end `cancelled`), and
+  nothing more is spent on it. `episode.error` keeps the exception class and
+  HTTP status of the first failure, and `EpisodeResult.cause` the exception.
+  It is not re-raised by the
   orchestrator: the harbor agent raises `ProviderUnavailableError` after
   finalizing, so the trial is invalid and is rerun rather than graded. A
   `ContextLengthError` of the orchestrator (its context outgrew the model) is

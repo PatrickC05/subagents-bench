@@ -13,8 +13,9 @@ with one of these statuses (written to ``dispatches.jsonl``):
 * ``context_overflow`` -- the provider rejected the prompt as too long even
   after an aggressive trim;
 * ``error`` -- a provider error after retries (its failed call counts in
-  ``EpisodeRecord.n_provider_errors`` and the dispatch ``error`` starts with
-  ``LLMError:``), or a harness bug;
+  ``EpisodeRecord.n_provider_errors``, the dispatch ``error`` starts with
+  ``LLMError:``, and the episode stops with ``provider_error``), or a
+  harness bug;
 * ``cancelled`` -- the episode's stop event fired;
 * ``token_budget`` / ``timeout`` -- the episode's token or wall-clock safety
   cap (or the per-subagent ``token_budget``) was reached before a step.

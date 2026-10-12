@@ -419,6 +419,9 @@ class EpisodeRecorder:
         self.episode_id = episode_id or new_episode_id()
         self.config = config
         self.on_event = on_event
+        # Called (by AgentLog.llm) when a call of any role fails with a
+        # provider error after its retries; the orchestrator stops the episode.
+        self.on_provider_error: Callable[[BaseException], None] | None = None
         self._lock = threading.RLock()
         self._seq = 0
         self._agent_seq: dict[str, int] = defaultdict(int)
@@ -940,6 +943,11 @@ class AgentLog:
                 )
             except Exception:  # noqa: BLE001 - never mask the original error
                 log.exception("could not record a failed call")
+            if isinstance(e, LLMError) and is_provider_error(msg) and self.recorder.on_provider_error is not None:
+                try:
+                    self.recorder.on_provider_error(e)
+                except Exception:  # noqa: BLE001 - never mask the original error
+                    log.exception("on_provider_error failed")
             raise
         self.recorder.record_call(
             call_record_from_response(resp, ids=ids, cfg=client.cfg, context_trimmed_chars=context_trimmed_chars)
