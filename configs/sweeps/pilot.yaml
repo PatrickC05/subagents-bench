@@ -1,0 +1,93 @@
+# Pilot sweep (docs/DESIGN.md section 1): 12 conditions x 10 Terminal-Bench 2.0
+# tasks x 3 rounds = 360 episodes, 36 harbor jobs (one per round x condition).
+#
+#   subagents-bench preflight configs/sweeps/pilot.yaml --oracle
+#   subagents-bench sweep configs/sweeps/pilot.yaml [--dry-run]
+#
+# Relative paths (base, jobs_dir) resolve against the repository root.
+# Each condition is deep-merged onto `base` (dicts merge, lists and scalars
+# replace, null replaces) and its `name` is set to the condition name.
+
+name: pilot
+dataset: terminal-bench@2.0
+
+tasks:
+  # Terminal-Bench "easy" tasks.
+  - fix-git
+  - prove-plus-comm
+  - cobol-modernization
+  - overfull-hbox
+  # Short "medium" tasks (expert estimate <= 20 min).
+  - crack-7z-hash
+  - raman-fitting
+  - constraints-scheduling
+  - nginx-request-logging
+  - openssl-selfsigned-cert
+  - polyglot-c-py
+
+# Trials per (task, condition). Each round runs every condition once, in an
+# order shuffled per round with `order_seed`, so provider drift over the
+# sweep's hours is spread across conditions instead of hitting one.
+rounds: 3
+order_seed: 0
+
+base: configs/sail/base.yaml
+
+conditions:
+  # --- baselines: the orchestrator alone -----------------------------------
+  single_5step:                    # the study's 5-step budget, no subagents
+    topology: single
+  single_matched:                  # compute-matched: 40 orchestrator steps, no subagents
+    topology: single
+    budget: {orchestrator_steps: 40}
+
+  # --- Gemma-4-31B subagents: strategy x scope -------------------------------
+  # Base already sets the Gemma model, max_concurrent 3, max_dispatches 15,
+  # max_steps 8 and the arbiter settings (3 candidates, 1 debate round,
+  # threshold 0.8, judged by the orchestrator model).
+  gemma31b_parallel_easy:     {topology: subagents, subagent: {strategy: parallel,   scope: easy}}
+  gemma31b_parallel_medium:   {topology: subagents, subagent: {strategy: parallel,   scope: medium}}
+  gemma31b_parallel_hard:     {topology: subagents, subagent: {strategy: parallel,   scope: hard}}
+  gemma31b_sequential_easy:   {topology: subagents, subagent: {strategy: sequential, scope: easy}}
+  gemma31b_sequential_medium: {topology: subagents, subagent: {strategy: sequential, scope: medium}}
+  gemma31b_sequential_hard:   {topology: subagents, subagent: {strategy: sequential, scope: hard}}
+  gemma31b_arbiter_easy:      {topology: subagents, subagent: {strategy: arbiter,    scope: easy}}
+  gemma31b_arbiter_medium:    {topology: subagents, subagent: {strategy: arbiter,    scope: medium}}
+  gemma31b_arbiter_hard:      {topology: subagents, subagent: {strategy: arbiter,    scope: hard}}
+
+  # --- same-model control: subagents run the orchestrator's model -----------
+  samemodel_parallel_hard:
+    topology: subagents
+    subagent: {model: null, strategy: parallel, scope: hard}
+
+  # --- optional: Gemma-4-12B subagents (16K context; exercises the guard) ---
+  # Uncomment to add. Sail serves this model with a 16K window (input +
+  # max_tokens <= 15872, configs/models.yaml), so the context guard and small
+  # outputs matter. Prices: Sail balanced tier from configs/pricing.yaml
+  # (retrieved 2026-10-11); they feed only the run-time cost_usd.
+  # gemma12b_parallel_hard:
+  #   topology: subagents
+  #   subagent:
+  #     strategy: parallel
+  #     scope: hard
+  #     max_output_chars: 4000       # keep tool output small for a 16K window
+  #     model:
+  #       model: google/gemma-4-12B-it
+  #       provider: sail
+  #       completion_window: balanced
+  #       temperature: 0.7
+  #       max_output_tokens: 2048
+  #       context_window: 16384
+  #       price_in: 0.10
+  #       price_cache_read: 0.07
+  #       price_out: 2.00
+
+harbor:
+  env: docker                      # or daytona / modal / prime ... (harbor -e)
+  n_concurrent: 4                  # trials (tasks) run at once within a job
+  # Multiplies each task's agent timeout (task.toml [agent] timeout_sec).
+  # Generous because the budget is in steps; the timeout is only a safety cap.
+  agent_timeout_multiplier: 4.0
+  extra_args: []                   # appended verbatim to every `harbor run`
+
+jobs_dir: jobs/pilot

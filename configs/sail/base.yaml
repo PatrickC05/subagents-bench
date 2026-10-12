@@ -1,0 +1,93 @@
+# Base ExperimentConfig for every condition of the Sail sweeps
+# (configs/sweeps/{smoke,pilot,prime_size}.yaml). A sweep deep-merges each
+# condition's overrides onto this file and sets `name` to the condition name.
+# Field reference: docs/DESIGN.md section 2 and subagents_bench/config.py.
+#
+# Cost/latency are recomputed offline from the logged per-call tokens and
+# timings (configs/pricing.yaml, configs/serving.yaml); the prices below only
+# feed the run-time `cost_usd` estimate written into each call record.
+
+name: base                         # replaced by the condition name per run
+benchmark: terminal_bench
+topology: subagents                # conditions override to `single` for baselines
+subtask_type: none                 # legacy orchestrator prompt prefix; unused here
+
+# Large orchestrator. DeepSeek-V4.1-Flash on Sail's `balanced` completion window
+# (tier). Every Sail model in a sweep uses the same tier so tiers never confound
+# a comparison. The tier is sent as the X-Sail-Completion-Window header.
+orchestrator:
+  model: deepseek-ai/DeepSeek-V4.1-Flash
+  provider: sail
+  completion_window: balanced
+  # 0.7 for every model: repeated trials are independent samples, not replays.
+  temperature: 0.7
+  # Room for DeepSeek's (provider-default) reasoning plus a tool call per step.
+  max_output_tokens: 8192
+  # Sail balanced-tier list prices, USD per 1M tokens (scheme `sail_balanced`).
+  price_in: 0.07
+  price_cache_read: 0.005
+  price_out: 0.22
+  # null = unknown/not enforced: the orchestrator's 5-step history stays far
+  # below DeepSeek's window, so the context guard is off for it.
+  context_window: null
+
+subagent:
+  # Default small subagent model: Gemma 4 31B (NVFP4) on Sail, same tier.
+  # A condition sets `model: null` for the same-model control (subagents run
+  # the orchestrator's model).
+  model:
+    model: nvidia/Gemma-4-31B-IT-NVFP4
+    provider: sail
+    completion_window: balanced
+    temperature: 0.7
+    # Subagent turns are short tool calls and a final report.
+    max_output_tokens: 4096
+    # Sail balanced-tier list prices, USD per 1M tokens.
+    price_in: 0.11
+    price_cache_read: 0.06
+    price_out: 0.32
+    # Enables the subagent context guard (DESIGN section 4, "Context guard").
+    context_window: 262144
+  # parallel | sequential | arbiter  (the strategy axis)
+  strategy: parallel
+  # easy (read/list/search) | medium (+bash) | hard (+edit_file)  (the scope axis)
+  scope: hard
+  # At most 3 subagents live at once, for every strategy.
+  max_concurrent: 3
+  # = max_concurrent x orchestrator_steps: enough to fill every step.
+  # Arbiter candidates count individually against this budget.
+  max_dispatches: 15
+  # Per-subagent LLM step budget.
+  max_steps: 8
+  token_budget: null               # no per-subagent token cap (episode cap below)
+  max_output_chars: 12000          # subagent tool-output truncation
+  arbiter:
+    n_candidates: 3                # candidates per instruction
+    debate_rounds: 1               # max confidence-aware debate rounds (arXiv 2602.12276)
+    confidence_threshold: 0.8      # debate only if not (agreement and confidence >= 0.8)
+    model: null                    # null -> the orchestrator model judges
+    max_copy_mb: 500               # hard scope: private workdir copy per candidate if du <= 500 MB
+
+budget:
+  # The study's fixed orchestrator budget. Budgets are steps and tokens, not
+  # seconds, so provider latency never changes a trajectory.
+  orchestrator_steps: 5
+  total_token_budget: 5000000      # safety cap only
+  timeout_sec: 3600                # safety cap only (harbor's agent timeout is separate)
+  command_timeout_sec: 180         # default per-command timeout
+  max_command_timeout_sec: 900     # cap on a model-requested timeout
+
+tools:
+  max_output_chars: 12000          # orchestrator tool-output truncation
+
+sandbox:
+  kind: harbor                     # tools exec inside harbor's task container
+  workdir: auto                    # `pwd` in the container = the task's WORKDIR
+
+# Task selection, trials and output_dir are owned by the sweep/harbor, not by
+# this file: harbor runs one trial per (task, condition, round).
+task_ids: []
+difficulties: []
+n_trials: 1
+seed: 1
+output_dir: runs

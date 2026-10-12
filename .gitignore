@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# subagents-bench outputs (anchored to the repo root: an unanchored
+# `analysis/` would also hide the subagents_bench/analysis/ package)
+/jobs/
+/runs/
+/analysis/
+/figures/
+# Dataset exports from `harbor dataset download` live in /.cache/ (ignored above).

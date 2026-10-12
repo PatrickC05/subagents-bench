@@ -1,0 +1,105 @@
+# Optional subagent-SIZE sweep: Qwen3.5 {0.8, 2, 4, 9}B on Prime Intellect as
+# subagents; the orchestrator stays DeepSeek-V4.1-Flash on Sail (balanced).
+# Strategy x scope is fixed at parallel x hard, so only the subagent model
+# varies. Same 10 tasks and 3 rounds as the pilot -> 4 x 10 x 3 = 120 episodes.
+# Compare against the pilot's single_5step / gemma31b_parallel_hard /
+# samemodel_parallel_hard (same tasks, same orchestrator).
+#
+# Prime credentials: PRIME_API_KEY + PRIME_TEAM_ID in .env, or a logged-in
+# `prime` CLI (~/.prime/config.json). Requests carry X-Prime-Team-ID.
+#
+# Prices: Prime list prices (USD per 1M tokens) as returned by Prime's
+# /v1/models API (`prime inference models -o json`) on 2026-10-11, pricing
+# effective 2026-04-27; that API also lists the cache-read prices used here.
+# They feed only the run-time cost_usd (offline cost: configs/pricing.yaml).
+# context_window stays null: the models' native window is 262144
+# (configs/models.yaml) but Prime does not publish the window it serves, so
+# the context guard is off rather than set to an unverified limit.
+
+name: prime_size
+dataset: terminal-bench@2.0
+tasks:
+  - fix-git
+  - prove-plus-comm
+  - cobol-modernization
+  - overfull-hbox
+  - crack-7z-hash
+  - raman-fitting
+  - constraints-scheduling
+  - nginx-request-logging
+  - openssl-selfsigned-cert
+  - polyglot-c-py
+rounds: 3
+order_seed: 0
+
+base: configs/sail/base.yaml
+
+conditions:
+  qwen0.8b_parallel_hard:
+    topology: subagents
+    subagent:
+      strategy: parallel
+      scope: hard
+      model:
+        model: Qwen/Qwen3.5-0.8B
+        provider: prime
+        completion_window: null      # Sail-only header; not sent to Prime
+        temperature: 0.7
+        max_output_tokens: 4096
+        price_in: 0.04
+        price_cache_read: 0.036
+        price_out: 0.08
+        context_window: null
+  qwen2b_parallel_hard:
+    topology: subagents
+    subagent:
+      strategy: parallel
+      scope: hard
+      model:
+        model: Qwen/Qwen3.5-2B
+        provider: prime
+        completion_window: null
+        temperature: 0.7
+        max_output_tokens: 4096
+        price_in: 0.06
+        price_cache_read: 0.054
+        price_out: 0.18
+        context_window: null
+  qwen4b_parallel_hard:
+    topology: subagents
+    subagent:
+      strategy: parallel
+      scope: hard
+      model:
+        model: Qwen/Qwen3.5-4B
+        provider: prime
+        completion_window: null
+        temperature: 0.7
+        max_output_tokens: 4096
+        price_in: 0.10
+        price_cache_read: 0.09
+        price_out: 0.30
+        context_window: null
+  qwen9b_parallel_hard:
+    topology: subagents
+    subagent:
+      strategy: parallel
+      scope: hard
+      model:
+        model: Qwen/Qwen3.5-9B
+        provider: prime
+        completion_window: null
+        temperature: 0.7
+        max_output_tokens: 4096
+        price_in: 0.18
+        price_cache_read: 0.162
+        price_out: 0.54
+        context_window: null
+
+harbor:
+  env: docker
+  n_concurrent: 4
+  agent_timeout_multiplier: 4.0
+  extra_args: []
+
+jobs_dir: jobs/prime_size
