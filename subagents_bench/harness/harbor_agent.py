@@ -185,13 +185,17 @@ for __sb_f in "$__sb_root"/*/pid_*; do
   kill -KILL $__sb_pids 2>/dev/null
   __sb_n=$((__sb_n + 1))
 done
+# Arbiter candidates' private copies of the workdir: the arbitration's own
+# cleanup is skipped once the episode is stopped.
+rm -rf -- "$__sb_root/arb" 2>/dev/null
 echo "__SB_KILLED $__sb_n"
 """
 
 
 def kill_commands_script(state_root: str) -> str:
     """bash script that SIGKILLs every agent command still running under
-    ``state_root`` (see ``_KILL_SCRIPT``); prints ``__SB_KILLED <n>``."""
+    ``state_root`` (see ``_KILL_SCRIPT``) and removes the arbiter candidates'
+    private copies (``<state_root>/arb``); prints ``__SB_KILLED <n>``."""
     return _KILL_SCRIPT.replace("@ROOT@", shlex.quote(state_root))
 
 

@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 
 from fakes import ORCH, SUB, FakeFactory, Reply, assert_valid, tc
-from subagents_bench import tools
+from subagents_bench import tools, workspace
 from subagents_bench.harness import harbor_agent
 from subagents_bench.harness.harbor_agent import OrchestratorAgent, kill_commands_script
 from subagents_bench.provenance import repo_root
@@ -226,6 +226,43 @@ def test_harbor_cancellation_finalizes_and_stops_thread(tmp_path, monkeypatch):
     assert ctx.metadata["exit_reason"] == "cancelled"
     # Records written after finalization (none expected) would be dropped, not appended.
     assert agent.recorder.finalized and agent.recorder.dropped == 0
+
+
+def test_harbor_cancellation_during_an_arbitration_keeps_every_record(tmp_path, monkeypatch):
+    """Harbor's agent timeout while the arbiter's candidates (private copies)
+    are in slow LLM calls: the thread unwinds within the grace period, so the
+    candidates' dispatches, the arbitration, the spawn and the step are all
+    recorded before the episode is finalized (nothing dropped)."""
+    logs, work, env = trial(tmp_path, monkeypatch, {"subagent": {
+        "model": {"model": SUB, "provider": "sail", "price_in": 0.5, "price_out": 0.5},
+        "strategy": "arbiter", "scope": "hard", "max_steps": 3, "max_concurrent": 3,
+        "arbiter": {"n_candidates": 3}}})
+    ctx = AgentContext()
+    f = FakeFactory({ORCH: [Reply("", [tc("spawn_subagents", instructions=["fix it"])])],
+                     SUB: lambda s, m, t, c: Reply("never", latency=60.0)})
+    agent = make_agent(logs, f)
+    t0 = time.time()
+
+    async def main():
+        await agent.setup(env)
+        await asyncio.wait_for(agent.run("task", env, ctx), timeout=1.5)
+
+    with pytest.raises(asyncio.TimeoutError):
+        asyncio.run(main())
+    assert time.time() - t0 < 15 and agent._run_future.done()
+    assert agent.recorder.dropped == 0
+    r = assert_valid(logs)
+    assert r["episode"]["exit_reason"] == "cancelled"
+    (spawn,) = r["spawns"]
+    (arb,) = r["arbitrations"]
+    assert arb["isolation"] == "copy" and arb["group_id"] == spawn["group_id"]
+    assert sorted(d["status"] for d in r["dispatches"]) == ["cancelled"] * 3
+    assert sorted(spawn["dispatch_ids"]) == sorted(arb["candidate_dispatch_ids"]) == sorted(
+        d["dispatch_id"] for d in r["dispatches"])
+    assert r["steps"][0]["spawned_group_ids"] == [spawn["group_id"]]
+    # The candidates' private copies were made, then removed by the cancel-time kill.
+    assert arb["isolation_sec"] > 0
+    assert not Path(workspace.sb_root(agent._env), "arb", arb["arbitration_id"]).exists()
 
 
 def _cancel_during_command(tmp_path, monkeypatch, command: str, topology: str = "single"):
