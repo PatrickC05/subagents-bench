@@ -129,7 +129,8 @@ already passed it).
 Exit codes: 0 done; 1 a preflight check or a job failed, or a job still
 needs a retry (re-run); 2 a spec or config problem, a refused resume, or
 another sweep running on the same jobs dir; 3 a billing error (top up, then
-re-run); 4 provider failures in over half of a job's trials (re-run later);
+re-run); 4 a provider outage: a trial hit a provider failure and the models
+still fail a probe request (re-run later);
 130 interrupted (re-run). Section 6 explains each.
 
 ### `scripts/analyze.sh [JOBS_DIR...]`
@@ -286,11 +287,16 @@ Other things that stop a sweep:
 - **Billing error.** After every job the sweep checks each episode for
   `exit_reason == "billing_error"` and stops (exit code 3) if it finds one.
   Top up the account and re-run: the job is rerun.
-- **Provider outage.** When provider failures hit more than half of a job's
-  trials, the sweep stops (exit code 4) instead of burning through the
-  remaining jobs. Re-run later (after fixing the key, if a 401/403 caused
-  it): the job is rerun. Fewer failures fail only that job (exit code 1 at
-  the end), and the next run retries it.
+- **Provider outage (fail fast).** A model call gives up after at most
+  ~2 minutes of retries (`retry_budget_sec`), and the first such failure, in
+  any role, ends its episode at once (the trial is invalid anyway). The
+  sweep prints each trial's outcome as it finishes; when a trial hits a
+  provider failure it sends one tiny request to every model, and if any
+  still fails it stops the running job and exits with code 4, naming the
+  model and the error, typically within a few minutes of the outage. Re-run
+  later (after fixing the key, if a 401/403 caused it): the job is rerun. If
+  the models answer again, the failure was transient: the sweep goes on,
+  that job fails (exit code 1 at the end), and the next run retries it.
 - **Repeated failures.** Three failed jobs in a row (Docker, harbor or
   provider trouble) stop the sweep.
 - **Another sweep on the same jobs dir.** A sweep holds

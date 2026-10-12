@@ -260,6 +260,26 @@ def code_root(tmp_path_factory, monkeypatch):
     return root
 
 
+class ProbeStub:
+    """Stands in for sweep.probe_models (no network): ``failing`` is what it
+    reports; ``calls`` counts the probes."""
+
+    def __init__(self):
+        self.failing: list[str] = []
+        self.calls = 0
+
+    def __call__(self, resolved):
+        self.calls += 1
+        return list(self.failing)
+
+
+@pytest.fixture(autouse=True)
+def probe(monkeypatch):
+    stub = ProbeStub()
+    monkeypatch.setattr(sweep, "probe_models", stub)
+    return stub
+
+
 @pytest.fixture
 def fake_harbor(monkeypatch):
     fh = FakeHarbor()
@@ -1025,27 +1045,69 @@ def test_resume_after_a_billing_abort_reruns_the_job(tmp_path, fake_harbor, stub
     assert (sj["status"], sj["jobs_complete"]) == ("complete", 4)
 
 
-def test_provider_outage_aborts_with_exit_4_and_resume_reruns(tmp_path, fake_harbor, stub_config):
+def test_provider_outage_aborts_with_exit_4_and_resume_reruns(tmp_path, fake_harbor, stub_config, probe):
     spec = sweep.load_spec(make_project(tmp_path))
     order = sweep.condition_order(["single", "par"], 2, 0)
     first = f"t__r1__{order[1][0]}"
     fake_harbor.modes[first] = "outage"  # every trial: provider failure
+    probe.failing = ["m @ sail/balanced: LLMError: chat completion failed"]
     lines: list[str] = []
     assert sweep.run_sweep(spec, out=lines.append) == sweep.EXIT_PROVIDER == 4
-    assert len(fake_harbor.popen_calls) == 1
-    run = read_manifest(spec)[-1]
+    assert len(fake_harbor.popen_calls) == 1 and probe.calls == 1  # probed once, by the watcher
+    events = read_manifest(spec)
+    run = [m for m in events if m["event"] == "run"][-1]
     assert run["retry_trials"] == {"fix-git__abc0": ["provider"], "prove-plus-comm__abc1": ["provider"]}
     assert run["state"] == "needs_retry" and run["complete"] is False and run["n_provider_error_trials"] == 2
+    assert events[-1]["event"] == "provider_abort" and "chat completion failed" in events[-1]["reason"]
     assert json.loads((spec.jobs_dir / "sweep.json").read_text())["status"] == "aborted_provider"
-    assert any("ABORT: provider failures in 2/2 trials" in s for s in lines)
+    assert any(s.startswith("ABORT: provider failure in") and "the providers still fail" in s for s in lines)
+    # Each trial was reported as it finished.
+    assert any("trial fix-git__abc0: no reward, exit provider_error" in s and "harbor ProviderUnavailableError" in s
+               for s in lines)
     fake_harbor.modes.clear()
+    probe.failing = []
     assert sweep.run_sweep(spec, out=lambda s: None) == 0
     assert (spec.jobs_dir / "_partial" / f"{first}.retry.1").is_dir()
 
 
-def test_a_minority_of_provider_failures_fails_the_job_but_not_the_sweep(tmp_path, fake_harbor, stub_config):
+def test_transient_provider_failure_goes_on_and_retries_later(tmp_path, fake_harbor, stub_config, probe):
     spec = sweep.load_spec(make_project(tmp_path))
-    fake_harbor.modes["t__r1__par"] = "sub_provider"  # 1 of 2 trials: not over half
+    order = sweep.condition_order(["single", "par"], 2, 0)
+    first = f"t__r1__{order[1][0]}"
+    fake_harbor.modes[first] = "outage"
+    lines: list[str] = []
+    # The models answer again: no abort; the other jobs run; the failed job is left for the next run.
+    assert sweep.run_sweep(spec, out=lines.append) == sweep.EXIT_FAIL
+    assert len(fake_harbor.popen_calls) == 4 and probe.calls == 2  # mid-job and before the next job
+    assert any("every model answers again" in s for s in lines)
+    assert any("provider failures in 2/2 trials, but every model answers now" in s for s in lines)
+    assert sweep.job_status(spec.jobs_dir / first).state == "needs_retry"
+    fake_harbor.modes.clear()
+    assert sweep.run_sweep(spec, out=lambda s: None) == 0
+
+
+def test_job_watcher_stops_a_running_job_on_an_outage(tmp_path):
+    job = tmp_path / "j"
+    out: list[str] = []
+    w = sweep.JobWatcher(job, "[1/1] j", out.append, probe=lambda: ["m @ sail: down"])
+    assert w.poll() is False  # no job dir yet
+    make_job(job, ["fix-git", "prove-plus-comm"], mode="complete")
+    assert w.poll() is False and len(out) == 2  # two finished trials reported, no failure
+    assert w.poll() is False and len(out) == 2  # each trial reported once
+    make_job(tmp_path / "k", ["fix-git"], mode="outage")
+    w2 = sweep.JobWatcher(tmp_path / "k", "p", out.append, probe=lambda: ["m @ sail: down"])
+    assert w2.poll() is True and "m @ sail: down" in w2.abort_reason
+    # A real process is interrupted promptly when the watcher says so.
+    code = "import time; time.sleep(60)"
+    t0 = time.time()
+    rc = sweep.run_job_process([sys.executable, "-c", code], env=dict(os.environ), cwd=tmp_path,
+                               watch=lambda: True, poll_sec=0.2, grace_sec=5)
+    assert time.time() - t0 < 10 and rc != 0
+
+
+def test_a_transient_subagent_provider_failure_fails_the_job_but_not_the_sweep(tmp_path, fake_harbor, stub_config):
+    spec = sweep.load_spec(make_project(tmp_path))
+    fake_harbor.modes["t__r1__par"] = "sub_provider"  # 1 of 2 trials; the models answer again
     lines: list[str] = []
     assert sweep.run_sweep(spec, out=lines.append) == sweep.EXIT_FAIL
     assert len(fake_harbor.popen_calls) == 4  # the sweep went on

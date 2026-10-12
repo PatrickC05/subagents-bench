@@ -26,8 +26,12 @@
 # Exit codes: 0 done, 1 failed jobs/preflight (or jobs that still need a
 # retry), 2 bad spec/config, a refused resume (changed task list, harbor
 # arguments or code) or another sweep running on the same jobs dir,
-# 3 aborted on a provider billing error, 4 aborted on provider failures in
-# over half a job's trials (likely an outage), 130 interrupted.
+# 3 aborted on a provider billing error, 4 aborted on a provider outage (a
+# trial hit a provider failure and the models still do not answer; usually
+# within minutes of the outage), 130 interrupted.
+#
+# Each trial's outcome is printed as harbor finishes it (reward, exit reason,
+# wall clock, provider errors), so failures show while the job runs.
 set -euo pipefail
 
 CALLER_PWD="$(pwd)"
@@ -122,7 +126,7 @@ case "$rc" in
   0) if [ "$DRY_RUN" = "1" ]; then echo "[PASS] dry run: plan printed, nothing was run"; else echo "[PASS] sweep complete"; fi ;;
   2) echo "[FAIL] sweep refused to run: see the reasons above (spec or config problem, a resume that would mix task lists, harbor arguments or code, or another sweep on this jobs dir)" ;;
   3) echo "[FAIL] sweep aborted on a billing error: top up the provider account, then re-run this command to resume (the affected job is rerun)" ;;
-  4) echo "[FAIL] sweep aborted: a provider failed in over half of a job's trials (outage or rejected key); re-run this command later to resume (the job is rerun)" ;;
+  4) echo "[FAIL] sweep aborted: a provider is failing (outage or rejected key; the ABORT line above names the model and error); re-run this command later to resume (the job is rerun)" ;;
   130) echo "[WARN] sweep interrupted: re-run this command to resume" ;;
   *) echo "[FAIL] sweep exited with $rc: see the output above and <jobs_dir>/sweep_manifest.jsonl; re-run to retry" ;;
 esac

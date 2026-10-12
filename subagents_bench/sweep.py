@@ -16,8 +16,10 @@ launcher turns it into one ``harbor run`` job per (round, condition):
   job with a trial that did not measure the condition (billing or provider
   failure, an infrastructure error, an agent crash before the verifier), to
   ``<job>.retry.<k>`` (:func:`trial_retry_reasons`);
-* after every job, the sweep aborts on a billing error (exit 3) or when
-  provider failures hit more than half the job's trials (exit 4);
+* while a job runs, each trial's outcome is printed as it finishes
+  (:class:`JobWatcher`); a provider failure triggers a probe of the sweep's
+  models, and if they still fail the job is stopped and the sweep exits 4;
+  after every job, the sweep aborts on a billing error (exit 3);
 * one sweep at a time per jobs dir: ``<jobs_dir>/.sweep.lock`` (``flock``);
 * every job event is appended to ``<jobs_dir>/sweep_manifest.jsonl`` and the
   sweep's provenance (source fingerprint, git commit, versions, lockfile
@@ -854,10 +856,35 @@ def _run(cmd: list[str], *, timeout: float | None = 60, cwd: Path | None = None,
         return subprocess.CompletedProcess(cmd, 124, "", f"timed out after {e.timeout}s")
 
 
+def _interrupt_job(proc: Any, grace_sec: float) -> None:
+    """SIGINT a harbor job (it cancels its trials and removes containers),
+    then terminate and kill it if it does not exit in time."""
+    try:
+        proc.send_signal(signal.SIGINT)
+        proc.wait(timeout=grace_sec)
+    except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
+        proc.terminate()
+        try:
+            proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
 def run_job_process(
-    cmd: list[str], *, env: dict[str, str], cwd: Path, grace_sec: float = 120.0, pass_fds: tuple[int, ...] = ()
+    cmd: list[str],
+    *,
+    env: dict[str, str],
+    cwd: Path,
+    grace_sec: float = 120.0,
+    pass_fds: tuple[int, ...] = (),
+    watch: Callable[[], bool] | None = None,
+    poll_sec: float = 10.0,
 ) -> int:
     """Run a harbor job with inherited stdout/stderr; return its exit code.
+
+    ``watch`` is called every ``poll_sec`` while the job runs; when it
+    returns True the job is stopped like a Ctrl-C (:class:`JobWatcher`
+    stops a job early on a provider outage).
 
     On Ctrl-C harbor (same process group) receives SIGINT too; we give it
     ``grace_sec`` to cancel trials and remove containers before terminating
@@ -867,18 +894,90 @@ def run_job_process(
     kw: dict[str, Any] = {"pass_fds": pass_fds} if pass_fds else {}
     proc = subprocess.Popen(cmd, env=env, cwd=cwd, **kw)
     try:
-        return proc.wait()
-    except KeyboardInterrupt:
-        try:
-            proc.send_signal(signal.SIGINT)
-            proc.wait(timeout=grace_sec)
-        except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
-            proc.terminate()
+        while True:
             try:
-                proc.wait(timeout=15)
+                return proc.wait(timeout=poll_sec if watch is not None else None)
             except subprocess.TimeoutExpired:
-                proc.kill()
+                if watch is not None and watch():
+                    _interrupt_job(proc, grace_sec)
+                    return proc.returncode if proc.returncode is not None else -int(signal.SIGINT)
+    except KeyboardInterrupt:
+        _interrupt_job(proc, grace_sec)
         raise
+
+
+def probe_models(resolved: dict[str, dict[str, Any]]) -> list[str]:
+    """One tiny request to every model of the sweep (:func:`ping_model`);
+    returns ``'model @ provider/tier: error'`` for each that fails (empty:
+    all answer)."""
+    failing = []
+    for key, mcfg in _model_configs(resolved).items():
+        rec = ping_model(mcfg)
+        if not rec["ok"]:
+            where = f"{key[0]} @ {key[1]}" + (f"/{key[2]}" if key[2] else "")
+            failing.append(f"{where}: {rec.get('error_type')}: {str(rec.get('error'))[:300]}")
+    return failing
+
+
+class JobWatcher:
+    """Follows a running harbor job (:func:`run_job_process` ``watch``).
+
+    Prints one line per trial as soon as harbor finishes it (reward, exit
+    reason, wall clock, provider errors, harbor exception), so a failure
+    shows within seconds of happening rather than when the job ends. When a
+    trial ended with a provider failure it probes the sweep's models once
+    (``probe``); if any still fails, the job is stopped and
+    :attr:`abort_reason` says why (the sweep then exits 4). If they answer,
+    the outage was transient: the job goes on and is retried later.
+    """
+
+    def __init__(self, job_dir: Path, prefix: str, out: Callable[[str], None],
+                 probe: Callable[[], list[str]] | None = None):
+        self.job_dir = job_dir
+        self.prefix = prefix
+        self.out = out
+        self.probe = probe
+        self.seen: set[str] = set()
+        self.probed: list[str] | None = None  # probe result (None: not probed)
+        self.abort_reason: str | None = None
+
+    def poll(self) -> bool:
+        """Report newly finished trials; True to stop the job."""
+        if not self.job_dir.is_dir():
+            return False
+        for trial in _trial_dirs(self.job_dir):
+            if trial.name in self.seen:
+                continue
+            res = _read_json(trial / "result.json")
+            if not isinstance(res, dict) or not res.get("finished_at"):
+                continue
+            self.seen.add(trial.name)
+            ep = _read_json(trial / "agent" / "episode.json")
+            ep = ep if isinstance(ep, dict) else {}
+            reward = ((res.get("verifier_result") or {}).get("rewards") or {}).get("reward")
+            exc = (res.get("exception_info") or {}).get("exception_type")
+            parts = [f"reward {reward}" if reward is not None else "no reward",
+                     f"exit {ep.get('exit_reason')}"]
+            if ep.get("wall_clock_sec") is not None:
+                parts.append(f"{ep['wall_clock_sec']:.0f}s")
+            if ep.get("n_provider_errors"):
+                parts.append(f"{ep['n_provider_errors']} provider error(s): {str(ep.get('error') or '')[:160]}")
+            if exc:
+                parts.append(f"harbor {exc}")
+            self.out(f"{self.prefix}   trial {trial.name}: " + ", ".join(parts))
+            provider = exc == "ProviderUnavailableError" or (ep and _provider_failed(ep, trial / "agent"))
+            if provider and self.probe is not None and self.probed is None:
+                self.out(f"{self.prefix}   provider failure in {trial.name}: probing the sweep's models ...")
+                self.probed = self.probe()
+                if self.probed:
+                    self.abort_reason = (f"provider failure in {self.job_dir.name}/{trial.name}, and the "
+                                         f"providers still fail: {'; '.join(self.probed)}")
+                    self.out(f"{self.prefix}   still failing -> stopping the job")
+                    return True
+                self.out(f"{self.prefix}   every model answers again (a transient failure): going on; "
+                         "the job will be retried")
+        return False
+
 
 
 def load_env_files(dotenv_path: Path | None) -> dict[str, str]:
@@ -2032,8 +2131,9 @@ def run_sweep(
     0 all selected jobs complete, 1 some failed or still need a retry,
     2 config/spec error, a refused resume (changed task list, harbor
     arguments or code) or another sweep holding the jobs dir, 3 aborted on a
-    billing error, 4 aborted on provider failures in over half a job's
-    trials, 130 interrupted."""
+    billing error, 4 aborted on a provider outage (a trial's provider
+    failure, and the models still fail :func:`probe_models`), 130
+    interrupted."""
     load_env_files(dotenv_path)
     harbor = harbor_executable()
     resolved = resolve_conditions(spec)
@@ -2196,8 +2296,12 @@ def _run_sweep_locked(
         env = build_subprocess_env(j.config_path, need_prime=need_prime)
         out(f"{prefix}: running ({len(tasks)} trials)")
         t0 = time.time()
+        watcher = JobWatcher(j.job_dir, prefix, out, probe=lambda: probe_models(full))
         try:
-            rc = run_job_process(j.cmd, env=env, cwd=spec.root, pass_fds=(lock.fd,) if lock.fd is not None else ())
+            rc = run_job_process(j.cmd, env=env, cwd=spec.root, pass_fds=(lock.fd,) if lock.fd is not None else (),
+                                 watch=watcher.poll)
+            if watcher.abort_reason is None:
+                watcher.poll()  # trials that finished after the last poll
         except KeyboardInterrupt:
             st = job_status(j.job_dir)
             append_manifest(
@@ -2235,11 +2339,22 @@ def _run_sweep_locked(
             final, code = "aborted_billing", EXIT_BILLING
             break
         n_total = st.n_total or len(tasks)
-        if n_provider * 2 > n_total:
-            out(f"ABORT: provider failures in {n_provider}/{n_total} trials of {j.job}: likely an outage (or a "
-                "rejected key: 401/403, see the trials' calls.jsonl errors). Re-run later to resume (the job is rerun).")
+        if watcher.abort_reason is None and n_provider and (watcher.probed is None or not watcher.probed):
+            # Probe again before the next job (the mid-job probe, if any, may be minutes old).
+            failing = probe_models(full)
+            if failing:
+                watcher.abort_reason = (f"provider failures in {n_provider}/{n_total} trials of {j.job}, and the "
+                                        f"providers still fail: {'; '.join(failing)}")
+        if watcher.abort_reason is not None:
+            append_manifest(manifest, _manifest_record(spec, j, "provider_abort", t_start=time.time(),
+                                                       reason=watcher.abort_reason))
+            out(f"ABORT: {watcher.abort_reason}. Likely an outage (or a rejected key: 401/403). Re-run the same "
+                "command later to resume (the job is rerun).")
             final, code = "aborted_provider", EXIT_PROVIDER
             break
+        if n_provider:
+            out(f"{prefix}: provider failures in {n_provider}/{n_total} trials, but every model answers now; "
+                "going on (the job is retried on the next run).")
         if st.complete and rc == 0:
             consecutive = 0
         else:

@@ -201,7 +201,7 @@ def test_run_experiment_gives_the_env_file_to_preflight_too(tmp_path, bash, form
 @pytest.mark.parametrize("bash", BASHES)
 @pytest.mark.parametrize("rc, message", [
     (2, "[FAIL] sweep refused to run"), (3, "[FAIL] sweep aborted on a billing error"),
-    (4, "[FAIL] sweep aborted: a provider failed in over half of a job's trials"), (130, "[WARN] sweep interrupted"),
+    (4, "[FAIL] sweep aborted: a provider is failing"), (130, "[WARN] sweep interrupted"),
 ])
 def test_run_experiment_explains_exit_codes(tmp_path, bash, rc, message):
     repo = _stub_repo(tmp_path)
