@@ -25,6 +25,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--pricing", type=Path, default=DEFAULT_PRICING, help="price file (default configs/pricing.yaml)")
     p.add_argument("--scheme", default="sail_balanced", help="price scheme in the price file")
     args = p.parse_args(argv)
+    missing = [str(d) for d in args.jobs_dirs if not d.is_dir()]
+    if missing:
+        print(f"[FAIL] jobs dir not found: {' '.join(missing)}", flush=True)
+        return 2
     trials = [t for d in args.jobs_dirs for t in load_trials(d)]
     if not any(t.episode for t in trials):
         print(f"[FAIL] no episode under {' '.join(map(str, args.jobs_dirs))}", flush=True)

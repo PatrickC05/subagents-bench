@@ -315,9 +315,9 @@ def arbiter(t: Tables, path: Path) -> tuple[str, str]:
         axes[0].scatter(conf, yi + rng.uniform(-0.18, 0.18, len(conf)), s=14, color=_color(r), zorder=3)
         if len(conf):
             axes[0].plot([conf.median()] * 2, [yi - 0.3, yi + 0.3], color=INK, linewidth=1.5)
-        copies = g[g["isolation"] == "copy"]
+        checked = g[(g["isolation"] == "copy") & g["isolation_violated"].notna()]
         for ax, k, n, note in ((axes[1], int((g["debate_rounds"] > 0).sum()), len(g), ""),
-                               (axes[2], int(copies["isolation_violated"].astype(bool).sum()), len(copies),
+                               (axes[2], int(checked["isolation_violated"].eq(True).sum()), len(checked),
                                 "shared workdir (no copies)")):
             if n == 0:
                 ax.text(0.02, yi, note, va="center", color=MUTED, fontsize=7.5)
@@ -366,7 +366,7 @@ def timeline(t: Tables, path: Path) -> tuple[str, str]:
                              gridspec_kw={"height_ratios": [1.0 + 0.3 * len(a) for a in agents], "hspace": 0.55})
     for ax, e, names in zip(axes[:, 0], examples, agents):
         row = {a: i for i, a in enumerate(names)}
-        mine_t = tools[(tools["episode_id"] == e["episode_id"]) & tools["agent_id"].isin(row)]
+        mine_t = tools[(tools["episode_id"] == e["episode_id"]) & tools["agent_id"].isin(names)]
         for _, x in mine_t.iterrows():
             spawn = x["name"] == "spawn_subagents"
             ax.barh(row[x["agent_id"]], x["t_end"] - x["t_start"], left=x["t_start"] - e["t_start"],
