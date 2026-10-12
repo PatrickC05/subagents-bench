@@ -1,0 +1,49 @@
+# SWE-sweep: the pilot's 15 conditions x 10 repositories x 3 rounds = 45 harbor jobs, 450 episodes.
+#   scripts/run_experiment.sh configs/sweeps/swe_sweep.yaml
+# SWE-sweep (github.com/facebookresearch/swe-sweep): a whole repository, no issue text; fix as many
+# bugs as you can without breaking a passing test. The reward is the fraction of the task's bugs
+# whose hidden tests pass, 0 if a visible test regressed (README.md, docs/DESIGN.md).
+extends: configs/sweeps/pilot.yaml   # the 15 conditions; everything set here wins
+name: swe_sweep
+dataset: null                        # not on the harbor registry: a local clone instead
+# `tasks/` of a clone of https://github.com/facebookresearch/swe-sweep (100 harbor task dirs),
+# relative to this repository's root; passed to harbor as `-p`. Clone it there, or point this
+# at your clone.
+dataset_path: ../class-6-swe-sweep/swe-sweep/tasks
+tasks:                               # small repositories with fast test suites: language, bugs
+  - swe-sweep__goawk                 # Go, 14
+  - swe-sweep__echo                  # Go, 6
+  - swe-sweep__gin                   # Go, 11
+  - swe-sweep__click                 # Python, 13
+  - swe-sweep__isort                 # Python, 11
+  - swe-sweep__pint                  # Python, 13
+  - swe-sweep__pendulum              # Python, 9
+  - swe-sweep__formulajs             # JavaScript, 9
+  - swe-sweep__svgo                  # JavaScript, 11
+  - swe-sweep__libexpat              # C, 9
+
+# Deep-merged onto configs/sail/base.yaml before every condition (a condition's own overrides
+# still win, e.g. single_matched's 40 steps = 5 x 8 subagent steps).
+overrides:
+  budget:
+    orchestrator_steps: 5            # the pilot's budget
+    # orchestrator_steps: 30         # the larger budget under discussion (20-40); then also set
+    #                                # single_matched: {topology: single, budget: {orchestrator_steps: 240}}
+    command_timeout_sec: 600         # test suites run for minutes under amd64 emulation
+    max_command_timeout_sec: 1800
+
+harbor:
+  n_concurrent: 4                    # 4 x (3 CPUs, 7 GB) fits a 12-CPU, 32 GB Docker VM
+  # x the tasks' 43200 s agent timeout: 1 h. The step budget is the real limit; a timeout is an
+  # outcome (the verifier still grades the container).
+  agent_timeout_multiplier: 0.0833
+  env:
+    # The task images are built from Dockerfiles, and the verifier image bundles an x86-64
+    # Python: build both as linux/amd64 (emulated on Apple Silicon, like Terminal-Bench's images).
+    DOCKER_DEFAULT_PLATFORM: linux/amd64
+  extra_args:
+    # The tasks ask for 16 CPUs and 64 GB; harbor applies these to the verifier container too.
+    - --override-cpus
+    - "3"
+    - --override-memory-mb
+    - "7000"

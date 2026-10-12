@@ -1,10 +1,14 @@
 """Sweep launcher: one ``harbor run`` job per (round, condition) of a sweep spec, resumable.
 
-A spec (``configs/sweeps/*.yaml``) names a base config, the dataset and tasks, the rounds, the
-harbor settings and the conditions (overrides deep-merged onto the base); ``extends: <spec>``
-merges it over another spec. Relative paths resolve against the repository root (the spec's
-nearest ancestor holding a pyproject.toml). Exit codes: 0 done, 1 jobs failed or need a retry,
-2 spec or config error, 3 billing error, 4 provider outage, 130 interrupted.
+A spec (``configs/sweeps/*.yaml``) names a base config, the dataset (a harbor registry name, or
+``dataset_path``: a local directory of task dirs, passed as ``harbor run -p``) and tasks, the
+rounds, the harbor settings (``n_concurrent``, ``agent_timeout_multiplier``, ``env`` variables
+and ``extra_args`` for every harbor run), sweep-wide ``overrides`` (deep-merged onto the base
+before the conditions, e.g. the step budget) and the conditions (overrides deep-merged onto
+that); ``extends: <spec>`` merges it over another spec. Relative paths resolve against the
+repository root (the spec's nearest ancestor holding a pyproject.toml). Exit codes: 0 done,
+1 jobs failed or need a retry, 2 spec or config error, 3 billing error, 4 provider outage,
+130 interrupted.
 """
 
 from __future__ import annotations
@@ -31,9 +35,9 @@ from .llm import Message, SailClient
 from .records import git_commit
 
 AGENT = "subagents_bench.harness.harbor_agent:OrchestratorAgent"
-SPEC_KEYS = {"extends", "name", "base", "dataset", "tasks", "rounds", "order_seed", "harbor", "conditions",
-             "jobs_dir"}
-HARBOR_KEYS = {"n_concurrent", "agent_timeout_multiplier"}
+SPEC_KEYS = {"extends", "name", "base", "dataset", "dataset_path", "tasks", "rounds", "order_seed", "harbor",
+             "overrides", "conditions", "jobs_dir"}
+HARBOR_KEYS = {"n_concurrent", "agent_timeout_multiplier", "env", "extra_args"}
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")  # job names are <sweep>__r<k>__<condition>
 POLL_SEC = 10.0  # live trial lines
 STOP_GRACE_SEC = 120.0  # on SIGINT harbor cancels its trials and removes their containers
@@ -50,12 +54,15 @@ def say(line: str) -> None:
 class Spec:
     name: str
     root: Path
-    dataset: str
+    dataset: str | None  # harbor registry name@version (``-d``), or None with a dataset_path
+    dataset_path: Path | None  # a local directory of task dirs (``-p``)
     tasks: list[str]
     rounds: int
     order_seed: int
     n_concurrent: int
     timeout_multiplier: float
+    env: dict[str, str]  # environment variables of every harbor run
+    extra_args: list[str]  # appended to every harbor run (the oracle's too)
     jobs_dir: Path
     configs: dict[str, ExperimentConfig]  # condition -> resolved config
     raw: dict[str, Any]  # the spec after `extends`
@@ -92,14 +99,22 @@ def load_spec(path: str | os.PathLike) -> Spec:
         raise ConfigError(f"{path}: unknown key(s): {', '.join(unknown)}")
     try:
         name, conditions, tasks, rounds = raw["name"], raw["conditions"], raw["tasks"], raw["rounds"]
-        base = _yaml(root / raw["base"])
-        spec = Spec(name, root, raw["dataset"], tasks, rounds, raw["order_seed"], harbor["n_concurrent"],
-                    harbor["agent_timeout_multiplier"], root / raw.get("jobs_dir", f"jobs/{name}"), {}, raw)
+        base = deep_merge(_yaml(root / raw["base"]), raw.get("overrides") or {})
+        dataset, dataset_path = raw.get("dataset"), raw.get("dataset_path")
+        env, extra_args = harbor.get("env") or {}, harbor.get("extra_args") or []
+        spec = Spec(name, root, dataset, root / dataset_path if dataset_path else None, tasks, rounds,
+                    raw["order_seed"], harbor["n_concurrent"], harbor["agent_timeout_multiplier"], env, extra_args,
+                    root / raw.get("jobs_dir", f"jobs/{name}"), {}, raw)
     except KeyError as e:
         raise ConfigError(f"{path}: missing key {e}") from None
     if not (isinstance(tasks, list) and tasks and isinstance(conditions, dict) and conditions
             and isinstance(rounds, int) and rounds >= 1):
         raise ConfigError(f"{path}: tasks and conditions must be non-empty, rounds an integer >= 1")
+    if bool(dataset) == bool(dataset_path):
+        raise ConfigError(f"{path}: set exactly one of dataset (a harbor registry name) and dataset_path (a directory)")
+    if not (isinstance(env, dict) and all(isinstance(v, str) for v in env.values())
+            and isinstance(extra_args, list) and all(isinstance(a, str) for a in extra_args)):
+        raise ConfigError(f"{path}: harbor.env must map names to strings, harbor.extra_args be a list of strings")
     bad = [n for n in (name, *conditions) if not NAME_RE.fullmatch(str(n)) or "__" in str(n)]
     if bad:
         raise ConfigError(f"{path}: invalid name(s) {bad}: use letters, digits, '_', '.', '-' but not '__'")
@@ -139,14 +154,23 @@ def _rel(p: Path, root: Path) -> str:
 
 
 def harbor_cmd(spec: Spec, job: str, agent: str = AGENT) -> list[str]:
-    cmd = [harbor_bin() or "harbor", "run", "-d", spec.dataset]
+    source = ["-p", _rel(spec.dataset_path, spec.root)] if spec.dataset_path else ["-d", spec.dataset]
+    cmd = [harbor_bin() or "harbor", "run", *source]
     for t in spec.tasks:
         cmd += ["-i", t]
     cmd += ["-a", agent, "-e", "docker", "-n", str(spec.n_concurrent), "-k", "1",
             "-o", _rel(spec.jobs_dir, spec.root), "--job-name", job]
     if agent == AGENT:
         cmd += ["--agent-timeout-multiplier", str(spec.timeout_multiplier)]
-    return cmd + ["-y", "-q"]
+    return cmd + spec.extra_args + ["-y", "-q"]
+
+
+def harbor_env(spec: Spec, config_path: Path | None = None) -> dict[str, str]:
+    """The environment of a harbor run: the sweep's variables over the current environment."""
+    env = {**os.environ, **spec.env}
+    if config_path is not None:
+        env["SUBAGENTS_BENCH_CONFIG"] = str(config_path)
+    return env
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -172,6 +196,8 @@ def retry_reason(trial: Path) -> str | None:
         return "provider"
     if exc and not (res.get("verifier") or {}).get("started_at"):
         return f"harbor {exc}"  # environment/setup failure, or the agent crashed before the verifier
+    if rewards(res).get("grader_failed"):
+        return "grader"  # SWE-sweep's verifier could not grade (its own setup failed): not a 0
     return None
 
 
@@ -316,8 +342,8 @@ def run(spec: Spec, jobs: list[tuple[int, str]], dry_run: bool = False) -> int:
             job = job_name(spec, r, cond)
             state, why = job_state(spec.jobs_dir / job)
             say(f"  [{i}] {job}: {({'complete': 'skip', 'absent': 'run'}).get(state, 'move aside, rerun')} ({why})")
-            say(f"      $ SUBAGENTS_BENCH_CONFIG={_rel(configs_dir / f'{cond}.yaml', spec.root)} "
-                f"{shlex.join(harbor_cmd(spec, job))}")
+            env = {**spec.env, "SUBAGENTS_BENCH_CONFIG": _rel(configs_dir / f"{cond}.yaml", spec.root)}
+            say(f"      $ {' '.join(f'{k}={shlex.quote(v)}' for k, v in env.items())} {shlex.join(harbor_cmd(spec, job))}")
         return 0
     if harbor_bin() is None:
         say("harbor not found: run scripts/setup.sh")
@@ -343,9 +369,8 @@ def run(spec: Spec, jobs: list[tuple[int, str]], dry_run: bool = False) -> int:
             _log(spec, "moved", **ids, state=state, why=why, to=moved)
         say(f"{prefix}: running {len(spec.tasks)} trials")
         watcher, t0 = Watcher(job_dir, models), time.time()
-        env = {**os.environ, "SUBAGENTS_BENCH_CONFIG": str(configs_dir / f"{cond}.yaml")}
         try:
-            rc = run_job(harbor_cmd(spec, job), env, spec.root, watcher.poll)
+            rc = run_job(harbor_cmd(spec, job), harbor_env(spec, configs_dir / f"{cond}.yaml"), spec.root, watcher.poll)
         except KeyboardInterrupt:
             say(f"{prefix}: interrupted; re-run the same command to resume")
             _log(spec, "interrupted", **ids)
@@ -397,6 +422,10 @@ def preflight(spec: Spec, oracle: bool = False) -> int:
           else "not found: run scripts/setup.sh")
     check("SAIL_API_KEY", bool(os.environ.get("SAIL_API_KEY")), "set" if os.environ.get("SAIL_API_KEY")
           else "missing: add it to .env")
+    if spec.dataset_path is not None:  # a registry dataset is resolved by harbor itself
+        missing = [t for t in spec.tasks if not (spec.dataset_path / t / "task.toml").is_file()]
+        check("dataset_path", not missing, f"{len(spec.tasks)} tasks under {spec.dataset_path}" if not missing
+              else f"no task.toml under {spec.dataset_path} for: {', '.join(missing)}")
     for m in sweep_models(spec):
         t0 = time.time()
         err = ping(m)
@@ -409,8 +438,8 @@ def preflight(spec: Spec, oracle: bool = False) -> int:
             if job_dir.exists():
                 say(f"  oracle: earlier job moved to {_rel(move_aside(job_dir, spec.jobs_dir), spec.root)}")
             cmd = harbor_cmd(spec, "_oracle", agent="oracle")
-            say(f"  oracle: $ {shlex.join(cmd)}")
-            run_job(cmd, dict(os.environ), spec.root)
+            say(f"  oracle: $ {''.join(f'{k}={shlex.quote(v)} ' for k, v in spec.env.items())}{shlex.join(cmd)}")
+            run_job(cmd, harbor_env(spec), spec.root)
         unsolved = _unsolved(spec, job_dir)
         check("oracle solves every task", not unsolved, f"unsolved: {unsolved}" if unsolved else f"{len(spec.tasks)} tasks")
     say(f"  -> {'ALL PASSED' if all(results) else 'FAILED'}")
@@ -423,8 +452,15 @@ def _unsolved(spec: Spec, job_dir: Path) -> list[str]:
     return [t for t in spec.tasks if t not in solved]
 
 
+def rewards(res: dict[str, Any]) -> dict[str, Any]:
+    """The verifier's reward file: ``reward`` (Terminal-Bench: 1 or 0; SWE-sweep: the fraction of
+    bugs fixed, 0 on a regression) and, from SWE-sweep's grader, ``n_subtasks``, ``visible_ok``,
+    ``grader_failed`` among others."""
+    return (res.get("verifier_result") or {}).get("rewards") or {}
+
+
 def _reward(res: dict[str, Any]) -> Any:
-    return ((res.get("verifier_result") or {}).get("rewards") or {}).get("reward")
+    return rewards(res).get("reward")
 
 
 def _output(cmd: list[str]) -> str | None:

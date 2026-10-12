@@ -140,6 +140,50 @@ def test_hint_specs_match_the_pilot_but_for_the_hint():
             assert {**cfg.to_dict(), "name": twin} == pilot.configs[twin].to_dict()
 
 
+def test_swe_sweep_spec(capsys):
+    s, pilot = sweep.load_spec(REPO / "configs/sweeps/swe_sweep.yaml"), sweep.load_spec(REPO / "configs/sweeps/pilot.yaml")
+    assert s.dataset is None and s.dataset_path == REPO / "../class-6-swe-sweep/swe-sweep/tasks"
+    assert len(s.tasks) == 10 and all(t.startswith("swe-sweep__") for t in s.tasks) and len(sweep.plan(s)) == 45
+    assert list(s.configs) == list(pilot.configs)
+    for cond, cfg in s.configs.items():
+        assert cfg.budget.orchestrator_steps == (40 if cond == "single_matched" else 5), cond
+        assert (cfg.budget.command_timeout_sec, cfg.budget.max_command_timeout_sec) == (600, 1800)
+    assert s.env == {"DOCKER_DEFAULT_PLATFORM": "linux/amd64"} and s.timeout_multiplier * 43200 == pytest.approx(3600, abs=5)
+    cmd = sweep.harbor_cmd(s, "swe_sweep__r1__single_5step")
+    assert cmd[1:4] == ["run", "-p", "../class-6-swe-sweep/swe-sweep/tasks"] and cmd[-2:] == ["-y", "-q"]
+    assert cmd[cmd.index("--override-cpus") + 1] == "3" and cmd[cmd.index("--override-memory-mb") + 1] == "7000"
+    oracle = sweep.harbor_cmd(s, "_oracle", agent="oracle")
+    assert "--override-cpus" in oracle and "--agent-timeout-multiplier" not in oracle
+    assert sweep.run(s, sweep.plan(s), dry_run=True) == 0
+    assert capsys.readouterr().out.count("$ DOCKER_DEFAULT_PLATFORM=linux/amd64 SUBAGENTS_BENCH_CONFIG=jobs/swe_sweep/configs/") == 45
+
+
+def test_local_dataset_env_and_overrides(fake, tmp_path, monkeypatch, capsys):
+    harbor = {"n_concurrent": 2, "agent_timeout_multiplier": 0.1, "env": {"DOCKER_DEFAULT_PLATFORM": "linux/amd64"},
+              "extra_args": ["--override-cpus", "3"]}
+    path = make_spec(tmp_path, dataset=None, dataset_path="tasks", harbor=harbor, overrides={"budget": {"orchestrator_steps": 7}})
+    for t in TASKS:
+        (path.parent / "tasks" / t).mkdir(parents=True)
+        (path.parent / "tasks" / t / "task.toml").write_text("")
+    spec = sweep.load_spec(path)
+    assert spec.dataset is None and spec.dataset_path == path.parent / "tasks"
+    assert {c.budget.orchestrator_steps for c in spec.configs.values()} == {7}
+    assert sweep.run(spec, sweep.plan(spec), dry_run=True) == 0
+    assert "$ DOCKER_DEFAULT_PLATFORM=linux/amd64 SUBAGENTS_BENCH_CONFIG=jobs/t/configs/" in capsys.readouterr().out
+    assert go(spec) == 0
+    for call in fake.calls():
+        argv = call["argv"]
+        assert argv[:3] == ["run", "-p", "tasks"] and "-d" not in argv and call["platform"] == "linux/amd64"
+        assert argv[argv.index("--override-cpus") + 1] == "3" and argv[-2:] == ["-y", "-q"]
+    monkeypatch.setenv("SAIL_API_KEY", "test-key")
+    assert sweep.preflight(spec, oracle=True) == 0
+    out = capsys.readouterr().out
+    assert f"[PASS] dataset_path: 2 tasks under {path.parent / 'tasks'}" in out and "oracle: $ DOCKER_DEFAULT_PLATFORM=linux/amd64 " in out
+    assert "--override-cpus" in fake.calls()[-1]["argv"] and fake.calls()[-1]["platform"] == "linux/amd64"
+    (path.parent / "tasks" / TASKS[1] / "task.toml").unlink()
+    assert sweep.preflight(spec) == 1 and f"[FAIL] dataset_path: no task.toml under" in capsys.readouterr().out
+
+
 def test_dry_run_runs_and_writes_nothing(fake, spec, capsys):
     assert sweep.run(spec, sweep.plan(spec, only=["par"]), dry_run=True) == 0
     out = capsys.readouterr().out
@@ -180,7 +224,8 @@ def test_job_state_and_retry_reasons(tmp_path):
     write_trial(job, "b", 1)
     assert sweep.job_state(job) == ("complete", "2 trials")
     expected = {"ok": None, "timeout": None, "unsolved": None, "provider": "provider", "billing": "billing",
-                "crash": "harbor RuntimeError", "infra": "harbor EnvironmentStartTimeoutError"}
+                "crash": "harbor RuntimeError", "infra": "harbor EnvironmentStartTimeoutError",
+                "partial": None, "regressed": None, "grader": "grader"}
     for i, (mode, reason) in enumerate(expected.items()):
         assert sweep.retry_reason(write_trial(tmp_path / "trials", "x", i, mode)) == reason, mode
     ep = job / "a__t0" / "agent" / "episode.json"
@@ -359,6 +404,10 @@ def test_probe_sends_one_short_request_per_model(spec, monkeypatch):
     ({"rounds": 0}, "rounds an integer >= 1"),
     ({"conditions": {"a__b": {}}}, "invalid name(s) ['a__b']"),
     ({"conditions": {"x": {"subagent": {"strategy": "swarm"}}}}, "condition x: subagent.strategy"),
+    ({"dataset_path": "tasks"}, "exactly one of dataset"),
+    ({"dataset": None}, "exactly one of dataset"),
+    ({"overrides": {"budget": {"steps": 1}}}, "unknown key(s): budget.steps"),
+    ({"harbor": {"n_concurrent": 4, "agent_timeout_multiplier": 4.0, "env": ["x"]}}, "harbor.env must map"),
 ])
 def test_bad_specs_are_config_errors(tmp_path, over, msg):
     with pytest.raises(ConfigError) as e:
