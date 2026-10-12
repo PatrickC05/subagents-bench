@@ -91,6 +91,18 @@ def test_leaks_into_the_real_workdir_are_restored_and_recorded(tmp_path):
     assert open(f"{work}/app.py").read() == "v0\n" and not os.path.exists(f"{work}/leak.txt")
 
 
+def test_copy_paths_written_into_files_name_the_workdir_after_apply(tmp_path):
+    def writing(k, messages, work):
+        if len(messages) == 1:
+            return Reply("", [tc("bash", command=f"echo 'cat {work}/app.py' > {work}/run.sh")])
+        return Reply("", [tc("submit", report="wrote run.sh")])
+
+    _, r, f, _, work, _ = arbitrate(tmp_path, writing, [judgement(0)])
+    assert open(f"{work}/run.sh").read() == f"cat {work}/app.py\n"
+    judge = [q for q in f[ORCH].requests if q["system"].startswith("You are an impartial")][0]["messages"][0].content
+    assert "/arb/" not in judge
+
+
 def test_debate_when_not_confident_then_original_report_plus_revision(tmp_path):
     def debate(k, messages):
         assert "Other candidates' reports" in messages[0].content

@@ -2,13 +2,15 @@
 
 Hard scope: each candidate works in a private ``cp -a`` copy of the workdir (its tool paths
 are remapped there). Afterwards, workdir files that changed anyway (a route the remap missed)
-are restored from a pristine ``base`` copy and recorded, and the winner's changes relative to
-the pristine workdir are applied. Easy and medium scopes share the workdir.
+are restored from a pristine ``base`` copy and recorded; in each copy, the copy's own path
+(written into files by remapped commands) becomes the workdir path again; and the winner's
+changes relative to the pristine workdir are applied. Easy and medium scopes share the workdir.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -68,6 +70,13 @@ def _copy_files(env: Any, src: str, dst: str, rels: list[str]) -> None:
         _sh(env, "\n".join(lines))
 
 
+def _map_back(env: Any, copy: str, workdir: str) -> None:
+    """Replace ``copy`` by ``workdir`` in the text files under ``copy``."""
+    expr = "s|" + re.sub(r"([\\.*\[\]^$|])", r"\\\1", copy) + "|" + re.sub(r"([\\&|])", r"\\\1", workdir) + "|g"
+    _sh(env, f"cd -- {shlex.quote(copy)} && grep -rlIF -e {shlex.quote(copy)} . | while IFS= read -r f; do "
+             f'sed {shlex.quote(expr)} "$f" > "$f.sb_map" && cat "$f.sb_map" > "$f"; rm -f -- "$f.sb_map"; done')
+
+
 def _json_objects(text: str) -> list[Any]:
     decoder, out = json.JSONDecoder(), []
     for i, ch in enumerate(text):
@@ -124,6 +133,8 @@ def run_arbitration(rt: Runtime, instruction: str, index: int, group_id: str, st
             leaked = _changed(pristine, manifest(env, rt.workdir))
             _copy_files(env, f"{root}/base", rt.workdir, leaked)
             record.update(isolation_violated=bool(leaked), n_leaked_files=len(leaked))
+            for k in range(n):
+                _map_back(env, f"{root}/cand{k}", rt.workdir)
             diffs = [_sh(env, f"cd -- {q(root)} && diff -ruN -x .git base cand{k} | head -c {DIFF_CAP_CHARS}")
                      or "(no file changes)" for k in range(n)]
         reports = [r.report for r in results]
