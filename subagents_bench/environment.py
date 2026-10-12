@@ -1,165 +1,111 @@
-"""Execution environment abstraction.
+"""Sandboxes with one ``exec(command, timeout)``: harbor's container, or the host shell (tests).
 
-Every tool the agents use ultimately runs a shell command inside a sandbox. We
-define one small synchronous protocol, :class:`Environment`, with a single
-``exec`` primitive plus file read/write helpers built on top of it. Concrete
-sandboxes:
-
-* :class:`HarborEnvironment` -- wraps a harbor ``BaseEnvironment`` (the live
-  SWE-bench / Terminal-Bench container the harness hands us). ``exec`` is async
-  there, so we bridge it onto a private event loop.
-* :class:`LocalDockerEnvironment` -- the standalone runner's own container,
-  started from an image, used for local smoke tests.
-
-ExploitBench is driven through its MCP tool interface rather than a raw shell;
-its adapter lives in :mod:`subagents_bench.harness.exploitbench_agent` and
-presents the same :class:`Environment` surface.
+Every exec honours the environment's ``stop_event``: once it is set, ``exec`` raises
+:class:`AgentStopped` (before starting, or while waiting) so agent threads unwind.
 """
 
 from __future__ import annotations
 
 import asyncio
-import shlex
+import concurrent.futures
+import math
+import os
+import shutil
+import signal
 import subprocess
+import tempfile
 import threading
-import uuid
+import time
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
+
+POLL_SEC = 0.2
+
+
+class AgentStopped(Exception):
+    """The episode was stopped (harbor's cancel, or a provider failure)."""
 
 
 @dataclass
 class ExecResult:
     stdout: str
     stderr: str
-    return_code: int
-
-    @property
-    def output(self) -> str:
-        """Combined, trimmed output as agents should see it."""
-        parts = []
-        if self.stdout:
-            parts.append(self.stdout)
-        if self.stderr:
-            parts.append(self.stderr if not self.stdout else f"[stderr]\n{self.stderr}")
-        text = "\n".join(parts).rstrip()
-        return text if text else "(no output)"
+    return_code: int | None
+    timed_out: bool = False
 
 
-class Environment(Protocol):
-    workdir: str
+class HarborEnvironment:
+    """harbor's async ``environment.exec``, called from agent threads on harbor's loop."""
 
-    def exec(self, command: str, timeout_sec: int | None = None) -> ExecResult: ...
+    state_root = "/tmp/.sb"  # harness state in the container (shell state, arbiter copies)
 
-    def read_file(self, path: str) -> str: ...
-
-    def write_file(self, path: str, content: str) -> None: ...
-
-
-class _ShellFileMixin:
-    """read/write_file implemented via exec so every backend gets them free."""
-
-    def exec(self, command: str, timeout_sec: int | None = None) -> ExecResult:  # pragma: no cover - overridden
-        raise NotImplementedError
-
-    def read_file(self, path: str) -> str:
-        res = self.exec(f"cat {shlex.quote(path)}")
-        if res.return_code != 0:
-            raise FileNotFoundError(res.stderr or path)
-        return res.stdout
-
-    def write_file(self, path: str, content: str) -> None:
-        marker = f"EOF_{uuid.uuid4().hex}"
-        # Use a quoted heredoc so content is written verbatim (no expansion).
-        script = f"cat > {shlex.quote(path)} <<'{marker}'\n{content}\n{marker}\n"
-        res = self.exec(script)
-        if res.return_code != 0:
-            raise OSError(res.stderr or f"failed to write {path}")
-
-
-class HarborEnvironment(_ShellFileMixin):
-    """Bridge a harbor async ``BaseEnvironment`` to our sync protocol."""
-
-    def __init__(self, harbor_env: Any, workdir: str = "/app"):
+    def __init__(self, harbor_env: Any, loop: asyncio.AbstractEventLoop):
         self._env = harbor_env
-        self.workdir = workdir
-        # A dedicated loop + thread so sync callers (the agent loop) can drive
-        # the async harbor env regardless of any ambient loop.
-        self._loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
-        self._thread.start()
+        self._loop = loop
+        self.stop_event = threading.Event()
 
-    def _run(self, coro):
-        return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
-
-    def exec(self, command: str, timeout_sec: int | None = None) -> ExecResult:
-        res = self._run(
-            self._env.exec(command, cwd=self.workdir, timeout_sec=timeout_sec)
-        )
-        return ExecResult(
-            stdout=res.stdout or "",
-            stderr=res.stderr or "",
-            return_code=res.return_code,
-        )
-
-    def close(self) -> None:
-        self._loop.call_soon_threadsafe(self._loop.stop)
-
-
-class LocalDockerEnvironment(_ShellFileMixin):
-    """A container we start ourselves, for local development and smoke tests."""
-
-    def __init__(self, image: str, workdir: str = "/app", network: bool = False):
-        self.image = image
-        self.workdir = workdir
-        self._cid: str | None = None
-        net = "bridge" if network else "none"
-        cid = subprocess.run(
-            [
-                "docker", "run", "-d", "--rm",
-                "--network", net,
-                "-w", workdir,
-                image, "sleep", "infinity",
-            ],
-            capture_output=True, text=True, check=True,
-        ).stdout.strip()
-        self._cid = cid
-
-    def exec(self, command: str, timeout_sec: int | None = None) -> ExecResult:
-        assert self._cid is not None
+    def exec(self, command: str, timeout: float) -> ExecResult:
+        if self.stop_event.is_set():
+            raise AgentStopped("episode stopped")
+        coro = self._env.exec(command, timeout_sec=max(1, math.ceil(timeout)))
+        fut = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        while not concurrent.futures.wait([fut], timeout=POLL_SEC).done:
+            if self.stop_event.is_set():
+                fut.cancel()
+                raise AgentStopped("episode stopped during exec")
         try:
-            proc = subprocess.run(
-                ["docker", "exec", "-w", self.workdir, self._cid, "bash", "-lc", command],
-                capture_output=True, text=True, timeout=timeout_sec,
-            )
-        except subprocess.TimeoutExpired as e:
-            return ExecResult(stdout=e.stdout or "", stderr=f"timed out after {timeout_sec}s", return_code=124)
-        return ExecResult(stdout=proc.stdout, stderr=proc.stderr, return_code=proc.returncode)
-
-    def close(self) -> None:
-        if self._cid:
-            subprocess.run(["docker", "kill", self._cid], capture_output=True)
-            self._cid = None
+            res = fut.result()
+        except Exception as e:  # harbor's docker backend: RuntimeError("Command timed out after N seconds")
+            if isinstance(e, TimeoutError) or "timed out" in str(e).lower():
+                return ExecResult("", str(e), None, True)
+            raise
+        return ExecResult(res.stdout or "", res.stderr or "", res.return_code)
 
 
-class LocalShellEnvironment(_ShellFileMixin):
-    """Runs commands on the host inside a working directory.
+def run_process(argv: list[str], timeout: float, stop_event: threading.Event, cwd: str | None = None) -> ExecResult:
+    """Run ``argv`` in its own session; SIGKILL its process group on timeout or stop."""
+    if stop_event.is_set():
+        raise AgentStopped("episode stopped")
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        proc = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=out, stderr=err, start_new_session=True)
+        deadline = time.monotonic() + timeout
+        timed_out = False
+        while True:
+            try:
+                proc.wait(timeout=POLL_SEC)
+                break
+            except subprocess.TimeoutExpired:
+                pass
+            if stop_event.is_set() or time.monotonic() >= deadline:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                proc.wait()
+                if stop_event.is_set():
+                    raise AgentStopped("episode stopped during exec")
+                timed_out = True
+                break
+        out.seek(0)
+        err.seek(0)
+        return ExecResult(
+            out.read().decode("utf-8", "replace"),
+            err.read().decode("utf-8", "replace"),
+            None if timed_out else proc.returncode,
+            timed_out,
+        )
 
-    Only for unit tests and offline demos -- NEVER use for real benchmark runs,
-    since agent-generated commands would execute unsandboxed on the host.
-    """
+
+class LocalShellEnvironment:
+    """The host's bash in ``workdir``; state under a private temp dir. Tests only: unsandboxed."""
 
     def __init__(self, workdir: str):
         self.workdir = workdir
+        self.state_root = os.path.realpath(tempfile.mkdtemp(prefix="sb-state-"))
+        self.stop_event = threading.Event()
 
-    def exec(self, command: str, timeout_sec: int | None = None) -> ExecResult:
-        try:
-            proc = subprocess.run(
-                ["bash", "-lc", command],
-                capture_output=True, text=True, cwd=self.workdir, timeout=timeout_sec,
-            )
-        except subprocess.TimeoutExpired as e:
-            return ExecResult(stdout=e.stdout or "", stderr=f"timed out after {timeout_sec}s", return_code=124)
-        return ExecResult(stdout=proc.stdout, stderr=proc.stderr, return_code=proc.returncode)
+    def exec(self, command: str, timeout: float) -> ExecResult:
+        return run_process(["bash", "-c", command], timeout, self.stop_event, cwd=self.workdir)
 
     def close(self) -> None:
-        pass
+        shutil.rmtree(self.state_root, ignore_errors=True)
