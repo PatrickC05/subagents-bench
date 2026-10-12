@@ -6,7 +6,9 @@ orchestrator's conversation), works with its scope's tool set
 with one of these statuses (written to ``dispatches.jsonl``):
 
 * ``submitted`` -- it called ``submit``;
-* ``no_tool_call`` -- it answered without a tool call (the text is the report);
+* ``no_tool_call`` -- it answered without a tool call (the text is the report;
+  a reply cut off at the output-token limit does not count: the subagent is
+  told to be briefer and call a tool, and that step is used);
 * ``max_steps`` -- it used every step (the last assistant text is the report);
 * ``context_overflow`` -- the provider rejected the prompt as too long even
   after an aggressive trim;
@@ -51,7 +53,7 @@ from typing import Any, Callable
 
 from . import workspace
 from .config import ExperimentConfig, Scope
-from .prompts import LAST_STEP_NOTE, subagent_system
+from .prompts import LAST_STEP_NOTE, LENGTH_CUTOFF_NOTE, LENGTH_CUTOFF_REPLY, cut_off, subagent_system
 from .telemetry import AgentLog, EpisodeRecorder, sum_or_none
 from .tools import SCOPE_TOOLS, run_tool, specs_for
 from .types import (
@@ -448,15 +450,22 @@ class Subagent:
                 if resp.usage is not None:
                     self._last_prompt_tokens = resp.usage.prompt_tokens
                 self._chars_since = 0
+                content = resp.text or (LENGTH_CUTOFF_REPLY if cut_off(resp) else "")
                 self._append(
-                    Message(role="assistant", content=resp.text, tool_calls=resp.tool_calls, reasoning=resp.reasoning or None),
+                    Message(role="assistant", content=content, tool_calls=resp.tool_calls, reasoning=resp.reasoning or None),
                     call_id,
                 )
                 if resp.text.strip():
                     last_text = resp.text
                 if not resp.tool_calls:
-                    status, report = "no_tool_call", resp.text
-                    break
+                    if not cut_off(resp):
+                        status, report = "no_tool_call", resp.text
+                        break
+                    note = LENGTH_CUTOFF_NOTE
+                    if step == self.max_steps - 1:
+                        note += f"\n\n{LAST_STEP_NOTE}"
+                    self._append(Message(role="user", content=note))
+                    continue
                 results: list[ToolResult] = []
                 submitted = False
                 for tc in resp.tool_calls:

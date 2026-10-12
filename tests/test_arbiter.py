@@ -15,7 +15,9 @@ import pytest
 
 from fakes import ORCH, SUB, FakeFactory, Reply, assert_valid, make_config, run, tc
 from subagents_bench.arbiter import judgement_from_obj, parse_judgement
-from subagents_bench.prompts import DEBATE_FROZEN_NOTE, POST_DEBATE_HEADER, POST_DEBATE_NOTE
+from subagents_bench.analysis.latency import critical_path
+from subagents_bench.analysis.load import load_episode
+from subagents_bench.prompts import DEBATE_FROZEN_NOTE, JUDGE_RETRY_NOTE, POST_DEBATE_HEADER, POST_DEBATE_NOTE
 from subagents_bench.schema import ArbitrationRecord, validate_record
 from subagents_bench.tools import PathRemap
 from subagents_bench.types import CallTiming, LLMError, LLMResponse, RequestInfo, Usage
@@ -407,6 +409,49 @@ def test_json_text_fallback_and_parse_failure(tmp_path):
     assert (r1["winner"], r1["confidence"], r1["agreement"], r1["parse_ok"]) == (0, None, None, False)
     assert (r2["winner"], r2["confidence"], r2["agreement"], r2["parse_ok"]) == (2, 0.85, True, True)
     assert a["final_winner"] == 2 and a["final_from_round"] == 2
+    # An unparseable reply that was not cut off gets no retry.
+    assert r1["judge_retry_call_id"] is None and r2["judge_retry_call_id"] is None
+
+
+def judge_requests(f):
+    return [q for q in f[ORCH].requests if q["tools"] == ["submit_judgement"]]
+
+
+def test_judge_cut_off_at_the_output_limit_gets_one_retry(tmp_path):
+    cfg = arb_config(tmp_path, scope="easy")
+    f = FakeFactory({ORCH: orchestrator([
+        Reply("", reasoning="weighing candidate after candidate", finish_reason="length", latency=0.05),
+        {"winner": 2, "confidence": 0.9, "agreement": True, "rationale": "brief"},
+    ]), SUB: lambda s, m, t, c: Reply("", [tc("submit", report="x")])})
+    res = run(cfg, f)
+    r = assert_valid(res.episode_dir)
+    a = r["arbitrations"][0]
+    judges = [c for c in r["calls"] if c["role"] == "arbiter"]
+    assert [c["finish_reason"] for c in judges] == ["length", "tool_calls"]
+    (rnd,) = a["rounds"]
+    assert (rnd["judge_call_id"], rnd["judge_retry_call_id"]) == (judges[0]["call_id"], judges[1]["call_id"])
+    assert (rnd["winner"], rnd["parse_ok"], a["final_winner"], a["final_from_round"]) == (2, True, 2, 1)
+    first, retry = (q["messages"][0].content for q in judge_requests(f))
+    assert retry == f"{first}\n\n{JUDGE_RETRY_NOTE}"
+    # Both judge calls lie on the arbitration's critical path, as judge time.
+    cp = critical_path(load_episode(res.episode_dir))
+    assert cp.parts["arb_llm"] == pytest.approx(sum(c["latency_sec"] for c in judges))
+    assert cp.parts["arb_llm"] >= 0.05
+
+
+@pytest.mark.parametrize("retry", [Reply("", finish_reason="length"), LLMError("judge provider down")], ids=["cut-again", "error"])
+def test_judge_retry_is_made_once_and_its_failure_keeps_the_fallback(tmp_path, retry):
+    cfg = arb_config(tmp_path, scope="easy", arbiter={"debate_rounds": 0})
+    f = FakeFactory({ORCH: orchestrator([Reply("", finish_reason="length"), retry]),
+                     SUB: lambda s, m, t, c: Reply("", [tc("submit", report="x")])})
+    res = run(cfg, f)
+    r = assert_valid(res.episode_dir)
+    assert res.exit_reason == "finished"
+    a = r["arbitrations"][0]
+    (rnd,) = a["rounds"]
+    judges = [c for c in r["calls"] if c["role"] == "arbiter"]
+    assert len(judges) == 2 and rnd["judge_retry_call_id"] == judges[1]["call_id"]
+    assert (rnd["winner"], rnd["parse_ok"], a["final_winner"], a["final_from_round"]) == (0, False, 0, None)
 
 
 def test_judge_failure_keeps_episode_going(tmp_path):

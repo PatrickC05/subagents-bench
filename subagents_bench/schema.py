@@ -40,7 +40,8 @@ from typing import Any
 # 3: episode.json gained n_provider_errors, cancel_kill, source_sha256 and
 # harness_exec_sum_sec (harness_exec_sec became the union of the execs);
 # arbitrations.jsonl gained isolation_violated, leaked_files, n_path_remaps
-# and final_from_round.
+# and final_from_round (and rounds[].judge_retry_call_id); calls.jsonl gained
+# stream_repairs and episode.json n_stream_repairs.
 SCHEMA_VERSION = 3
 
 Role = typing.Literal["orchestrator", "subagent", "arbiter", "debate"]
@@ -139,8 +140,8 @@ class CallRecord:
     price_cache_read: float | None = _f("USD / 1M cached input tokens used for cost_usd (None -> price_in).")
     provider_reported_cost: float | None = _f("Cost field from the provider's usage object, verbatim (untrusted).")
     error: str | None = _f("Set if the call ultimately failed ('<ExceptionType>: message') or was abandoned when the episode stopped ('cancelled: ...'); usage fields are then 0.", default=None)
-
     stream_repairs: int | None = _f("Repairs the client made to the streamed tool calls of this response: repeated argument deltas and duplicate calls dropped plus clashing call ids renamed (Sail re-sends a complete tool call under a second index). 0 normally; None for a failed call.", None, since=3)
+
 
 # ---------------------------------------------------------------------------
 # tools.jsonl
@@ -295,7 +296,7 @@ class ArbitrationRecord:
     n_candidates: int = _f("Candidates run.")
     candidate_dispatch_ids: list = _f("Dispatch ids of the candidates, by candidate index.")
     isolation: str = _f("shared | copy | shared_fallback.")
-    rounds: list = _f("Per judge round: {round, judge_call_id, debate_call_ids, winner, confidence, agreement, rationale, parse_ok, t_start, t_end}.")
+    rounds: list = _f("Per judge round: {round, judge_call_id, judge_retry_call_id, debate_call_ids, winner, confidence, agreement, rationale, parse_ok, t_start, t_end}. judge_retry_call_id (schema 3; absent in older records): the judge's one retry after a reply cut off at the output limit without a complete judgement, else None; the round's judgement is the better-ranked of the two calls.")
     debate_rounds_used: int = _f("Debate rounds actually run (confidence-aware: 0 if the first judgement was confident).")
     final_winner: int = _f("Chosen candidate index: the winner of the judgement in final_from_round (0 when no round produced one).")
     final_confidence: float | None = _f("Judge confidence in [0,1] of the judgement used (final_from_round).")
@@ -400,8 +401,8 @@ class EpisodeRecord:
     llm_sec: dict = _f("role -> summed LLM call seconds.")
     tool_sec: dict = _f("role -> summed tool seconds (the orchestrator's includes the time blocked in spawn_subagents).")
     n_retries: int = _f("Extra HTTP attempts across all calls.")
-    backoff_sec: float = _f("Total retry backoff sleep.")
     n_stream_repairs: int = _f("Sum of calls.jsonl stream_repairs: streamed tool-call repairs across all calls (0 normally).", since=3)
+    backoff_sec: float = _f("Total retry backoff sleep.")
     n_provider_errors: int = _f("LLM calls of any role that failed with a provider error after all retries: a plain LLMError, not a BillingError or ContextLengthError (retries exhausted, a non-retryable 4xx such as 401/403, a missing API key); their calls.jsonl error starts with 'LLMError:' (telemetry.is_provider_error, which also works on older records). Over 0 means a provider failure touched the episode (a subagent dispatch that failed this way has status error), so the trial does not measure the condition.", since=3)
     n_command_timeouts: int = _f("Commands that hit their timeout.")
     n_context_trims: int = _f("Context-guard trims across all agents.")

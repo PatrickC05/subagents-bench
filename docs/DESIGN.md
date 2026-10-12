@@ -491,6 +491,18 @@ it is set, `exec` raises `AgentStopped`. The constructor is
   separate user message), so providers that require alternating roles
   accept the sequence. Subagents get `[note: you have 1 step left; call
   submit ...]` in the result of their second-to-last step.
+- **Cut-off replies.** A reply that hit the output-token limit
+  (`finish_reason` `length`) before any tool call does not end the
+  orchestrator's episode or a subagent's dispatch as `no_tool_call`: the step
+  is used, the reply stays in the history (as `[reply cut off at the output
+  token limit]` when it had no visible text, since some APIs reject an empty
+  assistant message), and a user message tells the agent to reason more
+  briefly and call a tool (with the step note; a subagent before its last
+  step also gets the last-step note). Checked live on Sail (2026-10-12): the
+  cut-off arrives as `length` with no tool call (DeepSeek's had no visible
+  text), and after the note both models called a tool. `calls.csv`
+  `finish_reason` and `conditions.csv` `length_finish_frac_*` show how often
+  it happens.
 - Exit reasons: `finished`, `max_steps`, `no_tool_call`, `token_budget`,
   `timeout` (safety cap), `cancelled` (stop event), `billing_error` (re-raised
   after logging), `provider_error`, `error`. A provider failure that survived
@@ -614,8 +626,15 @@ For one instruction:
    and to debaters are capped at `subagent.max_output_chars` (head and tail
    kept). It must call the tool
    `submit_judgement(winner: int, confidence: number 0..1, agreement: boolean, rationale: string)`.
-   If the call has no tool call, parse JSON from the text. If parsing fails,
-   the round's result is winner=0, confidence=None and `parse_ok=False`.
+   If the call has no tool call, parse JSON from the text. If the reply was
+   cut off at the output limit (`finish_reason` `length`) without a complete
+   judgement, the judge gets exactly one retry: the same input plus a note to
+   reason briefly and call `submit_judgement` right away (the round's
+   `judge_retry_call_id`; the better-ranked of the two judgements counts, and
+   both calls are on the critical path). Before this, with an 8192-token
+   limit, 2 of 5 smoke-run judge calls ended this way. If parsing still
+   fails, the round's result is winner=0, confidence=None and
+   `parse_ok=False`.
 5. **Confidence-aware debate** (arXiv 2602.12276). If not
    (agreement and confidence ≥ threshold) and rounds remain, run a debate
    round. Each candidate's model gets one tool-less call with its own report

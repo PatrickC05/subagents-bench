@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 
 from fakes import ORCH, SUB, FakeFactory, Reply, assert_valid, make_config, run, tc
-from subagents_bench.prompts import LAST_STEP_NOTE
+from subagents_bench.prompts import LAST_STEP_NOTE, LENGTH_CUTOFF_NOTE
 from subagents_bench.subagent import ELIDED_PREFIX
 from subagents_bench.types import ContextLengthError, LLMError
 
@@ -68,6 +68,31 @@ def test_no_tool_call_uses_text_as_report(tmp_path):
     d = assert_valid(res.episode_dir)["dispatches"][0]
     assert (d["status"], d["report"]) == ("no_tool_call", "The answer is 42.")
     assert "The answer is 42." in f[ORCH].requests[1]["messages"][-1].tool_results[0].content
+
+
+def test_reply_cut_off_at_the_output_limit_does_not_end_the_dispatch(tmp_path):
+    cfg = make_config(tmp_path, subagent={"max_steps": 3})
+    f = FakeFactory({ORCH: one_spawn(), SUB: [
+        Reply("I will now carefully", finish_reason="length"),
+        Reply("", [tc("submit", report="brief report")]),
+    ]})
+    res = run(cfg, f)
+    r = assert_valid(res.episode_dir)
+    d = r["dispatches"][0]
+    assert (d["status"], d["report"], d["steps_used"]) == ("submitted", "brief report", 2)
+    msgs = f[SUB].requests[1]["messages"]
+    assert [m.role for m in msgs] == ["user", "assistant", "user"] and msgs[2].content == LENGTH_CUTOFF_NOTE
+    assert msgs[1].content == "I will now carefully"  # visible text is kept as is
+    assert [c["finish_reason"] for c in r["calls"] if c["role"] == "subagent"] == ["length", "tool_calls"]
+
+
+def test_cut_off_before_the_last_step_also_warns_about_it(tmp_path):
+    cfg = make_config(tmp_path, subagent={"max_steps": 2})
+    f = FakeFactory({ORCH: one_spawn(), SUB: [Reply("cut", finish_reason="length"), Reply("cut again", finish_reason="length")]})
+    res = run(cfg, f)
+    d = assert_valid(res.episode_dir)["dispatches"][0]
+    assert (d["status"], d["report"], d["steps_used"]) == ("max_steps", "cut again", 2)
+    assert f[SUB].requests[1]["messages"][-1].content == f"{LENGTH_CUTOFF_NOTE}\n\n{LAST_STEP_NOTE}"
 
 
 def test_max_steps_uses_last_text_and_warns_before_last_step(tmp_path):

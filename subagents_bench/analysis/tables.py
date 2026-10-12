@@ -488,6 +488,7 @@ def _rounds_summary(rounds: Any, _rec: dict) -> dict:
         "first_confidence": r[0].get("confidence") if r else None,
         "round_agreements": _join([x.get("agreement") for x in r]),
         "judge_call_ids": _join([x.get("judge_call_id") for x in r]),
+        "n_judge_retries": sum(1 for x in r if x.get("judge_retry_call_id")),
         "n_debate_calls": sum(len(x.get("debate_call_ids") or []) for x in r),
         "all_parse_ok": all(bool(x.get("parse_ok")) for x in r) if r else None,
     }

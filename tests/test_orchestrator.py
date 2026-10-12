@@ -13,6 +13,7 @@ import pytest
 from fakes import ORCH, SUB, FakeFactory, Reply, ScriptExhausted, assert_valid, make_config, records, run, tc
 from subagents_bench.environment import LocalShellEnvironment
 from subagents_bench.orchestrator import Orchestrator
+from subagents_bench.prompts import LENGTH_CUTOFF_NOTE, LENGTH_CUTOFF_REPLY
 from subagents_bench.telemetry import EpisodeRecorder
 from subagents_bench.types import BillingError, LLMError, Message
 
@@ -72,6 +73,36 @@ def test_no_tool_call_ends_episode(tmp_path):
     assert res.exit_reason == "no_tool_call" and res.final_summary == "I am done, nothing to do."
     r = assert_valid(res.episode_dir)
     assert r["steps"][0]["n_tool_calls"] == 0 and r["tools"] == []
+
+
+def test_reply_cut_off_at_the_output_limit_continues_the_episode(tmp_path):
+    cfg = make_config(tmp_path, topology="single", budget={"orchestrator_steps": 3})
+    f = FakeFactory({ORCH: [
+        Reply("", reasoning="a very long plan", finish_reason="length"),
+        Reply("", [tc("finish", summary="done after the cut-off")]),
+    ]})
+    res = run(cfg, f)
+    assert res.exit_reason == "finished" and res.final_summary == "done after the cut-off"
+    r = assert_valid(res.episode_dir)
+    assert r["episode"]["orchestrator_steps"] == 2
+    assert [s["n_tool_calls"] for s in r["steps"]] == [0, 1]
+    assert [c["finish_reason"] for c in r["calls"]] == ["length", "tool_calls"]
+    # The second request carries the cut-off reply and the note (with the step count).
+    msgs = f[ORCH].requests[1]["messages"]
+    assert [m.role for m in msgs] == ["user", "assistant", "user"]
+    # The reply had no visible text: a placeholder keeps the assistant message non-empty.
+    assert msgs[1].content == LENGTH_CUTOFF_REPLY and msgs[1].reasoning == "a very long plan"
+    assert msgs[2].content == f"{LENGTH_CUTOFF_NOTE}\n\n[step 1/3 complete; 2 remaining]"
+    # The note is in the transcript too.
+    assert LENGTH_CUTOFF_NOTE in (res.episode_dir / "transcript.jsonl").read_text()
+
+
+def test_cut_off_replies_use_steps_until_max_steps(tmp_path):
+    cfg = make_config(tmp_path, topology="single", budget={"orchestrator_steps": 2})
+    f = FakeFactory({ORCH: [Reply("partial", finish_reason="length"), Reply("partial again", finish_reason="length")]})
+    res = run(cfg, f)
+    assert res.exit_reason == "max_steps" and res.final_summary == "partial again"
+    assert assert_valid(res.episode_dir)["episode"]["orchestrator_steps"] == 2
 
 
 def test_tools_after_finish_are_not_run_and_unknown_tool_errors(tmp_path):

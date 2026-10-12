@@ -32,8 +32,12 @@ For one instruction (:func:`run_arbitration`):
    and, with copy isolation, a diff summary per candidate against the base
    copy (at most 4000 chars). It must call
    ``submit_judgement(winner, confidence, agreement, rationale)``; without a
-   tool call the JSON is parsed from the text; if that fails too the round's
-   result is winner 0, confidence None, ``parse_ok=False``.
+   tool call the JSON is parsed from the text. A reply cut off at the output
+   limit (``finish_reason`` ``length``) without a complete judgement gets one
+   retry: the same input plus :data:`~subagents_bench.prompts.JUDGE_RETRY_NOTE`
+   (the round's ``judge_retry_call_id``); the better-ranked of the two
+   judgements counts. If nothing parses, the round's result is winner 0,
+   confidence None, ``parse_ok=False``.
 5. **Debate.** Unless the judge reported agreement with confidence at least
    ``confidence_threshold``, and while debate rounds remain, every
    candidate's model makes one tool-less call (role ``debate``, the
@@ -77,7 +81,7 @@ from typing import Any, Callable
 
 from . import workspace
 from .config import Scope
-from .prompts import ARBITER_SYSTEM, arbiter_user, debate_system, debate_user, report_with_revision
+from .prompts import ARBITER_SYSTEM, JUDGE_RETRY_NOTE, arbiter_user, debate_system, debate_user, report_with_revision
 from .schema import ArbitrationRecord
 from .subagent import DispatchResult, DispatchSpec, Runtime, Subagent, measure
 from .telemetry import AgentLog
@@ -487,7 +491,34 @@ def run_arbitration(
                 judge_call_id,
             )
             j = parse_judgement(resp, n)
-            rounds.append(_round(rnd, judge_call_id, debate_ids, j, r_start))
+            retry_call_id: str | None = None
+            if not j.parse_ok and resp.finish_reason == "length":  # cut off, with or without a partial call
+                # Cut off (typically while reasoning) before a complete
+                # judgement: one fresh retry, told to be brief.
+                retry_user = Message(role="user", content=f"{user.content}\n\n{JUDGE_RETRY_NOTE}")
+                judge_log.transcript(retry_user)
+                try:
+                    resp2, retry_call_id = judge_log.llm(
+                        rt.arbiter_client, ARBITER_SYSTEM, [retry_user], [spec], step=rnd
+                    )
+                except (AgentStopped, BillingError):
+                    rounds.append(
+                        _round(rnd, judge_call_id, debate_ids, no_judgement(), r_start, ok=False,
+                               retry_call_id=judge_log.last_call_id)
+                    )
+                    raise
+                except LLMError as e:
+                    log.warning("arbiter %s judge retry failed: %s", aid, e)
+                    retry_call_id = judge_log.last_call_id
+                else:
+                    judge_log.transcript(
+                        Message(role="assistant", content=resp2.text, tool_calls=resp2.tool_calls, reasoning=resp2.reasoning or None),
+                        retry_call_id,
+                    )
+                    j2 = parse_judgement(resp2, n)
+                    if j2.rank >= j.rank:
+                        j = j2
+            rounds.append(_round(rnd, judge_call_id, debate_ids, j, r_start, retry_call_id=retry_call_id))
             # An unparseable later round never replaces a parsed earlier one.
             if j.rank > 0 and j.rank >= judgement.rank:
                 judgement, final_from_round = j, rnd
@@ -577,10 +608,20 @@ def _cap(rt: Runtime, report: str) -> str:
     return truncate_output(report or "", rt.config.subagent.max_output_chars)[0]
 
 
-def _round(rnd: int, judge_call_id: str | None, debate_ids: list[str], j: Judgement, t0: float, ok: bool = True) -> dict[str, Any]:
+def _round(
+    rnd: int,
+    judge_call_id: str | None,
+    debate_ids: list[str],
+    j: Judgement,
+    t0: float,
+    ok: bool = True,
+    *,
+    retry_call_id: str | None = None,
+) -> dict[str, Any]:
     return {
         "round": rnd,
         "judge_call_id": judge_call_id,
+        "judge_retry_call_id": retry_call_id,
         "debate_call_ids": list(debate_ids),
         "winner": j.winner,
         "confidence": j.confidence,

@@ -367,6 +367,33 @@ are applied to {orig} (mentions of {copy} inside its files become {orig}).
 
 LAST_STEP_NOTE = "[note: you have 1 step left; call submit with your report in that step]"
 
+# Sent (as a user message) when a reply hit the output-token limit
+# (finish_reason "length") before any tool call: the step is used, nothing
+# ran, and the agent continues instead of ending with that partial text.
+LENGTH_CUTOFF_NOTE = (
+    "[note: your last reply reached the output token limit and was cut off "
+    "before any tool call, so nothing ran. Reason more briefly and call a tool "
+    "in your next reply.]"
+)
+
+# The assistant message kept in the history for such a reply when it had no
+# visible text (all reasoning): some APIs reject an empty assistant message.
+LENGTH_CUTOFF_REPLY = "[reply cut off at the output token limit]"
+
+
+def cut_off(resp: Any) -> bool:
+    """A reply that hit the output-token limit before any tool call."""
+    return not resp.tool_calls and resp.finish_reason == "length"
+
+
+# Appended to the judge's input for its one retry after a reply that hit the
+# output-token limit without a parseable judgement.
+JUDGE_RETRY_NOTE = (
+    "Your previous attempt at this judgement reached the output token limit "
+    "before calling submit_judgement. Reason briefly, then call "
+    "submit_judgement right away; keep the rationale to one to three sentences."
+)
+
 
 def subagent_system(
     scope: Scope | str = Scope.HARD,

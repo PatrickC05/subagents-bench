@@ -375,6 +375,7 @@ RECORD_DERIVED_DOCS = {
     "round_agreements": "Agreement verdict per round, ';'-joined.",
     "judge_call_ids": "Judge call ids, ';'-joined.",
     "n_debate_calls": "Debate calls over all rounds.",
+    "n_judge_retries": "Rounds whose judge got its one retry after a reply cut off at the output limit (rounds[].judge_retry_call_id).",
     "all_parse_ok": "Every judgement parsed.",
     "n_applied_files": "Files written or deleted when applying the winner.",
     "n_leaked_files": "len(leaked_files); empty if the record predates the leak check.",

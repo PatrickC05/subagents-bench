@@ -283,11 +283,13 @@ class CriticalPath:
             dcalls = [self.g.calls[c] for c in rnd.get("debate_call_ids") or [] if c in self.g.calls]
             total = total + _max_cost([self.call_cost(c) for c in dcalls])
             ends += [float(c["t_end"]) for c in dcalls if c.get("t_end") is not None]
-            judge = self.g.calls.get(rnd.get("judge_call_id"))
-            if judge is not None:
-                total = total + self.call_cost(judge)
-                if judge.get("t_end") is not None:
-                    ends.append(float(judge["t_end"]))
+            # The judge call, then its retry (after an output-limit cut-off), in series.
+            for key in ("judge_call_id", "judge_retry_call_id"):
+                judge = self.g.calls.get(rnd.get(key))
+                if judge is not None:
+                    total = total + self.call_cost(judge)
+                    if judge.get("t_end") is not None:
+                        ends.append(float(judge["t_end"]))
         apply_sec = 0.0
         if ends and arb.get("t_end") is not None:
             apply_sec = max(0.0, float(arb["t_end"]) - max(ends))

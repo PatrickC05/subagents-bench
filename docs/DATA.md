@@ -276,7 +276,7 @@ One line per arbitrated instruction (arbiter strategy).
 | `n_candidates` | int | Candidates run. |
 | `candidate_dispatch_ids` | list | Dispatch ids of the candidates, by candidate index. |
 | `isolation` | str | shared \| copy \| shared_fallback. |
-| `rounds` | list | Per judge round: {round, judge_call_id, debate_call_ids, winner, confidence, agreement, rationale, parse_ok, t_start, t_end}. |
+| `rounds` | list | Per judge round: {round, judge_call_id, judge_retry_call_id, debate_call_ids, winner, confidence, agreement, rationale, parse_ok, t_start, t_end}. judge_retry_call_id (schema 3; absent in older records): the judge's one retry after a reply cut off at the output limit without a complete judgement, else None; the round's judgement is the better-ranked of the two calls. |
 | `debate_rounds_used` | int | Debate rounds actually run (confidence-aware: 0 if the first judgement was confident). |
 | `final_winner` | int | Chosen candidate index: the winner of the judgement in final_from_round (0 when no round produced one). |
 | `final_confidence` | float \| None | Judge confidence in [0,1] of the judgement used (final_from_round). |
@@ -391,8 +391,8 @@ One per episode. Written at start with `status: running`, rewritten at the end w
 | `llm_sec` | dict | role -> summed LLM call seconds. |
 | `tool_sec` | dict | role -> summed tool seconds (the orchestrator's includes the time blocked in spawn_subagents). |
 | `n_retries` | int | Extra HTTP attempts across all calls. |
-| `backoff_sec` | float | Total retry backoff sleep. |
 | `n_stream_repairs` | int | Sum of calls.jsonl stream_repairs: streamed tool-call repairs across all calls (0 normally). (Added in schema_version 3; absent from older records.) |
+| `backoff_sec` | float | Total retry backoff sleep. |
 | `n_provider_errors` | int | LLM calls of any role that failed with a provider error after all retries: a plain LLMError, not a BillingError or ContextLengthError (retries exhausted, a non-retryable 4xx such as 401/403, a missing API key); their calls.jsonl error starts with 'LLMError:' (telemetry.is_provider_error, which also works on older records). Over 0 means a provider failure touched the episode (a subagent dispatch that failed this way has status error), so the trial does not measure the condition. (Added in schema_version 3; absent from older records.) |
 | `n_command_timeouts` | int | Commands that hit their timeout. |
 | `n_context_trims` | int | Context-guard trims across all agents. |
@@ -964,6 +964,7 @@ arbitrations.jsonl flattened, one row per arbitrated instruction. (list fields a
 | `first_confidence` | Confidence of the first judgement. |
 | `round_agreements` | Agreement verdict per round, ';'-joined. |
 | `judge_call_ids` | Judge call ids, ';'-joined. |
+| `n_judge_retries` | Rounds whose judge got its one retry after a reply cut off at the output limit (rounds[].judge_retry_call_id). |
 | `n_debate_calls` | Debate calls over all rounds. |
 | `all_parse_ok` | Every judgement parsed. |
 | `debate_rounds_used` | Debate rounds actually run (confidence-aware: 0 if the first judgement was confident). |

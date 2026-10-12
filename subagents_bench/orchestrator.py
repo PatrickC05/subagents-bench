@@ -20,6 +20,11 @@ listed after ``finish`` in the same response are not run.
 The group's ``files_modified`` comes from a marker file made at group start
 and ``find -newer`` at the end.
 
+A reply without a tool call ends the episode (``no_tool_call``), except one
+cut off at the output-token limit (``finish_reason`` ``length``): that step
+is used, the orchestrator is told to be briefer and call a tool
+(:data:`~subagents_bench.prompts.LENGTH_CUTOFF_NOTE`), and the episode goes on.
+
 Exit reasons: ``finished``, ``max_steps``, ``no_tool_call``, ``token_budget``
 and ``timeout`` (safety caps, checked before each step), ``cancelled`` (the
 stop event), ``billing_error`` (recorded, then re-raised), ``provider_error``
@@ -53,7 +58,7 @@ from . import workspace
 from .arbiter import ArbitrationOutcome, raise_first, run_arbitration
 from .config import ExperimentConfig, Strategy, Topology
 from .llm import make_client
-from .prompts import orchestrator_system_for, step_note
+from .prompts import LENGTH_CUTOFF_NOTE, LENGTH_CUTOFF_REPLY, cut_off, orchestrator_system_for, step_note
 from .schema import SpawnRecord, StepRecord
 from .subagent import DispatchResult, DispatchSpec, MeteredEnv, Runtime, Subagent, measure, text_output
 from .telemetry import AgentLog, EpisodeRecorder, ToolEvent, is_provider_error
@@ -313,7 +318,8 @@ class Orchestrator:
                     log.debug("client close failed", exc_info=True)
 
     def _step(self, step: int) -> tuple[str, str]:
-        """One step -> (outcome, text); outcome: continue | finished | no_tool_call.
+        """One step -> (outcome, text); outcome: continue | finished | no_tool_call
+        (``continue`` also after a reply cut off at the output limit).
 
         The StepRecord is written even when the step raises.
         """
@@ -328,12 +334,21 @@ class Orchestrator:
                 resp, call_id = self.log.llm(self.rt.orchestrator_client, self.system, self.messages, self.specs, step=step)
             finally:
                 t_llm_end = time.time()
-            asst = Message(role="assistant", content=resp.text, tool_calls=resp.tool_calls, reasoning=resp.reasoning or None)
+            content = resp.text or (LENGTH_CUTOFF_REPLY if cut_off(resp) else "")
+            asst = Message(role="assistant", content=content, tool_calls=resp.tool_calls, reasoning=resp.reasoning or None)
             self.messages.append(asst)
             self.log.transcript(asst, call_id)
             tool_names = [tc.name for tc in resp.tool_calls]
             if not resp.tool_calls:
-                return "no_tool_call", resp.text
+                if not cut_off(resp):
+                    return "no_tool_call", resp.text
+                note = step_note(
+                    step, self.config.budget.orchestrator_steps, self.dispatches_left if self.with_subagents else None
+                )
+                cut = Message(role="user", content=f"{LENGTH_CUTOFF_NOTE}\n\n{note}")
+                self.messages.append(cut)
+                self.log.transcript(cut)
+                return "continue", resp.text
             summary = resp.text
             results: list[ToolResult] = []
             for tc in resp.tool_calls:

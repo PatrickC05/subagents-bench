@@ -330,9 +330,10 @@ class _Checker:
                 if did not in dispatch_ids:
                     self.ref(f"arbitration {aid}: candidate dispatch {did!r} not in dispatches.jsonl")
             for rnd in a.get("rounds") or []:
-                j = rnd.get("judge_call_id")
-                if j is not None and (j not in calls or calls[j].get("role") != "arbiter"):
-                    self.ref(f"arbitration {aid} round {rnd.get('round')}: judge call {j!r} missing or not role arbiter")
+                for key, what in (("judge_call_id", "judge call"), ("judge_retry_call_id", "judge retry call")):
+                    j = rnd.get(key)
+                    if j is not None and (j not in calls or calls[j].get("role") != "arbiter"):
+                        self.ref(f"arbitration {aid} round {rnd.get('round')}: {what} {j!r} missing or not role arbiter")
                 for dc in rnd.get("debate_call_ids") or []:
                     if dc not in calls or calls[dc].get("role") != "debate":
                         self.ref(f"arbitration {aid} round {rnd.get('round')}: debate call {dc!r} missing or not role debate")

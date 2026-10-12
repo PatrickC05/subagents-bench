@@ -95,6 +95,15 @@ def test_stream_repair_count_is_cross_checked(tmp_path):
     assert not any(m.startswith("n_stream_repairs") for m in _messages(check_episode(ep)))
 
 
+def test_judge_retry_call_must_exist(tmp_path):
+    ep = _episode(tmp_path)
+    _rewrite_jsonl(ep / "arbitrations.jsonl", lambda recs: [
+        {**recs[0], "rounds": [{**recs[0]["rounds"][0], "judge_retry_call_id": "gone"}, *recs[0]["rounds"][1:]]},
+        *recs[1:],
+    ])
+    assert any("judge retry call 'gone' missing or not role arbiter" in m for m in _messages(check_episode(ep)))
+
+
 def test_provider_error_count_is_cross_checked(tmp_path):
     ep = _episode(tmp_path)
     doc = json.loads((ep / "episode.json").read_text())

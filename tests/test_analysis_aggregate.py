@@ -326,6 +326,9 @@ def test_record_tables(run):
     two = arbs[arbs["n_rounds"] == 2].iloc[0]
     assert (two["round_winners"], two["round_confidences"], two["first_confidence"]) == ("0;0", "0.6;0.9", 0.6)
     assert two["n_debate_calls"] == 3
+    assert set(arbs["n_judge_retries"]) == {0}  # synthetic judges are never cut off
+    assert set(res.tables["episodes"]["n_stream_repairs"].dropna()) == {0}  # NA: trials without records
+    assert set(res.tables["calls"]["stream_repairs"].dropna()) == {0}
     calls = res.tables["calls"]
     np.testing.assert_allclose(calls.groupby("episode_id")["cost_sail_balanced"].sum().sort_index(),
                                res.tables["episodes"].dropna(subset=["episode_id"]).set_index("episode_id")
