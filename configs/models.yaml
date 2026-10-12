@@ -1,0 +1,241 @@
+# Model facts used by the analysis step: FLOPs (2 x active params x tokens),
+# the roofline serving profile, and model-size covariates. See docs/DESIGN.md §6
+# and docs/PRICING_SOURCES.md (method, formulas and caveats). Retrieved
+# 2026-10-11 from the Hugging Face model cards, config.json files and
+# safetensors headers at the revisions listed under `revision`.
+#
+# Fields (the first five are the contract; the rest are documented extras):
+#   active_params_b   parameters used per text token in one forward pass, in
+#                     billions. MoE: the vendor's stated figure, cross-checked
+#                     against `checkpoint.active_computed_b`. Dense: the exact
+#                     text-decoder count (embeddings, decoder layers, LM head;
+#                     no vision/audio encoder, no MTP draft head) from the
+#                     safetensors headers.
+#   total_params_b    MoE: the vendor's stated total. Dense: same as
+#                     active_params_b (vendor size labels such as "4B" are
+#                     rounded and include the vision encoder; see `stated`).
+#   context_window    the model's native context in tokens (config
+#                     max_position_embeddings, matching the card). A provider
+#                     may serve less; see `serving_context_window`.
+#   architecture      dense | moe
+#   sources           URLs the numbers come from
+#   stated            the card's own wording, verbatim where possible
+#   bytes_per_param   effective bytes per parameter of the weights read for one
+#                     decoded token at batch 1, for the checkpoint the provider
+#                     serves (when the provider names one) or else the released
+#                     checkpoint. Exact, from safetensors dtypes and shapes,
+#                     including quantization scales and layers left unquantized.
+#                     It is NOT the nominal format width; that is in
+#                     `weight_format`.
+#   checkpoint        exact parameter accounting from safetensors headers
+#                     (packed 4-bit tensors count 2 params per byte; scale
+#                     tensors are excluded from params)
+
+models:
+  deepseek-ai/DeepSeek-V4.1-Flash:
+    architecture: moe
+    total_params_b: 552.0          # "552B backbone parameters", which excludes the 196B Engram memory
+    active_params_b: 16.0          # decode. The card says "8B / 16B" (prefill / decode); Sail docs say "16B active"
+    # Causal encoder-decoder: a prompt token goes through the 20 encoder layers
+    # only (8B); a generated token goes through all 40 layers (16B). Use these
+    # two when prompt and completion tokens are costed separately.
+    active_params_prefill_b: 8.0
+    active_params_decode_b: 16.0
+    context_window: 1048576      # config max_position_embeddings; card: "up to one million tokens"
+    stated: "MoE, 552B backbone; 8B activated per token in prefill, 16B in decode; Engram conditional memory 196B (sparse lookup); 1 shared + 384 routed experts, 6 routed active; 40 layers (20 encoder + 20 decoder); 1M context"
+    weight_format: "routed experts FP4 (packed, one E8M0 scale per 32); other linear layers FP8 E4M3; embeddings and LM head BF16"
+    bytes_per_param: 0.808      # released checkpoint, which Sail's docs name as their reference checkpoint
+    served:
+      sail: {checkpoint: deepseek-ai/DeepSeek-V4.1-Flash, openrouter_quantization_tag: fp4}
+    checkpoint:
+      revision: 2cba9e42aa026125f3ed06c6d98c1db82f7ca027
+      total_params_b: 763.205    # every tensor: backbone + Engram + MTP/DSpark draft + vision
+      language_model_b: 551.881  # embeddings + 40 layers + LM head, excluding the Engram tables
+      routed_experts_b: 543.582  # 40 layers x 384 experts x 3 x 5120 x 2304
+      engram_tables_b: 196.614   # (384006168 + 384016682) rows x 256
+      mtp_draft_b: 14.225
+      vision_b: 0.485
+      active_computed_b: 16.793  # (551.881 - 543.582) + 543.582 x 6/384; includes the 0.662B input embedding
+    sources:
+      - https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash
+      - https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/config.json
+      - https://huggingface.co/api/models/deepseek-ai/DeepSeek-V4.1-Flash
+      - https://docs.sailresearch.com/models
+
+  zai-org/GLM-5.3-Flash:
+    architecture: moe
+    total_params_b: 320.0          # card: "320B total parameters"
+    active_params_b: 18.0          # card: "just 18B active parameters"
+    context_window: 1048576      # config max_position_embeddings; NVIDIA card: "Context length up to 1M"
+    stated: "MoE, 320B total, 18B active; hybrid sparse + linear attention; 1 shared + 288 routed experts, 8 routed active; 45 layers (first 3 dense)"
+    weight_format: "released checkpoint FP8 E4M3 (128x128 blocks), part of attention BF16. Sail serves nvidia/GLM-5.3-Flash-NVFP4: routed experts and the 3 dense-layer MLPs NVFP4; attention, shared experts, router, embeddings and LM head BF16"
+    bytes_per_param: 1.236       # nvidia/GLM-5.3-Flash-NVFP4, the checkpoint Sail's docs name; the native FP8 checkpoint is 1.339
+    served:
+      sail: {checkpoint: nvidia/GLM-5.3-Flash-NVFP4, openrouter_quantization_tag: fp4}
+    checkpoint:
+      revision: eb9eb208eb0d988989d07a6a12d0fdeb5f52574a
+      total_params_b: 321.323    # Sail docs: "321B; 18B active"
+      language_model_b: 313.327  # excludes the MTP layer (7.433B) and the vision encoder (0.564B)
+      routed_experts_b: 304.406  # 42 sparse layers x 288 experts x 3 x 4096 x 2048
+      mtp_draft_b: 7.433
+      vision_b: 0.564
+      active_computed_b: 17.377  # (313.327 - 304.406) + 304.406 x 8/288
+    sources:
+      - https://huggingface.co/zai-org/GLM-5.3-Flash
+      - https://huggingface.co/zai-org/GLM-5.3-Flash/raw/main/config.json
+      - https://huggingface.co/nvidia/GLM-5.3-Flash-NVFP4
+      - https://docs.sailresearch.com/models
+
+  # NVFP4 post-training quantization of google/gemma-4-31B-it: same parameters,
+  # stored differently. Only the MLP linear layers are NVFP4: 4-bit values plus
+  # one FP8 scale per 16, i.e. 0.5625 B/param. The config's `ignore` list keeps
+  # every self-attention block, the embeddings (tied LM head) and the vision
+  # tower in BF16. Hence 1.026 effective B/param rather than 0.5.
+  nvidia/Gemma-4-31B-IT-NVFP4:
+    architecture: dense
+    total_params_b: 30.697
+    active_params_b: 30.697
+    context_window: 262144       # config max_position_embeddings; cards: "256K"
+    stated: "30.7B parameters (NVIDIA card); Google card: 31B dense, 30.7B total, ~550M vision encoder, 60 layers, 256K context"
+    base_model: google/gemma-4-31B-it
+    weight_format: "NVFP4 MLP weights (20.809B params; nominal 0.5 B/param + FP8 scale per 16); attention, embeddings and vision tower BF16 (2 B/param)"
+    bytes_per_param: 1.026
+    bytes_per_param_nominal: 0.5 # NVFP4 width of the quantized layers only
+    served:
+      sail: {checkpoint: nvidia/Gemma-4-31B-IT-NVFP4}
+    checkpoint:
+      revision: 4135a98a9b728a548947683219633b25682223ac
+      total_params_b: 31.273
+      language_model_b: 30.697
+      nvfp4_params_b: 20.809     # 60 layers x 3 x 5376 x 21504
+      vision_b: 0.576
+      bytes_gb: 32.63
+    sources:
+      - https://huggingface.co/nvidia/Gemma-4-31B-IT-NVFP4
+      - https://huggingface.co/nvidia/Gemma-4-31B-IT-NVFP4/raw/main/config.json
+      - https://huggingface.co/google/gemma-4-31B-it
+      - https://docs.sailresearch.com/models
+
+  # BF16 base of the NVFP4 model above. Sail serves it too; not in the pilot sweep.
+  google/gemma-4-31B-it:
+    architecture: dense
+    total_params_b: 30.697
+    active_params_b: 30.697
+    context_window: 262144
+    stated: "31B dense; 30.7B total parameters; vision encoder ~550M; 60 layers; 256K context"
+    weight_format: "BF16"
+    bytes_per_param: 2.0
+    checkpoint:
+      revision: 842da3794eaa0b77d5f08bae87a17459d91ff475
+      total_params_b: 31.273
+      language_model_b: 30.697
+      vision_b: 0.576
+    sources:
+      - https://huggingface.co/google/gemma-4-31B-it
+      - https://huggingface.co/google/gemma-4-31B-it/raw/main/config.json
+
+  google/gemma-4-12B-it:
+    architecture: dense
+    total_params_b: 11.907
+    active_params_b: 11.907
+    context_window: 262144       # native (card: "256K"). Sail serves only 16384, see below
+    # Sail's limit, measured 2026-10-11 by one oversized request (Sail docs say
+    # "16K"). Sail rejects input + max_tokens > 15872, because it reserves 512
+    # tokens for formatting. Configs should set ModelConfig.context_window to
+    # 16384 for this model on Sail.
+    serving_context_window: {sail: 16384}
+    serving_max_input_plus_output: {sail: 15872}
+    stated: "12B Unified (encoder-free multimodal), 11.95B total parameters, 48 layers, 256K context"
+    weight_format: "BF16 (served precision on Sail not stated)"
+    bytes_per_param: 2.0
+    served:
+      sail: {checkpoint: google/gemma-4-12B-it}
+    checkpoint:
+      revision: 707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7
+      total_params_b: 11.960     # includes 0.052B image/audio input projections
+      language_model_b: 11.907
+    sources:
+      - https://huggingface.co/google/gemma-4-12B-it
+      - https://huggingface.co/google/gemma-4-12B-it/raw/main/config.json
+      - https://docs.sailresearch.com/models
+
+  # Qwen3.5 small models: dense hybrid models with 3 Gated DeltaNet (linear
+  # attention) layers per 1 gated full-attention layer. All are served by Prime.
+  # Prime's /models gives no context or quantization for them, so
+  # bytes_per_param is the BF16 release; Prime's serving precision is unknown.
+  Qwen/Qwen3.5-0.8B:
+    architecture: dense
+    total_params_b: 0.752
+    active_params_b: 0.752
+    context_window: 262144       # card: "262,144 natively"
+    stated: "0.8B; causal LM with vision encoder; 24 layers; LM output tied to token embedding"
+    weight_format: "BF16"
+    bytes_per_param: 2.0
+    checkpoint:
+      revision: 2fc06364715b967f1860aea9cf38778875588b17
+      total_params_b: 0.873
+      language_model_b: 0.752
+      vision_b: 0.101
+      mtp_draft_b: 0.020
+    sources:
+      - https://huggingface.co/Qwen/Qwen3.5-0.8B
+      - https://huggingface.co/Qwen/Qwen3.5-0.8B/raw/main/config.json
+
+  Qwen/Qwen3.5-2B:
+    architecture: dense
+    total_params_b: 1.882
+    active_params_b: 1.882
+    context_window: 262144       # card: "262,144 natively"
+    stated: "2B; causal LM with vision encoder; 24 layers; LM output tied to token embedding"
+    weight_format: "BF16"
+    bytes_per_param: 2.0
+    checkpoint:
+      revision: 15852e8c16360a2fea060d615a32b45270f8a8fc
+      total_params_b: 2.274
+      language_model_b: 1.882
+      vision_b: 0.331
+      mtp_draft_b: 0.061
+    sources:
+      - https://huggingface.co/Qwen/Qwen3.5-2B
+      - https://huggingface.co/Qwen/Qwen3.5-2B/raw/main/config.json
+
+  Qwen/Qwen3.5-4B:
+    architecture: dense
+    total_params_b: 4.206
+    active_params_b: 4.206
+    context_window: 262144       # card: "262,144 natively and extensible up to 1,010,000 tokens" (YaRN)
+    stated: "4B; causal LM with vision encoder; 32 layers; LM output tied to token embedding"
+    weight_format: "BF16"
+    bytes_per_param: 2.0
+    checkpoint:
+      revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+      total_params_b: 4.660
+      language_model_b: 4.206
+      vision_b: 0.334
+      mtp_draft_b: 0.121
+    sources:
+      - https://huggingface.co/Qwen/Qwen3.5-4B
+      - https://huggingface.co/Qwen/Qwen3.5-4B/raw/main/config.json
+
+  Qwen/Qwen3.5-9B:
+    architecture: dense
+    total_params_b: 8.954
+    active_params_b: 8.954
+    context_window: 262144       # card: "262,144 natively and extensible up to 1,010,000 tokens" (YaRN)
+    stated: "9B; causal LM with vision encoder; 32 layers; untied LM output"
+    weight_format: "BF16"
+    bytes_per_param: 2.0
+    checkpoint:
+      revision: c202236235762e1c871ad0ccb60c8ee5ba337b9a
+      total_params_b: 9.653
+      language_model_b: 8.954    # includes a separate 1.017B LM head and a 1.017B input embedding
+      vision_b: 0.456
+      mtp_draft_b: 0.243
+    sources:
+      - https://huggingface.co/Qwen/Qwen3.5-9B
+      - https://huggingface.co/Qwen/Qwen3.5-9B/raw/main/config.json
+
+# Provider ids that are not the canonical (Hugging Face style) id above.
+aliases:
+  deepseek/deepseek-v4.1-flash: deepseek-ai/DeepSeek-V4.1-Flash   # Prime (gateway) and OpenRouter id
+  z-ai/glm-5.3-flash: zai-org/GLM-5.3-Flash                       # Prime (gateway) and OpenRouter id

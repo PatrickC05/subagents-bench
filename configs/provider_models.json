@@ -1,0 +1,4117 @@
+{
+ "retrieved": "2026-10-11",
+ "retrieved_at": "2026-10-11T21:08-04:00 (APIs); 2026-10-11T21:15-04:00 (Sail docs); 2026-10-11T21:16-04:00 (context probe)",
+ "units": "prices are USD per 1M tokens; context in tokens",
+ "notes": [
+  "Sail /v1/models exposes only id/object/created/owned_by (created is a constant placeholder and is dropped). Sail prices and served context come from docs.sailresearch.com/pricing and /models, not from the API.",
+  "Prime /api/v1/models exposes pricing for every model; context_window is null for Prime-hosted Qwen3.5 models.",
+  "OpenRouter endpoint prices are the per-endpoint 'pricing' fields as listed; they already include the listed 'discount' (e.g. 0.147 = 0.30 x (1 - 0.51)). Exact duplicate listings (same tag and prices) are dropped.",
+  "See docs/PRICING_SOURCES.md for method and caveats."
+ ],
+ "study_models": {
+  "deepseek-ai/DeepSeek-V4.1-Flash": {
+   "sail_id": "deepseek-ai/DeepSeek-V4.1-Flash",
+   "prime_id": "deepseek/deepseek-v4.1-flash",
+   "openrouter_id": "deepseek/deepseek-v4.1-flash",
+   "sail_published_prices": {
+    "asap": {
+     "in": 0.09,
+     "cached": 0.006,
+     "out": 0.3
+    },
+    "balanced": {
+     "in": 0.07,
+     "cached": 0.005,
+     "out": 0.22
+    },
+    "flex": {
+     "in": 0.05,
+     "cached": 0.004,
+     "out": 0.15
+    }
+   },
+   "prime_pricing": {
+    "input_usd_per_mtok": 0.3,
+    "output_usd_per_mtok": 1.2,
+    "cache_read_usd_per_mtok": null,
+    "cache_write_usd_per_mtok": null,
+    "effective_at": "2026-09-11T18:44:13.104931+00:00"
+   }
+  },
+  "nvidia/Gemma-4-31B-IT-NVFP4": {
+   "sail_id": "nvidia/Gemma-4-31B-IT-NVFP4",
+   "prime_id": null,
+   "openrouter_id": "google/gemma-4-31b-it",
+   "sail_published_prices": {
+    "asap": {
+     "in": 0.14,
+     "cached": 0.07,
+     "out": 0.4
+    },
+    "balanced": {
+     "in": 0.11,
+     "cached": 0.06,
+     "out": 0.32
+    },
+    "flex": {
+     "in": 0.07,
+     "cached": 0.04,
+     "out": 0.2
+    }
+   },
+   "prime_pricing": null
+  },
+  "google/gemma-4-31B-it": {
+   "sail_id": "google/gemma-4-31B-it",
+   "prime_id": null,
+   "openrouter_id": "google/gemma-4-31b-it",
+   "sail_published_prices": {
+    "asap": {
+     "in": 0.4,
+     "cached": 0.2,
+     "out": 0.6
+    },
+    "balanced": {
+     "in": 0.12,
+     "cached": 0.08,
+     "out": 0.6
+    },
+    "flex": {
+     "in": 0.06,
+     "cached": 0.02,
+     "out": 0.3
+    }
+   },
+   "prime_pricing": null
+  },
+  "google/gemma-4-12B-it": {
+   "sail_id": "google/gemma-4-12B-it",
+   "prime_id": null,
+   "openrouter_id": null,
+   "sail_published_prices": {
+    "asap": {
+     "in": 0.3,
+     "cached": 0.15,
+     "out": 2.0
+    },
+    "balanced": {
+     "in": 0.1,
+     "cached": 0.07,
+     "out": 2.0
+    },
+    "flex": {
+     "in": 0.05,
+     "cached": 0.02,
+     "out": 1.0
+    }
+   },
+   "prime_pricing": null
+  },
+  "zai-org/GLM-5.3-Flash": {
+   "sail_id": "zai-org/GLM-5.3-Flash",
+   "prime_id": "z-ai/glm-5.3-flash",
+   "openrouter_id": "z-ai/glm-5.3-flash",
+   "sail_published_prices": {
+    "asap": {
+     "in": 0.11,
+     "cached": 0.02,
+     "out": 0.35
+    },
+    "balanced": {
+     "in": 0.08,
+     "cached": 0.02,
+     "out": 0.28
+    },
+    "flex": {
+     "in": 0.05,
+     "cached": 0.01,
+     "out": 0.18
+    }
+   },
+   "prime_pricing": {
+    "input_usd_per_mtok": 0.15,
+    "output_usd_per_mtok": 0.5,
+    "cache_read_usd_per_mtok": null,
+    "cache_write_usd_per_mtok": null,
+    "effective_at": "2026-08-27T16:28:44.680637+00:00"
+   }
+  },
+  "Qwen/Qwen3.5-0.8B": {
+   "sail_id": null,
+   "prime_id": "Qwen/Qwen3.5-0.8B",
+   "openrouter_id": null,
+   "sail_published_prices": null,
+   "prime_pricing": {
+    "input_usd_per_mtok": 0.04,
+    "output_usd_per_mtok": 0.08,
+    "cache_read_usd_per_mtok": 0.036,
+    "cache_write_usd_per_mtok": 0.04,
+    "effective_at": "2026-04-27T14:12:40.112195+00:00"
+   }
+  },
+  "Qwen/Qwen3.5-2B": {
+   "sail_id": null,
+   "prime_id": "Qwen/Qwen3.5-2B",
+   "openrouter_id": null,
+   "sail_published_prices": null,
+   "prime_pricing": {
+    "input_usd_per_mtok": 0.06,
+    "output_usd_per_mtok": 0.18,
+    "cache_read_usd_per_mtok": 0.054,
+    "cache_write_usd_per_mtok": 0.06,
+    "effective_at": "2026-04-27T14:12:40.311797+00:00"
+   }
+  },
+  "Qwen/Qwen3.5-4B": {
+   "sail_id": null,
+   "prime_id": "Qwen/Qwen3.5-4B",
+   "openrouter_id": null,
+   "sail_published_prices": null,
+   "prime_pricing": {
+    "input_usd_per_mtok": 0.1,
+    "output_usd_per_mtok": 0.3,
+    "cache_read_usd_per_mtok": 0.09,
+    "cache_write_usd_per_mtok": 0.1,
+    "effective_at": "2026-04-27T14:12:40.492113+00:00"
+   }
+  },
+  "Qwen/Qwen3.5-9B": {
+   "sail_id": null,
+   "prime_id": "Qwen/Qwen3.5-9B",
+   "openrouter_id": "qwen/qwen3.5-9b",
+   "sail_published_prices": null,
+   "prime_pricing": {
+    "input_usd_per_mtok": 0.18,
+    "output_usd_per_mtok": 0.54,
+    "cache_read_usd_per_mtok": 0.162,
+    "cache_write_usd_per_mtok": 0.18,
+    "effective_at": "2026-04-27T14:12:40.664813+00:00"
+   }
+  }
+ },
+ "providers": {
+  "sail": {
+   "api": "https://api.sailresearch.com/v1/models",
+   "model_ids": [
+    "Qwen/Qwen3.6-35B-A3B",
+    "deepseek-ai/DeepSeek-V4-Flash-0731",
+    "deepseek-ai/DeepSeek-V4-Pro-0813",
+    "deepseek-ai/DeepSeek-V4.1-Flash",
+    "google/gemma-4-12B-it",
+    "google/gemma-4-31B-it",
+    "moonshotai/Kimi-K2.6",
+    "moonshotai/Kimi-K3",
+    "nvidia/Gemma-4-31B-IT-NVFP4",
+    "openai/gpt-oss-120b",
+    "zai-org/GLM-5.3",
+    "zai-org/GLM-5.3-Flash"
+   ],
+   "docs_pricing": {
+    "source": "https://docs.sailresearch.com/pricing",
+    "windows": "asap is the default; balanced and flex are selected per request with the X-Sail-Completion-Window header (see /completion-windows)",
+    "models": {
+     "moonshotai/Kimi-K3": {
+      "asap": {
+       "in": 2.5,
+       "cached": 0.25,
+       "out": 12.5
+      },
+      "balanced": {
+       "in": 2.0,
+       "cached": 0.2,
+       "out": 10.0
+      },
+      "flex": {
+       "in": 1.25,
+       "cached": 0.15,
+       "out": 6.25
+      }
+     },
+     "zai-org/GLM-5.3": {
+      "asap": {
+       "in": 0.98,
+       "cached": 0.18,
+       "out": 3.08
+      },
+      "balanced": {
+       "in": 0.5,
+       "cached": 0.12,
+       "out": 2.5
+      },
+      "flex": {
+       "in": 0.4,
+       "cached": 0.08,
+       "out": 1.8
+      }
+     },
+     "zai-org/GLM-5.3-Flash": {
+      "asap": {
+       "in": 0.11,
+       "cached": 0.02,
+       "out": 0.35
+      },
+      "balanced": {
+       "in": 0.08,
+       "cached": 0.02,
+       "out": 0.28
+      },
+      "flex": {
+       "in": 0.05,
+       "cached": 0.01,
+       "out": 0.18
+      }
+     },
+     "deepseek-ai/DeepSeek-V4.1-Flash": {
+      "asap": {
+       "in": 0.09,
+       "cached": 0.006,
+       "out": 0.3
+      },
+      "balanced": {
+       "in": 0.07,
+       "cached": 0.005,
+       "out": 0.22
+      },
+      "flex": {
+       "in": 0.05,
+       "cached": 0.004,
+       "out": 0.15
+      }
+     },
+     "deepseek-ai/DeepSeek-V4-Pro-0813": {
+      "asap": {
+       "in": 0.92,
+       "cached": 0.04,
+       "out": 2.77
+      },
+      "balanced": {
+       "in": 0.74,
+       "cached": 0.03,
+       "out": 2.22
+      },
+      "flex": {
+       "in": 0.46,
+       "cached": 0.02,
+       "out": 1.39
+      }
+     },
+     "deepseek-ai/DeepSeek-V4-Flash-0731": {
+      "asap": {
+       "in": 0.09,
+       "cached": 0.02,
+       "out": 0.18
+      },
+      "balanced": {
+       "in": 0.07,
+       "cached": 0.02,
+       "out": 0.14
+      },
+      "flex": {
+       "in": 0.05,
+       "cached": 0.01,
+       "out": 0.09
+      }
+     },
+     "moonshotai/Kimi-K2.6": {
+      "asap": {
+       "in": 1.0,
+       "cached": 0.2,
+       "out": 4.0
+      },
+      "balanced": {
+       "in": 0.45,
+       "cached": 0.2,
+       "out": 3.0
+      },
+      "flex": {
+       "in": 0.35,
+       "cached": 0.1,
+       "out": 2.0
+      }
+     },
+     "google/gemma-4-31B-it": {
+      "asap": {
+       "in": 0.4,
+       "cached": 0.2,
+       "out": 0.6
+      },
+      "balanced": {
+       "in": 0.12,
+       "cached": 0.08,
+       "out": 0.6
+      },
+      "flex": {
+       "in": 0.06,
+       "cached": 0.02,
+       "out": 0.3
+      }
+     },
+     "nvidia/Gemma-4-31B-IT-NVFP4": {
+      "asap": {
+       "in": 0.14,
+       "cached": 0.07,
+       "out": 0.4
+      },
+      "balanced": {
+       "in": 0.11,
+       "cached": 0.06,
+       "out": 0.32
+      },
+      "flex": {
+       "in": 0.07,
+       "cached": 0.04,
+       "out": 0.2
+      }
+     },
+     "google/gemma-4-12B-it": {
+      "asap": {
+       "in": 0.3,
+       "cached": 0.15,
+       "out": 2.0
+      },
+      "balanced": {
+       "in": 0.1,
+       "cached": 0.07,
+       "out": 2.0
+      },
+      "flex": {
+       "in": 0.05,
+       "cached": 0.02,
+       "out": 1.0
+      }
+     },
+     "openai/gpt-oss-120b": {
+      "asap": {
+       "in": 0.06,
+       "cached": 0.03,
+       "out": 0.4
+      }
+     },
+     "Qwen/Qwen3.6-35B-A3B": {
+      "flex": {
+       "in": 0.05,
+       "cached": 0.02,
+       "out": 0.4
+      }
+     }
+    }
+   },
+   "docs_models": {
+    "source": "https://docs.sailresearch.com/models",
+    "models": {
+     "moonshotai/Kimi-K3": {
+      "context": "1M",
+      "params": "2.8T; 104B active (MoE)",
+      "reference_checkpoint": "https://huggingface.co/moonshotai/Kimi-K3"
+     },
+     "zai-org/GLM-5.3": {
+      "context": "1M",
+      "params": "753B; 40B active (MoE)",
+      "reference_checkpoint": "https://huggingface.co/zai-org/GLM-5.3"
+     },
+     "zai-org/GLM-5.3-Flash": {
+      "context": "1M",
+      "params": "321B; 18B active (MoE)",
+      "reference_checkpoint": "https://huggingface.co/nvidia/GLM-5.3-Flash-NVFP4"
+     },
+     "deepseek-ai/DeepSeek-V4.1-Flash": {
+      "context": "1M",
+      "params": "552B; 16B active (MoE)",
+      "reference_checkpoint": "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash"
+     },
+     "deepseek-ai/DeepSeek-V4-Pro-0813": {
+      "context": "1M",
+      "params": "1.65T; 49B active (MoE)",
+      "reference_checkpoint": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro-0813"
+     },
+     "deepseek-ai/DeepSeek-V4-Flash-0731": {
+      "context": "1M",
+      "params": "284B; 13B active (MoE)",
+      "reference_checkpoint": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731"
+     },
+     "moonshotai/Kimi-K2.6": {
+      "context": "262K",
+      "params": "1T; 32B active (MoE)",
+      "reference_checkpoint": "https://huggingface.co/moonshotai/Kimi-K2.6"
+     },
+     "google/gemma-4-31B-it": {
+      "context": "256K",
+      "params": "31B",
+      "reference_checkpoint": "https://huggingface.co/google/gemma-4-31B-it"
+     },
+     "nvidia/Gemma-4-31B-IT-NVFP4": {
+      "context": "262K",
+      "params": "31B",
+      "reference_checkpoint": "https://huggingface.co/nvidia/Gemma-4-31B-IT-NVFP4"
+     },
+     "google/gemma-4-12B-it": {
+      "context": "16K",
+      "params": "12B",
+      "reference_checkpoint": "https://huggingface.co/google/gemma-4-12B-it"
+     },
+     "openai/gpt-oss-120b": {
+      "context": "131K",
+      "params": "117B; 5.1B active (MoE)",
+      "reference_checkpoint": "https://huggingface.co/openai/gpt-oss-120b"
+     },
+     "Qwen/Qwen3.6-35B-A3B": {
+      "context": "262K",
+      "params": "35B; 3B active (MoE)",
+      "reference_checkpoint": "https://huggingface.co/Qwen/Qwen3.6-35B-A3B"
+     }
+    }
+   },
+   "measured_context_limit": {
+    "google/gemma-4-12B-it": {
+     "method": "one chat/completions request with a ~20K-token prompt, max_tokens=1, 2026-10-11",
+     "status": 400,
+     "error": {
+      "message": "input (20019 tokens) + max_output_tokens (1) exceeds safe limit of 15872 tokens for model context window of 16384 tokens (reserves 512 tokens for model-specific formatting)",
+      "type": "invalid_request_error",
+      "param": "input",
+      "code": "context_length_exceeded"
+     },
+     "context_window": 16384,
+     "max_input_plus_output": 15872
+    }
+   }
+  },
+  "prime": {
+   "api": "https://api.pinference.ai/api/v1/models",
+   "request_headers": "Authorization: Bearer <api_key>, X-Prime-Team-ID: <team_id>, a non-default User-Agent",
+   "n_models": 132,
+   "models": [
+    {
+     "id": "alibaba/qwen3.5-flash",
+     "display_name": null,
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.15,
+      "output_usd_per_mtok": 0.6,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-09-18T12:59:22.568539+00:00"
+     },
+     "context_window": null,
+     "max_output_tokens": null
+    },
+    {
+     "id": "alibaba/qwen3.7-max",
+     "display_name": null,
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 3.75,
+      "output_usd_per_mtok": 11.25,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-09-18T12:59:22.639598+00:00"
+     },
+     "context_window": null,
+     "max_output_tokens": null
+    },
+    {
+     "id": "alibaba/qwen3.7-plus",
+     "display_name": null,
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.6,
+      "output_usd_per_mtok": 2.4,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-09-18T12:59:22.717208+00:00"
+     },
+     "context_window": null,
+     "max_output_tokens": null
+    },
+    {
+     "id": "alibaba/qwen3.8-flash",
+     "display_name": null,
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.225,
+      "output_usd_per_mtok": 0.705,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-09-18T12:59:22.787469+00:00"
+     },
+     "context_window": null,
+     "max_output_tokens": null
+    },
+    {
+     "id": "anthropic/claude-fable-5",
+     "display_name": "Claude Fable 5",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 10.0,
+      "output_usd_per_mtok": 50.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-07-02T22:33:46.495072+00:00"
+     },
+     "context_window": 1000000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "max",
+       "xhigh",
+       "high",
+       "medium",
+       "low"
+      ],
+      "default_effort": "high",
+      "mandatory": true
+     }
+    },
+    {
+     "id": "anthropic/claude-fable-5.1",
+     "display_name": "Claude Fable 5.1",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 10.0,
+      "output_usd_per_mtok": 50.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-09-04T21:15:14.113341+00:00"
+     },
+     "context_window": 1000000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "max",
+       "xhigh",
+       "high",
+       "medium",
+       "low"
+      ],
+      "default_effort": "high",
+      "mandatory": true
+     }
+    },
+    {
+     "id": "anthropic/claude-haiku-4.5",
+     "display_name": "Claude Haiku 4.5",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 1.0,
+      "output_usd_per_mtok": 5.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-21T07:14:20.826034+00:00"
+     },
+     "context_window": 200000,
+     "max_output_tokens": 64000,
+     "reasoning": {
+      "mandatory": false
+     }
+    },
+    {
+     "id": "anthropic/claude-opus-4.1",
+     "display_name": "Claude Opus 4.1",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 15.0,
+      "output_usd_per_mtok": 75.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-22T18:22:09.605939+00:00"
+     },
+     "context_window": 200000,
+     "max_output_tokens": 32000,
+     "reasoning": {
+      "mandatory": false
+     }
+    },
+    {
+     "id": "anthropic/claude-opus-4.5",
+     "display_name": "Claude Opus 4.5",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 5.0,
+      "output_usd_per_mtok": 25.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-12-03T07:28:24.760458+00:00"
+     },
+     "context_window": 200000,
+     "max_output_tokens": 64000,
+     "reasoning": {
+      "mandatory": false
+     }
+    },
+    {
+     "id": "anthropic/claude-opus-4.6",
+     "display_name": "Claude Opus 4.6",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 5.0,
+      "output_usd_per_mtok": 25.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-03-08T02:57:59.615639+00:00"
+     },
+     "context_window": 1000000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "max",
+       "high",
+       "medium",
+       "low"
+      ],
+      "default_effort": "high",
+      "default_enabled": false,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "anthropic/claude-opus-4.7",
+     "display_name": "Claude Opus 4.7",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 5.0,
+      "output_usd_per_mtok": 25.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-04-20T10:07:14.028142+00:00"
+     },
+     "context_window": 1000000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "max",
+       "xhigh",
+       "high",
+       "medium",
+       "low"
+      ],
+      "default_effort": "high",
+      "default_enabled": false,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "anthropic/claude-opus-4.8",
+     "display_name": "Claude Opus 4.8",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 5.0,
+      "output_usd_per_mtok": 25.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-06-05T11:48:02.246650+00:00"
+     },
+     "context_window": 1000000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "max",
+       "xhigh",
+       "high",
+       "medium",
+       "low"
+      ],
+      "default_effort": "high",
+      "default_enabled": false,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "anthropic/claude-opus-5",
+     "display_name": "Claude Opus 5",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 5.0,
+      "output_usd_per_mtok": 25.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-07-24T18:57:22.868734+00:00"
+     },
+     "context_window": 1000000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "max",
+       "xhigh",
+       "high",
+       "medium",
+       "low"
+      ],
+      "default_effort": "high",
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "anthropic/claude-opus-5.5",
+     "display_name": "Claude Opus 5.5",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 4.0,
+      "output_usd_per_mtok": 20.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-09-28T17:23:25.035918+00:00"
+     },
+     "context_window": 1000000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "max",
+       "xhigh",
+       "high",
+       "medium",
+       "low"
+      ],
+      "default_effort": "high",
+      "mandatory": true
+     }
+    },
+    {
+     "id": "anthropic/claude-sonnet-4",
+     "display_name": "Claude Sonnet 4",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 3.0,
+      "output_usd_per_mtok": 15.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-21T06:55:16.611551+00:00"
+     },
+     "context_window": 200000,
+     "max_output_tokens": 64000,
+     "reasoning": {
+      "mandatory": false
+     }
+    },
+    {
+     "id": "anthropic/claude-sonnet-4.5",
+     "display_name": "Claude Sonnet 4.5",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 3.0,
+      "output_usd_per_mtok": 15.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-09-30T06:00:31.866675+00:00"
+     },
+     "context_window": 1000000,
+     "max_output_tokens": 64000,
+     "reasoning": {
+      "mandatory": false
+     }
+    },
+    {
+     "id": "anthropic/claude-sonnet-4.6",
+     "display_name": "Claude Sonnet 4.6",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 3.0,
+      "output_usd_per_mtok": 15.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-02-25T21:26:10.104879+00:00"
+     },
+     "context_window": 1000000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "max",
+       "high",
+       "medium",
+       "low"
+      ],
+      "default_effort": "medium",
+      "mandatory": false
+     }
+    },
+    {
+     "id": "anthropic/claude-sonnet-5",
+     "display_name": "Claude Sonnet 5",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 2.0,
+      "output_usd_per_mtok": 10.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-07-02T22:30:48.220566+00:00"
+     },
+     "context_window": 1000000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "max",
+       "xhigh",
+       "high",
+       "medium",
+       "low"
+      ],
+      "default_effort": "high",
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "cloudflare/clef",
+     "display_name": "Clef",
+     "owned_by": "",
+     "serving": "hosted",
+     "pricing": {
+      "input_usd_per_mtok": 0.24,
+      "output_usd_per_mtok": 0.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-10-07T23:06:19.735391+00:00"
+     },
+     "context_window": null,
+     "max_output_tokens": null
+    },
+    {
+     "id": "cloudflare/clef-flash",
+     "display_name": "Clef Flash",
+     "owned_by": "",
+     "serving": "hosted",
+     "pricing": {
+      "input_usd_per_mtok": 0.038,
+      "output_usd_per_mtok": 0.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-10-07T23:06:19.600883+00:00"
+     },
+     "context_window": null,
+     "max_output_tokens": null
+    },
+    {
+     "id": "deepseek/deepseek-chat-v3.1",
+     "display_name": "DeepSeek V3.1",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.6,
+      "output_usd_per_mtok": 1.7,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-21T06:55:25.583563+00:00"
+     },
+     "context_window": 163840,
+     "max_output_tokens": 32768,
+     "reasoning": {
+      "mandatory": false
+     }
+    },
+    {
+     "id": "deepseek/deepseek-v3.1-terminus",
+     "display_name": "DeepSeek V3.1 Terminus",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.27,
+      "output_usd_per_mtok": 1.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-09-30T02:08:38.000459+00:00"
+     },
+     "context_window": 163840,
+     "max_output_tokens": 147456,
+     "reasoning": {
+      "mandatory": false
+     }
+    },
+    {
+     "id": "deepseek/deepseek-v3.2",
+     "display_name": "DeepSeek V3.2",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.3705,
+      "output_usd_per_mtok": 1.1115,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-12-02T06:53:48.223623+00:00"
+     },
+     "context_window": 163840,
+     "max_output_tokens": 147456,
+     "reasoning": {
+      "default_enabled": false,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "deepseek/deepseek-v3.2-exp",
+     "display_name": "DeepSeek V3.2 Exp",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.27,
+      "output_usd_per_mtok": 0.41,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-09-30T02:09:06.170541+00:00"
+     },
+     "context_window": 163840,
+     "max_output_tokens": 147456,
+     "reasoning": {
+      "mandatory": false
+     }
+    },
+    {
+     "id": "deepseek/deepseek-v4-flash",
+     "display_name": "DeepSeek V4 Flash 0423",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.44,
+      "output_usd_per_mtok": 1.32,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-05-14T19:12:43.449839+00:00"
+     },
+     "context_window": 1048576,
+     "max_output_tokens": 943718,
+     "reasoning": {
+      "supported_efforts": [
+       "xhigh",
+       "high"
+      ],
+      "default_effort": "high",
+      "mandatory": false
+     }
+    },
+    {
+     "id": "deepseek/deepseek-v4-flash-0731",
+     "display_name": "DeepSeek V4 Flash 0731",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.44,
+      "output_usd_per_mtok": 1.32,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-08-03T17:20:17.849313+00:00"
+     },
+     "context_window": 1048576,
+     "max_output_tokens": 943718,
+     "reasoning": {
+      "supported_efforts": [
+       "max",
+       "high",
+       "low"
+      ],
+      "default_effort": "high",
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "deepseek/deepseek-v4-pro",
+     "display_name": "DeepSeek V4 Pro 0423",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 1.91,
+      "output_usd_per_mtok": 3.83,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-05-14T19:12:12.010236+00:00"
+     },
+     "context_window": 1048576,
+     "max_output_tokens": 384000,
+     "reasoning": {
+      "supported_efforts": [
+       "xhigh",
+       "high"
+      ],
+      "default_effort": "high",
+      "mandatory": false
+     }
+    },
+    {
+     "id": "deepseek/deepseek-v4.1-flash",
+     "display_name": "DeepSeek V4.1 Flash",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.3,
+      "output_usd_per_mtok": 1.2,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-09-11T18:44:13.104931+00:00"
+     },
+     "context_window": 1048576,
+     "max_output_tokens": 943718,
+     "reasoning": {
+      "supported_efforts": [
+       "max",
+       "high",
+       "low"
+      ],
+      "default_effort": "high",
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "google/gemini-2.5-flash",
+     "display_name": "Gemini 2.5 Flash",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.3,
+      "output_usd_per_mtok": 2.5,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-21T06:55:15.585176+00:00"
+     },
+     "context_window": 1048576,
+     "max_output_tokens": 65535,
+     "reasoning": {
+      "mandatory": false
+     }
+    },
+    {
+     "id": "google/gemini-2.5-flash-lite",
+     "display_name": "Gemini 2.5 Flash Lite",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.1,
+      "output_usd_per_mtok": 0.4,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-21T06:55:21.403298+00:00"
+     },
+     "context_window": 1048576,
+     "max_output_tokens": 65535,
+     "reasoning": {
+      "mandatory": false
+     }
+    },
+    {
+     "id": "google/gemini-2.5-pro",
+     "display_name": "Gemini 2.5 Pro",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 1.25,
+      "output_usd_per_mtok": 10.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-21T06:55:17.621295+00:00"
+     },
+     "context_window": 1048576,
+     "max_output_tokens": 65536,
+     "reasoning": {
+      "mandatory": true
+     }
+    },
+    {
+     "id": "google/gemini-3-flash-preview",
+     "display_name": "Gemini 3 Flash Preview",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.5,
+      "output_usd_per_mtok": 3.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-12-20T03:46:14.305378+00:00"
+     },
+     "context_window": 1048576,
+     "max_output_tokens": 65536,
+     "reasoning": {
+      "supported_efforts": [
+       "high",
+       "medium",
+       "low",
+       "minimal"
+      ],
+      "default_effort": "medium",
+      "mandatory": false
+     }
+    },
+    {
+     "id": "google/gemini-3.1-pro-preview",
+     "display_name": "Gemini 3.1 Pro Preview",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 2.0,
+      "output_usd_per_mtok": 12.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-02-25T21:26:46.169413+00:00"
+     },
+     "context_window": 1048576,
+     "max_output_tokens": 65536,
+     "reasoning": {
+      "supported_efforts": [
+       "high",
+       "medium",
+       "low"
+      ],
+      "default_effort": "medium",
+      "mandatory": true
+     }
+    },
+    {
+     "id": "google/gemini-3.5-flash",
+     "display_name": "Gemini 3.5 Flash",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 1.5,
+      "output_usd_per_mtok": 9.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-06-20T12:36:21.024091+00:00"
+     },
+     "context_window": 1048576,
+     "max_output_tokens": 65536,
+     "reasoning": {
+      "supported_efforts": [
+       "high",
+       "medium",
+       "low",
+       "minimal"
+      ],
+      "default_effort": "medium",
+      "default_enabled": true,
+      "mandatory": true
+     }
+    },
+    {
+     "id": "google/gemini-3.6-flash",
+     "display_name": "Gemini 3.6 Flash",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 1.5,
+      "output_usd_per_mtok": 7.5,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-07-24T18:35:38.706927+00:00"
+     },
+     "context_window": 1048576,
+     "max_output_tokens": 65536,
+     "reasoning": {
+      "supported_efforts": [
+       "high",
+       "medium",
+       "low",
+       "minimal"
+      ],
+      "default_effort": "medium",
+      "default_enabled": true,
+      "mandatory": true
+     }
+    },
+    {
+     "id": "google/gemini-3.7-flash",
+     "display_name": "Gemini 3.7 Flash",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 1.35,
+      "output_usd_per_mtok": 6.75,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-08-27T16:28:44.601830+00:00"
+     },
+     "context_window": 1048576,
+     "max_output_tokens": 65536,
+     "reasoning": {
+      "supported_efforts": [
+       "high",
+       "medium",
+       "low"
+      ],
+      "default_effort": "medium",
+      "default_enabled": true,
+      "mandatory": true
+     }
+    },
+    {
+     "id": "google/gemini-3.8-flash",
+     "display_name": "Gemini 3.8 Flash",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.75,
+      "output_usd_per_mtok": 3.75,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-09-04T21:15:14.212597+00:00"
+     },
+     "context_window": 1048576,
+     "max_output_tokens": 65536,
+     "reasoning": {
+      "supported_efforts": [
+       "high",
+       "medium",
+       "low"
+      ],
+      "default_effort": "medium",
+      "default_enabled": true,
+      "mandatory": true
+     }
+    },
+    {
+     "id": "google/gemma-3-27b-it",
+     "display_name": "Gemma 3 27B",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.119,
+      "output_usd_per_mtok": 0.3,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-21T07:14:11.952792+00:00"
+     },
+     "context_window": 131072,
+     "max_output_tokens": 117964
+    },
+    {
+     "id": "meta-llama/Llama-3.2-1B-Instruct",
+     "display_name": "Llama 3.2 1B Instruct",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.027,
+      "output_usd_per_mtok": 0.201,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-02-24T13:21:36.921319+00:00"
+     },
+     "context_window": 60000,
+     "max_output_tokens": 54000
+    },
+    {
+     "id": "meta-llama/Llama-3.2-3B-Instruct",
+     "display_name": "Llama 3.2 3B Instruct",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.0509,
+      "output_usd_per_mtok": 0.335,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-02-24T13:21:52.649872+00:00"
+     },
+     "context_window": 131072,
+     "max_output_tokens": 117964
+    },
+    {
+     "id": "meta-llama/llama-3.3-70b-instruct",
+     "display_name": "Llama 3.3 70B Instruct",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 1.04,
+      "output_usd_per_mtok": 2.253,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-09-30T01:38:18.545960+00:00"
+     },
+     "context_window": 131072,
+     "max_output_tokens": 16384
+    },
+    {
+     "id": "meta-llama/llama-4-maverick",
+     "display_name": "Llama 4 Maverick",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.35,
+      "output_usd_per_mtok": 1.15,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-21T07:14:10.101027+00:00"
+     },
+     "context_window": 1048576,
+     "max_output_tokens": 16384
+    },
+    {
+     "id": "minimax/minimax-m2.5",
+     "display_name": "MiniMax M2.5",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.6,
+      "output_usd_per_mtok": 2.4,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-02-18T00:33:15.739871+00:00"
+     },
+     "context_window": 204800,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "mandatory": true
+     }
+    },
+    {
+     "id": "minimax/minimax-m2.7",
+     "display_name": "MiniMax M2.7",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.6,
+      "output_usd_per_mtok": 2.4,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-04-10T00:11:10.312006+00:00"
+     },
+     "context_window": 204800,
+     "max_output_tokens": 176947,
+     "reasoning": {
+      "mandatory": true
+     }
+    },
+    {
+     "id": "minimax/minimax-m3",
+     "display_name": "MiniMax M3",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.3,
+      "output_usd_per_mtok": 1.2,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-06-01T10:58:56.335485+00:00"
+     },
+     "context_window": 1048576,
+     "max_output_tokens": 512000,
+     "reasoning": {
+      "mandatory": false
+     }
+    },
+    {
+     "id": "mistralai/mistral-large-2512",
+     "display_name": "Mistral Large 3 2512",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.5,
+      "output_usd_per_mtok": 1.5,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-12-02T15:35:52.296516+00:00"
+     },
+     "context_window": 262144,
+     "max_output_tokens": 209715
+    },
+    {
+     "id": "mistralai/mistral-nemo",
+     "display_name": "Mistral Nemo",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.165,
+      "output_usd_per_mtok": 0.17,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-21T07:14:17.801302+00:00"
+     },
+     "context_window": 131072,
+     "max_output_tokens": 16384
+    },
+    {
+     "id": "mistralai/mistral-small-2603",
+     "display_name": "Mistral Small 4",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.165,
+      "output_usd_per_mtok": 0.66,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-04-10T00:11:12.604966+00:00"
+     },
+     "context_window": 262144,
+     "max_output_tokens": 209715,
+     "reasoning": {
+      "supported_efforts": [
+       "high",
+       "none"
+      ],
+      "default_effort": "high",
+      "default_enabled": false,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "mistralai/mixtral-8x22b-instruct",
+     "display_name": "Mixtral 8x22B Instruct",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 2.2,
+      "output_usd_per_mtok": 6.6,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-09-30T02:06:43.614656+00:00"
+     },
+     "context_window": 65536,
+     "max_output_tokens": 52428
+    },
+    {
+     "id": "moondream/moondream3-preview",
+     "display_name": "Moondream 3 Preview",
+     "owned_by": "",
+     "serving": "hosted",
+     "hugging_face_id": "moondream/moondream3-preview",
+     "quantization": "fp8",
+     "pricing": {
+      "input_usd_per_mtok": 0.3,
+      "output_usd_per_mtok": 2.5,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-10-09T19:22:28.019982+00:00"
+     },
+     "context_window": 32000,
+     "context_length": 32000,
+     "max_output_tokens": 4096,
+     "max_output_length": 4096
+    },
+    {
+     "id": "moondream/moondream3.1-9b-a2b",
+     "display_name": "Moondream 3.1",
+     "owned_by": "",
+     "serving": "hosted",
+     "hugging_face_id": "moondream/moondream3.1-9B-A2B",
+     "quantization": "fp8",
+     "pricing": {
+      "input_usd_per_mtok": 0.3,
+      "output_usd_per_mtok": 2.5,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-10-09T19:22:28.114348+00:00"
+     },
+     "context_window": 32000,
+     "context_length": 32000,
+     "max_output_tokens": 4096,
+     "max_output_length": 4096
+    },
+    {
+     "id": "moonshotai/kimi-k2-0905",
+     "display_name": "Kimi K2 0905",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.6,
+      "output_usd_per_mtok": 2.5,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-08T07:05:26.057085+00:00"
+     },
+     "context_window": 262144,
+     "max_output_tokens": 98304
+    },
+    {
+     "id": "moonshotai/kimi-k2.5",
+     "display_name": "Kimi K2.5",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.6,
+      "output_usd_per_mtok": 3.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-01-30T19:17:51.210047+00:00"
+     },
+     "context_window": 262144,
+     "max_output_tokens": 235929,
+     "reasoning": {
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "moonshotai/kimi-k2.6",
+     "display_name": "Kimi K2.6",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.95,
+      "output_usd_per_mtok": 4.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-04-21T01:01:28.804384+00:00"
+     },
+     "context_window": 262144,
+     "max_output_tokens": 235929,
+     "reasoning": {
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "moonshotai/kimi-k2.7-code",
+     "display_name": "Kimi K2.7 Code",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 1.9,
+      "output_usd_per_mtok": 8.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-06-12T16:40:32.168235+00:00"
+     },
+     "context_window": 262144,
+     "max_output_tokens": 235929,
+     "reasoning": {
+      "default_enabled": true,
+      "mandatory": true
+     }
+    },
+    {
+     "id": "moonshotai/kimi-k3",
+     "display_name": "Kimi K3",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 3.45,
+      "output_usd_per_mtok": 17.25,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-07-17T00:28:30.162170+00:00"
+     },
+     "context_window": 1048576,
+     "max_output_tokens": 943718,
+     "reasoning": {
+      "supported_efforts": [
+       "max",
+       "high",
+       "low"
+      ],
+      "default_effort": "max",
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "nvidia/nemotron-3-nano-30b-a3b",
+     "display_name": "Nemotron 3 Nano 30B A3B",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.06,
+      "output_usd_per_mtok": 0.24,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-04-10T00:11:26.952299+00:00"
+     },
+     "context_window": 262144,
+     "max_output_tokens": 235929,
+     "reasoning": {
+      "mandatory": false
+     }
+    },
+    {
+     "id": "openai/gpt-4.1",
+     "display_name": "GPT-4.1",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 2.0,
+      "output_usd_per_mtok": 8.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-02T10:43:22.496353+00:00"
+     },
+     "context_window": 1047576,
+     "max_output_tokens": 32768
+    },
+    {
+     "id": "openai/gpt-4.1-mini",
+     "display_name": "GPT-4.1 Mini",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.4,
+      "output_usd_per_mtok": 1.6,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-02T10:43:26.911016+00:00"
+     },
+     "context_window": 1047576,
+     "max_output_tokens": 32768
+    },
+    {
+     "id": "openai/gpt-4.1-nano",
+     "display_name": "GPT-4.1 Nano",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.1,
+      "output_usd_per_mtok": 0.4,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-02T10:43:28.011794+00:00"
+     },
+     "context_window": 1047576,
+     "max_output_tokens": 32768
+    },
+    {
+     "id": "openai/gpt-4o",
+     "display_name": "GPT-4o",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 2.5,
+      "output_usd_per_mtok": 10.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-21T06:55:34.447350+00:00"
+     },
+     "context_window": 128000,
+     "max_output_tokens": 16384
+    },
+    {
+     "id": "openai/gpt-4o-mini",
+     "display_name": "GPT-4o-mini",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.15,
+      "output_usd_per_mtok": 0.6,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-21T06:55:22.331052+00:00"
+     },
+     "context_window": 128000,
+     "max_output_tokens": 16384
+    },
+    {
+     "id": "openai/gpt-5",
+     "display_name": "GPT-5",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 1.25,
+      "output_usd_per_mtok": 10.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-09-30T05:56:24.831437+00:00"
+     },
+     "context_window": 400000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "high",
+       "medium",
+       "low",
+       "minimal"
+      ],
+      "default_effort": "medium",
+      "mandatory": true
+     }
+    },
+    {
+     "id": "openai/gpt-5-mini",
+     "display_name": "GPT-5 Mini",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.25,
+      "output_usd_per_mtok": 2.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-02T10:43:20.338354+00:00"
+     },
+     "context_window": 400000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "high",
+       "medium",
+       "low",
+       "minimal"
+      ],
+      "default_effort": "medium",
+      "mandatory": true
+     }
+    },
+    {
+     "id": "openai/gpt-5-nano",
+     "display_name": "GPT-5 Nano",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.05,
+      "output_usd_per_mtok": 0.4,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-02T10:43:21.418908+00:00"
+     },
+     "context_window": 400000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "high",
+       "medium",
+       "low",
+       "minimal"
+      ],
+      "default_effort": "medium",
+      "mandatory": true
+     }
+    },
+    {
+     "id": "openai/gpt-5.1",
+     "display_name": "GPT-5.1",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 1.25,
+      "output_usd_per_mtok": 10.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-11-18T00:34:44.949671+00:00"
+     },
+     "context_window": 400000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "high",
+       "medium",
+       "low",
+       "none"
+      ],
+      "default_effort": "none",
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "openai/gpt-5.2",
+     "display_name": "GPT-5.2",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 1.75,
+      "output_usd_per_mtok": 14.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-12-13T07:32:56.544785+00:00"
+     },
+     "context_window": 400000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "xhigh",
+       "high",
+       "medium",
+       "low",
+       "none"
+      ],
+      "default_effort": "medium",
+      "mandatory": false
+     }
+    },
+    {
+     "id": "openai/gpt-5.2-pro",
+     "display_name": "GPT-5.2 Pro",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 21.0,
+      "output_usd_per_mtok": 168.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-12-13T07:32:57.583455+00:00"
+     },
+     "context_window": 400000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "xhigh",
+       "high",
+       "medium"
+      ],
+      "default_effort": "medium",
+      "mandatory": true
+     }
+    },
+    {
+     "id": "openai/gpt-5.3-codex",
+     "display_name": "GPT-5.3-Codex",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 1.75,
+      "output_usd_per_mtok": 14.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-02-25T21:26:31.496994+00:00"
+     },
+     "context_window": 400000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "xhigh",
+       "high",
+       "medium",
+       "low",
+       "none"
+      ],
+      "default_effort": "medium",
+      "mandatory": false
+     }
+    },
+    {
+     "id": "openai/gpt-5.4",
+     "display_name": "GPT-5.4",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 2.5,
+      "output_usd_per_mtok": 15.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-03-17T02:14:33.278960+00:00"
+     },
+     "context_window": 1050000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "xhigh",
+       "high",
+       "medium",
+       "low",
+       "none"
+      ],
+      "default_effort": "medium",
+      "default_enabled": false,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "openai/gpt-5.4-mini",
+     "display_name": "GPT-5.4 Mini",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.75,
+      "output_usd_per_mtok": 4.5,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-04-10T00:11:03.742760+00:00"
+     },
+     "context_window": 400000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "xhigh",
+       "high",
+       "medium",
+       "low",
+       "none"
+      ],
+      "default_effort": "medium",
+      "default_enabled": false,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "openai/gpt-5.4-nano",
+     "display_name": "GPT-5.4 Nano",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.2,
+      "output_usd_per_mtok": 1.25,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-04-10T00:11:06.153745+00:00"
+     },
+     "context_window": 400000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "xhigh",
+       "high",
+       "medium",
+       "low",
+       "none"
+      ],
+      "default_effort": "medium",
+      "default_enabled": false,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "openai/gpt-5.4-pro",
+     "display_name": "GPT-5.4 Pro",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 30.0,
+      "output_usd_per_mtok": 180.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-03-17T02:14:34.995439+00:00"
+     },
+     "context_window": 1050000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "xhigh",
+       "high",
+       "medium"
+      ],
+      "default_effort": "medium",
+      "mandatory": true
+     }
+    },
+    {
+     "id": "openai/gpt-5.5",
+     "display_name": "GPT-5.5",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 5.0,
+      "output_usd_per_mtok": 30.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-04-27T16:08:14.065946+00:00"
+     },
+     "context_window": 1050000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "xhigh",
+       "high",
+       "medium",
+       "low",
+       "none"
+      ],
+      "default_effort": "medium",
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "openai/gpt-5.6",
+     "display_name": null,
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 5.0,
+      "output_usd_per_mtok": 30.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-07-11T06:26:54.495544+00:00"
+     },
+     "context_window": null,
+     "max_output_tokens": null
+    },
+    {
+     "id": "openai/gpt-5.6-luna",
+     "display_name": "GPT-5.6 Luna",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.2,
+      "output_usd_per_mtok": 1.2,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-07-11T06:28:41.639902+00:00"
+     },
+     "context_window": 1050000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "max",
+       "xhigh",
+       "high",
+       "medium",
+       "low",
+       "none"
+      ],
+      "default_effort": "medium",
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "openai/gpt-5.6-luna-pro",
+     "display_name": "GPT-5.6 Luna Pro",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 1.0,
+      "output_usd_per_mtok": 6.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-07-11T06:28:42.459149+00:00"
+     },
+     "context_window": 1050000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "max",
+       "xhigh",
+       "high",
+       "medium",
+       "low",
+       "none"
+      ],
+      "default_effort": "medium",
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "openai/gpt-5.6-sol",
+     "display_name": "GPT-5.6 Sol",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 5.0,
+      "output_usd_per_mtok": 30.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-07-11T06:28:38.262869+00:00"
+     },
+     "context_window": 1050000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "max",
+       "xhigh",
+       "high",
+       "medium",
+       "low",
+       "none"
+      ],
+      "default_effort": "medium",
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "openai/gpt-5.6-sol-pro",
+     "display_name": "GPT-5.6 Sol Pro",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 5.0,
+      "output_usd_per_mtok": 30.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-07-11T06:28:39.039507+00:00"
+     },
+     "context_window": 1050000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "max",
+       "xhigh",
+       "high",
+       "medium",
+       "low",
+       "none"
+      ],
+      "default_effort": "medium",
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "openai/gpt-5.6-terra",
+     "display_name": "GPT-5.6 Terra",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 2.5,
+      "output_usd_per_mtok": 15.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-07-11T06:28:39.851751+00:00"
+     },
+     "context_window": 1050000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "max",
+       "xhigh",
+       "high",
+       "medium",
+       "low",
+       "none"
+      ],
+      "default_effort": "medium",
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "openai/gpt-5.6-terra-pro",
+     "display_name": "GPT-5.6 Terra Pro",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 2.5,
+      "output_usd_per_mtok": 15.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-07-11T06:28:40.628845+00:00"
+     },
+     "context_window": 1050000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "max",
+       "xhigh",
+       "high",
+       "medium",
+       "low",
+       "none"
+      ],
+      "default_effort": "medium",
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "openai/gpt-6-astra",
+     "display_name": "GPT-6 Astra",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 10.0,
+      "output_usd_per_mtok": 50.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-09-04T21:15:14.299026+00:00"
+     },
+     "context_window": 1050000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "max",
+       "xhigh",
+       "high",
+       "medium",
+       "low"
+      ],
+      "default_effort": "medium",
+      "default_enabled": true,
+      "mandatory": true
+     }
+    },
+    {
+     "id": "openai/gpt-6-luna",
+     "display_name": "GPT-6 Luna",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.1,
+      "output_usd_per_mtok": 0.5,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-09-23T02:44:17.728060+00:00"
+     },
+     "context_window": 1050000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "max",
+       "xhigh",
+       "high",
+       "medium",
+       "low",
+       "none"
+      ],
+      "default_effort": "medium",
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "openai/gpt-6-sol",
+     "display_name": "GPT-6 Sol",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 2.0,
+      "output_usd_per_mtok": 10.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-09-23T02:44:17.848168+00:00"
+     },
+     "context_window": 1050000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "max",
+       "xhigh",
+       "high",
+       "medium",
+       "low",
+       "none"
+      ],
+      "default_effort": "medium",
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "openai/gpt-6.1-sol",
+     "display_name": "GPT-6.1 Sol",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 2.0,
+      "output_usd_per_mtok": 10.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-10-02T22:58:21.185390+00:00"
+     },
+     "context_window": 1050000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "max",
+       "xhigh",
+       "high",
+       "medium",
+       "low"
+      ],
+      "default_effort": "medium",
+      "default_enabled": true,
+      "mandatory": true
+     }
+    },
+    {
+     "id": "openai/gpt-6.1-sol-pro",
+     "display_name": "GPT-6.1 Sol Pro",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 2.0,
+      "output_usd_per_mtok": 10.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-10-02T22:58:21.047747+00:00"
+     },
+     "context_window": 1050000,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "supported_efforts": [
+       "max",
+       "xhigh",
+       "high",
+       "medium",
+       "low"
+      ],
+      "default_effort": "medium",
+      "default_enabled": true,
+      "mandatory": true
+     }
+    },
+    {
+     "id": "openai/gpt-oss-120b",
+     "display_name": "gpt-oss-120b",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.35,
+      "output_usd_per_mtok": 0.75,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-09T20:34:43.236004+00:00"
+     },
+     "context_window": 131072,
+     "max_output_tokens": 117964,
+     "reasoning": {
+      "supported_efforts": [
+       "high",
+       "medium",
+       "low"
+      ],
+      "default_effort": "medium",
+      "mandatory": true
+     }
+    },
+    {
+     "id": "openai/gpt-oss-20b",
+     "display_name": "gpt-oss-20b",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.07,
+      "output_usd_per_mtok": 0.3,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-21T07:14:16.897238+00:00"
+     },
+     "context_window": 131072,
+     "max_output_tokens": 32768,
+     "reasoning": {
+      "supported_efforts": [
+       "high",
+       "medium",
+       "low"
+      ],
+      "default_effort": "medium",
+      "mandatory": true
+     }
+    },
+    {
+     "id": "poolside/laguna-s-2.1",
+     "display_name": "Laguna S 2.1",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.09,
+      "output_usd_per_mtok": 0.18,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-08-03T03:13:46.654853+00:00"
+     },
+     "context_window": 1048576,
+     "max_output_tokens": 131072,
+     "reasoning": {
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "poolside/laguna-xs-2.1",
+     "display_name": "Laguna XS 2.1",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.06,
+      "output_usd_per_mtok": 0.12,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-08-03T03:13:46.740724+00:00"
+     },
+     "context_window": 262144,
+     "max_output_tokens": 32768,
+     "reasoning": {
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "qwen/qwen3-235b-a22b-2507",
+     "display_name": "Qwen3 235B A22B Instruct 2507",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.25,
+      "output_usd_per_mtok": 1.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-09-30T02:08:37.415647+00:00"
+     },
+     "context_window": 262144,
+     "max_output_tokens": 16384
+    },
+    {
+     "id": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+     "display_name": "Qwen3 235B A22B Instruct 2507",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.25,
+      "output_usd_per_mtok": 1.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-02-24T12:53:20.866004+00:00"
+     },
+     "context_window": 262144,
+     "max_output_tokens": 16384
+    },
+    {
+     "id": "Qwen/Qwen3-235B-A22B-Thinking-2507",
+     "display_name": "Qwen3 235B A22B Thinking 2507",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.3,
+      "output_usd_per_mtok": 3.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-02-24T12:53:21.703567+00:00"
+     },
+     "context_window": 128000,
+     "max_output_tokens": 16384,
+     "reasoning": {
+      "mandatory": true
+     }
+    },
+    {
+     "id": "qwen/qwen3-30b-a3b-instruct-2507",
+     "display_name": "Qwen3 30B A3B Instruct 2507",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.13,
+      "output_usd_per_mtok": 0.52,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-02T10:43:23.646850+00:00"
+     },
+     "context_window": 262144,
+     "max_output_tokens": 235929
+    },
+    {
+     "id": "Qwen/Qwen3-30B-A3B-Thinking-2507",
+     "display_name": null,
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.2,
+      "output_usd_per_mtok": 2.4,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-02-24T12:53:12.163500+00:00"
+     },
+     "context_window": null,
+     "max_output_tokens": null
+    },
+    {
+     "id": "qwen/qwen3-8b",
+     "display_name": null,
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.117,
+      "output_usd_per_mtok": 0.455,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-01-08T04:53:08.134989+00:00"
+     },
+     "context_window": null,
+     "max_output_tokens": null
+    },
+    {
+     "id": "qwen/qwen3-coder",
+     "display_name": "Qwen3 Coder 480B A35B",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.975,
+      "output_usd_per_mtok": 4.875,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-21T07:14:15.022804+00:00"
+     },
+     "context_window": 262144,
+     "max_output_tokens": 65536
+    },
+    {
+     "id": "qwen/qwen3-coder-next",
+     "display_name": "Qwen3 Coder Next",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.3,
+      "output_usd_per_mtok": 1.5,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-02-25T21:27:01.126222+00:00"
+     },
+     "context_window": 262144,
+     "max_output_tokens": 235929
+    },
+    {
+     "id": "qwen/qwen3-max",
+     "display_name": null,
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 1.2,
+      "output_usd_per_mtok": 6.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-11-30T00:40:24.859337+00:00"
+     },
+     "context_window": null,
+     "max_output_tokens": null
+    },
+    {
+     "id": "qwen/qwen3-vl-235b-a22b-instruct",
+     "display_name": "Qwen3 VL 235B A22B Instruct",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.3,
+      "output_usd_per_mtok": 1.5,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-21T07:14:16.011386+00:00"
+     },
+     "context_window": 262144,
+     "max_output_tokens": 32768
+    },
+    {
+     "id": "qwen/qwen3-vl-235b-a22b-thinking",
+     "display_name": null,
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.98,
+      "output_usd_per_mtok": 4.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-12-04T06:49:52.368716+00:00"
+     },
+     "context_window": null,
+     "max_output_tokens": null
+    },
+    {
+     "id": "qwen/qwen3-vl-30b-a3b-instruct",
+     "display_name": "Qwen3 VL 30B A3B Instruct",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.2,
+      "output_usd_per_mtok": 0.7,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-12-04T06:49:51.204281+00:00"
+     },
+     "context_window": 262144,
+     "max_output_tokens": 16384
+    },
+    {
+     "id": "Qwen/Qwen3-VL-30B-A3B-Thinking",
+     "display_name": "Qwen3 VL 30B A3B Thinking",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.2,
+      "output_usd_per_mtok": 2.4,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-02-24T12:53:18.456091+00:00"
+     },
+     "context_window": 262144,
+     "max_output_tokens": 235929,
+     "reasoning": {
+      "mandatory": true
+     }
+    },
+    {
+     "id": "qwen/qwen3-vl-8b-instruct",
+     "display_name": "Qwen3 VL 8B Instruct",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.117,
+      "output_usd_per_mtok": 0.455,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-12-04T06:49:49.046332+00:00"
+     },
+     "context_window": 262144,
+     "max_output_tokens": 235929
+    },
+    {
+     "id": "Qwen/Qwen3.5-0.8B",
+     "display_name": null,
+     "owned_by": "",
+     "serving": "hosted",
+     "pricing": {
+      "input_usd_per_mtok": 0.04,
+      "output_usd_per_mtok": 0.08,
+      "cache_read_usd_per_mtok": 0.036,
+      "cache_write_usd_per_mtok": 0.04,
+      "effective_at": "2026-04-27T14:12:40.112195+00:00"
+     },
+     "context_window": null,
+     "max_output_tokens": null
+    },
+    {
+     "id": "Qwen/Qwen3.5-122B-A10B",
+     "display_name": null,
+     "owned_by": "",
+     "serving": "hosted",
+     "pricing": {
+      "input_usd_per_mtok": 0.3,
+      "output_usd_per_mtok": 0.9,
+      "cache_read_usd_per_mtok": 0.27,
+      "cache_write_usd_per_mtok": 0.3,
+      "effective_at": "2026-08-29T03:32:47.538747+00:00"
+     },
+     "context_window": null,
+     "max_output_tokens": null
+    },
+    {
+     "id": "Qwen/Qwen3.5-2B",
+     "display_name": null,
+     "owned_by": "",
+     "serving": "hosted",
+     "pricing": {
+      "input_usd_per_mtok": 0.06,
+      "output_usd_per_mtok": 0.18,
+      "cache_read_usd_per_mtok": 0.054,
+      "cache_write_usd_per_mtok": 0.06,
+      "effective_at": "2026-04-27T14:12:40.311797+00:00"
+     },
+     "context_window": null,
+     "max_output_tokens": null
+    },
+    {
+     "id": "qwen/qwen3.5-35b-a3b",
+     "display_name": "Qwen3.5-35B-A3B",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.25,
+      "output_usd_per_mtok": 1.3,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-05-14T07:14:30.333413+00:00"
+     },
+     "context_window": 262144,
+     "max_output_tokens": 32768,
+     "reasoning": {
+      "mandatory": false
+     }
+    },
+    {
+     "id": "qwen/qwen3.5-397b-a17b",
+     "display_name": "Qwen3.5 397B A17B",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.6,
+      "output_usd_per_mtok": 3.6,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-04-09T01:03:19.130519+00:00"
+     },
+     "context_window": 262144,
+     "max_output_tokens": 235929,
+     "reasoning": {
+      "mandatory": false
+     }
+    },
+    {
+     "id": "Qwen/Qwen3.5-4B",
+     "display_name": null,
+     "owned_by": "",
+     "serving": "hosted",
+     "pricing": {
+      "input_usd_per_mtok": 0.1,
+      "output_usd_per_mtok": 0.3,
+      "cache_read_usd_per_mtok": 0.09,
+      "cache_write_usd_per_mtok": 0.1,
+      "effective_at": "2026-04-27T14:12:40.492113+00:00"
+     },
+     "context_window": null,
+     "max_output_tokens": null
+    },
+    {
+     "id": "Qwen/Qwen3.5-9B",
+     "display_name": null,
+     "owned_by": "",
+     "serving": "hosted",
+     "pricing": {
+      "input_usd_per_mtok": 0.18,
+      "output_usd_per_mtok": 0.54,
+      "cache_read_usd_per_mtok": 0.162,
+      "cache_write_usd_per_mtok": 0.18,
+      "effective_at": "2026-04-27T14:12:40.664813+00:00"
+     },
+     "context_window": null,
+     "max_output_tokens": null
+    },
+    {
+     "id": "qwen/qwen3.6-27b",
+     "display_name": "Qwen3.6 27B",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.6,
+      "output_usd_per_mtok": 3.6,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-05-20T02:28:00.420376+00:00"
+     },
+     "context_window": 262144,
+     "max_output_tokens": 81920,
+     "reasoning": {
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "qwen/qwen3.6-35b-a3b",
+     "display_name": "Qwen3.6 35B A3B",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.25,
+      "output_usd_per_mtok": 1.25,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-05-06T18:32:04.441666+00:00"
+     },
+     "context_window": 262144,
+     "max_output_tokens": 65536,
+     "reasoning": {
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "qwen/qwen3.7-flash",
+     "display_name": "Qwen3.7 Flash",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.03,
+      "output_usd_per_mtok": 0.13,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-07-30T14:36:51.013707+00:00"
+     },
+     "context_window": 1000000,
+     "max_output_tokens": 65536,
+     "reasoning": {
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "qwen/qwen3.8-max",
+     "display_name": null,
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 2.0,
+      "output_usd_per_mtok": 6.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-08-11T00:28:04.248858+00:00"
+     },
+     "context_window": null,
+     "max_output_tokens": null
+    },
+    {
+     "id": "x-ai/grok-4.20",
+     "display_name": "Grok 4.20",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 2.0,
+      "output_usd_per_mtok": 6.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-04-10T00:11:20.257314+00:00"
+     },
+     "context_window": 2000000,
+     "max_output_tokens": 1800000,
+     "reasoning": {
+      "default_enabled": false,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "x-ai/grok-4.20-multi-agent",
+     "display_name": "Grok 4.20 Multi-Agent",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 2.0,
+      "output_usd_per_mtok": 6.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-04-10T00:11:22.350470+00:00"
+     },
+     "context_window": 2000000,
+     "max_output_tokens": 1800000,
+     "reasoning": {
+      "supported_efforts": [
+       "xhigh",
+       "high",
+       "medium",
+       "low"
+      ],
+      "default_effort": "medium",
+      "default_enabled": true,
+      "mandatory": true
+     }
+    },
+    {
+     "id": "x-ai/grok-4.6",
+     "display_name": "Grok 4.6",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 2.0,
+      "output_usd_per_mtok": 6.0,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-08-28T23:27:24.930899+00:00"
+     },
+     "context_window": 500000,
+     "max_output_tokens": 450000,
+     "reasoning": {
+      "supported_efforts": [
+       "xhigh",
+       "high",
+       "medium",
+       "low"
+      ],
+      "default_effort": "high",
+      "default_enabled": true,
+      "mandatory": true
+     }
+    },
+    {
+     "id": "x-ai/grok-4.7",
+     "display_name": "Grok 4.7",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 1.6,
+      "output_usd_per_mtok": 4.8,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-09-23T04:24:43.221428+00:00"
+     },
+     "context_window": 500000,
+     "max_output_tokens": 450000,
+     "reasoning": {
+      "supported_efforts": [
+       "xhigh",
+       "high",
+       "medium",
+       "low"
+      ],
+      "default_effort": "high",
+      "default_enabled": true,
+      "mandatory": true
+     }
+    },
+    {
+     "id": "xiaomi/mimo-v2.5",
+     "display_name": "MiMo-V2.5",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.168,
+      "output_usd_per_mtok": 0.336,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-05-06T18:31:40.102605+00:00"
+     },
+     "context_window": 1050000,
+     "max_output_tokens": 131072,
+     "reasoning": {
+      "mandatory": false
+     }
+    },
+    {
+     "id": "xiaomi/mimo-v2.5-pro",
+     "display_name": "MiMo-V2.5-Pro",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.48024,
+      "output_usd_per_mtok": 1.5,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-05-06T18:31:25.388731+00:00"
+     },
+     "context_window": 1050000,
+     "max_output_tokens": 131072,
+     "reasoning": {
+      "mandatory": false
+     }
+    },
+    {
+     "id": "z-ai/glm-4.5",
+     "display_name": "GLM 4.5",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.6,
+      "output_usd_per_mtok": 2.2,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-08T07:05:23.880304+00:00"
+     },
+     "context_window": 131072,
+     "max_output_tokens": 98304,
+     "reasoning": {
+      "mandatory": false
+     }
+    },
+    {
+     "id": "z-ai/glm-4.5-air",
+     "display_name": "GLM 4.5 Air",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.2,
+      "output_usd_per_mtok": 1.1,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-08T07:05:22.754541+00:00"
+     },
+     "context_window": 131072,
+     "max_output_tokens": 98304,
+     "reasoning": {
+      "mandatory": false
+     }
+    },
+    {
+     "id": "z-ai/glm-4.6",
+     "display_name": "GLM 4.6",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.6,
+      "output_usd_per_mtok": 2.2,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2025-10-08T07:05:25.067849+00:00"
+     },
+     "context_window": 204800,
+     "max_output_tokens": 131072,
+     "reasoning": {
+      "mandatory": false
+     }
+    },
+    {
+     "id": "z-ai/glm-4.7",
+     "display_name": "GLM 4.7",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.6,
+      "output_usd_per_mtok": 2.2,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-01-10T01:01:01.166455+00:00"
+     },
+     "context_window": 204800,
+     "max_output_tokens": 131072,
+     "reasoning": {
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "z-ai/glm-4.7-flash",
+     "display_name": "GLM 4.7 Flash",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.07,
+      "output_usd_per_mtok": 0.4,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-02-03T01:38:05.842638+00:00"
+     },
+     "context_window": 200000,
+     "max_output_tokens": 117964,
+     "reasoning": {
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "z-ai/glm-5",
+     "display_name": "GLM 5",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 1.0,
+      "output_usd_per_mtok": 3.2,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-02-18T00:33:54.765331+00:00"
+     },
+     "context_window": 204800,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "z-ai/glm-5.1",
+     "display_name": "GLM 5.1",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 1.4,
+      "output_usd_per_mtok": 4.4,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-04-10T00:11:15.012238+00:00"
+     },
+     "context_window": 204800,
+     "max_output_tokens": 128000,
+     "reasoning": {
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "z-ai/glm-5.2",
+     "display_name": "GLM 5.2",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 1.54,
+      "output_usd_per_mtok": 4.84,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-06-17T23:20:25.382141+00:00"
+     },
+     "context_window": 1048576,
+     "max_output_tokens": 943718,
+     "reasoning": {
+      "supported_efforts": [
+       "xhigh",
+       "high"
+      ],
+      "default_effort": "high",
+      "default_enabled": true,
+      "mandatory": false
+     }
+    },
+    {
+     "id": "z-ai/glm-5.3",
+     "display_name": "GLM 5.3",
+     "owned_by": "",
+     "serving": "hosted",
+     "pricing": {
+      "input_usd_per_mtok": 1.4,
+      "output_usd_per_mtok": 4.4,
+      "cache_read_usd_per_mtok": 0.26,
+      "cache_write_usd_per_mtok": 1.4,
+      "effective_at": "2026-08-20T23:10:28.976971+00:00"
+     },
+     "context_window": 1048576,
+     "max_output_tokens": 131072,
+     "reasoning": {
+      "supported_efforts": [
+       "low",
+       "high",
+       "max"
+      ],
+      "default_effort": "max",
+      "default_enabled": true,
+      "mandatory": true
+     }
+    },
+    {
+     "id": "z-ai/glm-5.3-flash",
+     "display_name": "GLM 5.3 Flash",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.15,
+      "output_usd_per_mtok": 0.5,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-08-27T16:28:44.680637+00:00"
+     },
+     "context_window": 1048576,
+     "max_output_tokens": 943717,
+     "reasoning": {
+      "supported_efforts": [
+       "max",
+       "high",
+       "low"
+      ],
+      "default_effort": "max",
+      "default_enabled": true,
+      "mandatory": true
+     }
+    },
+    {
+     "id": "zai-org/GLM-4.7",
+     "display_name": "GLM 4.7",
+     "owned_by": "",
+     "serving": "gateway",
+     "pricing": {
+      "input_usd_per_mtok": 0.6,
+      "output_usd_per_mtok": 2.2,
+      "cache_read_usd_per_mtok": null,
+      "cache_write_usd_per_mtok": null,
+      "effective_at": "2026-02-24T12:53:10.608022+00:00"
+     },
+     "context_window": 204800,
+     "max_output_tokens": 131072,
+     "reasoning": {
+      "default_enabled": true,
+      "mandatory": false
+     }
+    }
+   ]
+  },
+  "openrouter": {
+   "api": "https://openrouter.ai/api/v1/models (public, no key)",
+   "study_model_endpoints": {
+    "deepseek/deepseek-v4.1-flash": {
+     "source": "https://openrouter.ai/api/v1/models/deepseek/deepseek-v4.1-flash/endpoints",
+     "hugging_face_id": "deepseek-ai/DeepSeek-V4.1-Flash",
+     "context_length": 1048576,
+     "endpoints_listed": 32,
+     "endpoints_used": 31,
+     "endpoints": [
+      {
+       "provider": "OpenInference",
+       "tag": "open-inference/fp4",
+       "quantization": "fp4",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.0336,
+       "cached": 0.0336,
+       "out": 1.188
+      },
+      {
+       "provider": "Morph",
+       "tag": "morph/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.042,
+       "cached": 0.009,
+       "out": 0.6
+      },
+      {
+       "provider": "Wafer",
+       "tag": "wafer",
+       "quantization": "unknown",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.045,
+       "cached": 0.034,
+       "out": 0.99
+      },
+      {
+       "provider": "Relace",
+       "tag": "relace",
+       "quantization": "unknown",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.05,
+       "cached": 0.005,
+       "out": 0.6
+      },
+      {
+       "provider": "InferenceNet",
+       "tag": "inference-net/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 1040000,
+       "discount": 0.0,
+       "in": 0.077,
+       "cached": 0.01,
+       "out": 0.6
+      },
+      {
+       "provider": "Sail Research",
+       "tag": "sail-research/fp4",
+       "quantization": "fp4",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.08,
+       "cached": 0.01,
+       "out": 0.4
+      },
+      {
+       "provider": "Decart",
+       "tag": "decart/fp4",
+       "quantization": "fp4",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.09,
+       "cached": 0.018,
+       "out": 0.18
+      },
+      {
+       "provider": "Ionstream",
+       "tag": "ionstream",
+       "quantization": "unknown",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.1,
+       "cached": 0.01,
+       "out": 0.75
+      },
+      {
+       "provider": "DekaLLM",
+       "tag": "dekallm",
+       "quantization": "unknown",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.12,
+       "cached": 0.005,
+       "out": 1.2
+      },
+      {
+       "provider": "DeepInfra",
+       "tag": "deepinfra/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.3,
+       "in": 0.14,
+       "cached": 0.0042,
+       "out": 0.42
+      },
+      {
+       "provider": "StreamLake",
+       "tag": "streamlake/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 1024000,
+       "discount": 0.51,
+       "in": 0.147,
+       "cached": 0.00294,
+       "out": 0.588
+      },
+      {
+       "provider": "DigitalOcean",
+       "tag": "digitalocean",
+       "quantization": "unknown",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.165,
+       "cached": 0.006,
+       "out": 0.66
+      },
+      {
+       "provider": "GMICloud",
+       "tag": "gmicloud/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 1048575,
+       "discount": 0.4,
+       "in": 0.18,
+       "cached": 0.0036,
+       "out": 0.72
+      },
+      {
+       "provider": "Novita",
+       "tag": "novita/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.35,
+       "in": 0.195,
+       "cached": 0.0039,
+       "out": 0.78
+      },
+      {
+       "provider": "CoreWeave",
+       "tag": "coreweave/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.2,
+       "cached": 0.03,
+       "out": 0.65
+      },
+      {
+       "provider": "Phala",
+       "tag": "phala",
+       "quantization": "unknown",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.3,
+       "in": 0.21,
+       "cached": 0.0042,
+       "out": 0.84
+      },
+      {
+       "provider": "Makora",
+       "tag": "makora/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.27,
+       "cached": 0.009,
+       "out": 1.15
+      },
+      {
+       "provider": "Crusoe",
+       "tag": "crusoe/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.29,
+       "cached": 0.007,
+       "out": 1.2
+      },
+      {
+       "provider": "Baidu",
+       "tag": "baidu/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.3,
+       "cached": 0.006,
+       "out": 1.2
+      },
+      {
+       "provider": "AtlasCloud",
+       "tag": "atlas-cloud/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.3,
+       "cached": 0.03,
+       "out": 1.2
+      },
+      {
+       "provider": "BaseTen",
+       "tag": "baseten/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.3,
+       "cached": 0.007,
+       "out": 1.2
+      },
+      {
+       "provider": "Alibaba",
+       "tag": "alibaba",
+       "quantization": "unknown",
+       "status": 0,
+       "context_length": 1000000,
+       "discount": 0.0,
+       "in": 0.3,
+       "cached": 0.03,
+       "out": 1.2
+      },
+      {
+       "provider": "Together",
+       "tag": "together",
+       "quantization": "unknown",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.3,
+       "cached": 0.006,
+       "out": 1.2
+      },
+      {
+       "provider": "SiliconFlow",
+       "tag": "siliconflow/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.3,
+       "cached": 0.006,
+       "out": 1.2
+      },
+      {
+       "provider": "Modal",
+       "tag": "modal",
+       "quantization": "unknown",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.3,
+       "cached": 0.03,
+       "out": 1.2
+      },
+      {
+       "provider": "Parasail",
+       "tag": "parasail/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.3,
+       "cached": 0.006,
+       "out": 1.2
+      },
+      {
+       "provider": "Fireworks",
+       "tag": "fireworks",
+       "quantization": "unknown",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.3,
+       "cached": 0.006,
+       "out": 1.2
+      },
+      {
+       "provider": "Venice",
+       "tag": "venice/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 1000000,
+       "discount": 0.0,
+       "in": 0.3,
+       "cached": 0.0075,
+       "out": 1.2
+      },
+      {
+       "provider": "DeepSeek",
+       "tag": "deepseek",
+       "quantization": "unknown",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.3,
+       "cached": 0.006,
+       "out": 1.2
+      },
+      {
+       "provider": "Fireworks",
+       "tag": "fireworks/us",
+       "quantization": "unknown",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.45,
+       "cached": 0.009,
+       "out": 1.8
+      },
+      {
+       "provider": "BaseTen",
+       "tag": "baseten/fast",
+       "quantization": "fp32",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.6,
+       "cached": 0.014,
+       "out": 2.4
+      }
+     ]
+    },
+    "google/gemma-4-31b-it": {
+     "source": "https://openrouter.ai/api/v1/models/google/gemma-4-31b-it/endpoints",
+     "hugging_face_id": "google/gemma-4-31B-it",
+     "context_length": 262144,
+     "endpoints_listed": 13,
+     "endpoints_used": 13,
+     "endpoints": [
+      {
+       "provider": "DeepInfra",
+       "tag": "deepinfra/turbo",
+       "quantization": "fp4",
+       "status": 0,
+       "context_length": 262144,
+       "discount": 0.0,
+       "in": 0.09,
+       "cached": 0.05,
+       "out": 0.34
+      },
+      {
+       "provider": "CoreWeave",
+       "tag": "coreweave/fp4",
+       "quantization": "fp4",
+       "status": 0,
+       "context_length": 262144,
+       "discount": 0.0,
+       "in": 0.1,
+       "cached": 0.1,
+       "out": 0.34
+      },
+      {
+       "provider": "Venice",
+       "tag": "venice/fp4",
+       "quantization": "fp4",
+       "status": 0,
+       "context_length": 256000,
+       "discount": 0.0,
+       "in": 0.12,
+       "cached": 0.09,
+       "out": 0.36
+      },
+      {
+       "provider": "Chutes",
+       "tag": "chutes/fp4",
+       "quantization": "fp4",
+       "status": 0,
+       "context_length": 131072,
+       "discount": 0.0,
+       "in": 0.12,
+       "cached": 0.012,
+       "out": 0.37
+      },
+      {
+       "provider": "Crusoe",
+       "tag": "crusoe/bf16",
+       "quantization": "bf16",
+       "status": 0,
+       "context_length": 262144,
+       "discount": 0.0,
+       "in": 0.14,
+       "cached": 0.14,
+       "out": 0.4
+      },
+      {
+       "provider": "Friendli",
+       "tag": "friendli",
+       "quantization": "unknown",
+       "status": 0,
+       "context_length": 262144,
+       "discount": 0.0,
+       "in": 0.14,
+       "cached": null,
+       "out": 0.4
+      },
+      {
+       "provider": "Novita",
+       "tag": "novita/bf16",
+       "quantization": "bf16",
+       "status": 0,
+       "context_length": 262144,
+       "discount": 0.0,
+       "in": 0.14,
+       "cached": null,
+       "out": 0.4
+      },
+      {
+       "provider": "Parasail",
+       "tag": "parasail/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 262144,
+       "discount": 0.0,
+       "in": 0.15,
+       "cached": 0.06,
+       "out": 0.4
+      },
+      {
+       "provider": "DeepInfra",
+       "tag": "deepinfra/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 262144,
+       "discount": 0.0,
+       "in": 0.2,
+       "cached": null,
+       "out": 0.4
+      },
+      {
+       "provider": "Io Net",
+       "tag": "io-net",
+       "quantization": "unknown",
+       "status": 0,
+       "context_length": 262144,
+       "discount": 0.05,
+       "in": 0.361,
+       "cached": 0.1805,
+       "out": 1.0925
+      },
+      {
+       "provider": "SambaNova",
+       "tag": "sambanova",
+       "quantization": "unknown",
+       "status": -5,
+       "context_length": 131072,
+       "discount": 0.0,
+       "in": 0.38,
+       "cached": null,
+       "out": 1.15
+      },
+      {
+       "provider": "ModelRun",
+       "tag": "modelrun/fp4",
+       "quantization": "fp4",
+       "status": 0,
+       "context_length": 262144,
+       "discount": 0.0,
+       "in": 0.75,
+       "cached": 0.2,
+       "out": 1.0
+      },
+      {
+       "provider": "SiliconFlow",
+       "tag": "siliconflow/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 262144,
+       "discount": 0.0,
+       "in": 0.75,
+       "cached": 0.25,
+       "out": 1.0
+      }
+     ]
+    },
+    "qwen/qwen3.5-9b": {
+     "source": "https://openrouter.ai/api/v1/models/qwen/qwen3.5-9b/endpoints",
+     "hugging_face_id": "Qwen/Qwen3.5-9B",
+     "context_length": 262144,
+     "endpoints_listed": 6,
+     "endpoints_used": 6,
+     "endpoints": [
+      {
+       "provider": "Darkbloom",
+       "tag": "darkbloom/fp4",
+       "quantization": "fp4",
+       "status": 0,
+       "context_length": 262144,
+       "discount": 0.0,
+       "in": 0.08,
+       "cached": 0.04,
+       "out": 0.13
+      },
+      {
+       "provider": "SiliconFlow",
+       "tag": "siliconflow/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 262144,
+       "discount": 0.0,
+       "in": 0.1,
+       "cached": null,
+       "out": 0.15
+      },
+      {
+       "provider": "DeepInfra",
+       "tag": "deepinfra/bf16",
+       "quantization": "bf16",
+       "status": 0,
+       "context_length": 262144,
+       "discount": 0.0,
+       "in": 0.1,
+       "cached": null,
+       "out": 0.15
+      },
+      {
+       "provider": "Venice",
+       "tag": "venice/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 256000,
+       "discount": 0.0,
+       "in": 0.1,
+       "cached": null,
+       "out": 0.15
+      },
+      {
+       "provider": "Parasail",
+       "tag": "parasail/bf16",
+       "quantization": "bf16",
+       "status": 0,
+       "context_length": 262144,
+       "discount": 0.0,
+       "in": 0.1,
+       "cached": null,
+       "out": 0.25
+      },
+      {
+       "provider": "Together",
+       "tag": "together",
+       "quantization": "unknown",
+       "status": 0,
+       "context_length": 262144,
+       "discount": 0.0,
+       "in": 0.17,
+       "cached": null,
+       "out": 0.25
+      }
+     ]
+    },
+    "z-ai/glm-5.3-flash": {
+     "source": "https://openrouter.ai/api/v1/models/z-ai/glm-5.3-flash/endpoints",
+     "hugging_face_id": "zai-org/GLM-5.3-Flash",
+     "context_length": 1048576,
+     "endpoints_listed": 33,
+     "endpoints_used": 32,
+     "endpoints": [
+      {
+       "provider": "OpenInference",
+       "tag": "open-inference/fp4",
+       "quantization": "fp4",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.032,
+       "cached": 0.032,
+       "out": 1.2
+      },
+      {
+       "provider": "Relace",
+       "tag": "relace",
+       "quantization": "unknown",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.04,
+       "cached": 0.0125,
+       "out": 0.5
+      },
+      {
+       "provider": "Sail Research",
+       "tag": "sail-research/us",
+       "quantization": "fp4",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.045,
+       "cached": 0.0285,
+       "out": 0.6
+      },
+      {
+       "provider": "Sail Research",
+       "tag": "sail-research/fp4",
+       "quantization": "fp4",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.045,
+       "cached": 0.0285,
+       "out": 0.6
+      },
+      {
+       "provider": "Wafer",
+       "tag": "wafer",
+       "quantization": "unknown",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.06,
+       "cached": 0.012,
+       "out": 0.5
+      },
+      {
+       "provider": "Morph",
+       "tag": "morph/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.06,
+       "cached": 0.015,
+       "out": 1.0
+      },
+      {
+       "provider": "Reka",
+       "tag": "reka",
+       "quantization": "unknown",
+       "status": 0,
+       "context_length": 262144,
+       "discount": 0.0,
+       "in": 0.06,
+       "cached": 0.04,
+       "out": 1.6
+      },
+      {
+       "provider": "StreamLake",
+       "tag": "streamlake/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 1024000,
+       "discount": 0.54,
+       "in": 0.069,
+       "cached": 0.0138,
+       "out": 0.23
+      },
+      {
+       "provider": "InferenceNet",
+       "tag": "inference-net/fp4",
+       "quantization": "fp4",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.07,
+       "cached": 0.03,
+       "out": 0.05
+      },
+      {
+       "provider": "DeepInfra",
+       "tag": "deepinfra/fp4",
+       "quantization": "fp4",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.5,
+       "in": 0.075,
+       "cached": 0.015,
+       "out": 0.25
+      },
+      {
+       "provider": "Novita",
+       "tag": "novita/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.44,
+       "in": 0.084,
+       "cached": 0.0168,
+       "out": 0.28
+      },
+      {
+       "provider": "GMICloud",
+       "tag": "gmicloud/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.4,
+       "in": 0.09,
+       "cached": 0.018,
+       "out": 0.3
+      },
+      {
+       "provider": "Decart",
+       "tag": "decart/fp4",
+       "quantization": "fp4",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.38,
+       "in": 0.093,
+       "cached": 0.0186,
+       "out": 0.31
+      },
+      {
+       "provider": "Inceptron",
+       "tag": "inceptron/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.096,
+       "cached": 0.099,
+       "out": 0.55
+      },
+      {
+       "provider": "DekaLLM",
+       "tag": "dekallm",
+       "quantization": "unknown",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.1,
+       "cached": 0.04,
+       "out": 1.0
+      },
+      {
+       "provider": "Near AI",
+       "tag": "near-ai/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.3,
+       "in": 0.105,
+       "cached": 0.0245,
+       "out": 0.35
+      },
+      {
+       "provider": "Phala",
+       "tag": "phala/nvfp4",
+       "quantization": "nvfp4",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.25,
+       "in": 0.1125,
+       "cached": 0.0225,
+       "out": 0.375
+      },
+      {
+       "provider": "Modal",
+       "tag": "modal/nvfp4",
+       "quantization": "nvfp4",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.15,
+       "cached": 0.03,
+       "out": 0.5
+      },
+      {
+       "provider": "BaseTen",
+       "tag": "baseten/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.15,
+       "cached": 0.03,
+       "out": 0.5
+      },
+      {
+       "provider": "Crusoe",
+       "tag": "crusoe/fp4",
+       "quantization": "fp4",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.15,
+       "cached": 0.03,
+       "out": 0.5
+      },
+      {
+       "provider": "CoreWeave",
+       "tag": "coreweave/nvfp4",
+       "quantization": "nvfp4",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.15,
+       "cached": 0.05,
+       "out": 0.5
+      },
+      {
+       "provider": "AtlasCloud",
+       "tag": "atlas-cloud/fp8",
+       "quantization": "fp8",
+       "status": -2,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.15,
+       "cached": 0.03,
+       "out": 0.5
+      },
+      {
+       "provider": "Fireworks",
+       "tag": "fireworks",
+       "quantization": "unknown",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.15,
+       "cached": 0.03,
+       "out": 0.5
+      },
+      {
+       "provider": "Friendli",
+       "tag": "friendli",
+       "quantization": "unknown",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.15,
+       "cached": 0.03,
+       "out": 0.5
+      },
+      {
+       "provider": "SiliconFlow",
+       "tag": "siliconflow/fp8",
+       "quantization": "fp8",
+       "status": -2,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.15,
+       "cached": 0.03,
+       "out": 0.5
+      },
+      {
+       "provider": "DigitalOcean",
+       "tag": "digitalocean",
+       "quantization": "unknown",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.15,
+       "cached": 0.03,
+       "out": 0.5
+      },
+      {
+       "provider": "Together",
+       "tag": "together",
+       "quantization": "unknown",
+       "status": 0,
+       "context_length": 1048575,
+       "discount": 0.0,
+       "in": 0.15,
+       "cached": 0.03,
+       "out": 0.5
+      },
+      {
+       "provider": "Parasail",
+       "tag": "parasail/fp4",
+       "quantization": "fp4",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.15,
+       "cached": 0.03,
+       "out": 0.5
+      },
+      {
+       "provider": "Venice",
+       "tag": "venice",
+       "quantization": "unknown",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.15,
+       "cached": 0.03,
+       "out": 0.5
+      },
+      {
+       "provider": "Z.AI",
+       "tag": "z-ai/fp8",
+       "quantization": "fp8",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.15,
+       "cached": 0.03,
+       "out": 0.5
+      },
+      {
+       "provider": "Parasail",
+       "tag": "parasail/fast",
+       "quantization": "fp4",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.1875,
+       "cached": 0.0375,
+       "out": 0.625
+      },
+      {
+       "provider": "Fireworks",
+       "tag": "fireworks/us",
+       "quantization": "unknown",
+       "status": 0,
+       "context_length": 1048576,
+       "discount": 0.0,
+       "in": 0.225,
+       "cached": 0.045,
+       "out": 0.75
+      }
+     ]
+    }
+   }
+  }
+ }
+}

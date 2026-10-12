@@ -1,0 +1,102 @@
+# Reference prices: what the open market charges for each model, independent of
+# Sail's and Prime's own price lists. Read by the analysis step as the
+# `reference` pricing scheme (see configs/pricing.yaml and docs/DESIGN.md §6).
+#
+# Units: USD per 1M tokens.
+#   in      uncached prompt tokens
+#   cached  prompt tokens served from the provider's prefix cache; null means no
+#           reference value (analysis then costs cached tokens at `in`)
+#   out     completion tokens (reasoning included)
+#
+# Method (details and caveats in docs/PRICING_SOURCES.md):
+#   * For each model, fetch https://openrouter.ai/api/v1/models/<openrouter_id>/endpoints
+#     (public, no key) and drop exact duplicate listings (same tag and prices).
+#   * Per endpoint, multiply the `pricing.prompt`, `pricing.completion` and
+#     `pricing.input_cache_read` strings (USD per token) by 1e6.
+#   * Take the median across endpoints. `cached` is the median over endpoints
+#     that list a cache-read price, and null when fewer than half list one.
+#   * Listed OpenRouter prices already include each endpoint's `discount`
+#     (e.g. 0.147 = 0.30 x (1 - 0.51)). `undiscounted` is the same median
+#     computed on price / (1 - discount), for a sensitivity check.
+#   * Separate OpenRouter ids such as `:free` and `:batch` variants are excluded.
+#
+# Not on OpenRouter on 2026-10-11, so they have no reference price (cost is NaN
+# under this scheme; nothing is filled in):
+#   google/gemma-4-12B-it   only Sail's own price list was found. Google's
+#                           Gemini API page lists Gemma 4 as free tier only,
+#                           with no paid price
+#                           (https://ai.google.dev/gemini-api/docs/pricing,
+#                           updated 2026-10-09).
+#   Qwen/Qwen3.5-0.8B, Qwen/Qwen3.5-2B, Qwen/Qwen3.5-4B
+#                           only Prime's own price list was found (kept in
+#                           configs/provider_models.json; it is the `prime`
+#                           scheme, so it is not reused as the reference).
+
+scheme: reference
+retrieved: "2026-10-11"
+method: "median USD/1M across OpenRouter provider endpoints"
+models:
+  deepseek-ai/DeepSeek-V4.1-Flash:
+    in: 0.21
+    cached: 0.007
+    out: 1.188
+    n_providers: 29
+    n_endpoints: 31            # 32 listed, 1 exact duplicate (BaseTen fp8) dropped
+    providers: [Alibaba, AtlasCloud, Baidu, BaseTen, CoreWeave, Crusoe, Decart, DeepInfra, DeepSeek, DekaLLM, DigitalOcean, Fireworks, GMICloud, InferenceNet, Ionstream, Makora, Modal, Morph, Novita, OpenInference, Parasail, Phala, Relace, Sail Research, SiliconFlow, StreamLake, Together, Venice, Wafer]
+    source: https://openrouter.ai/api/v1/models/deepseek/deepseek-v4.1-flash/endpoints
+    openrouter_id: deepseek/deepseek-v4.1-flash
+    # 5 of 31 endpoints carry a discount. Undiscounted, the median equals the
+    # DeepSeek first-party endpoint price (0.30 / 1.20).
+    undiscounted: {in: 0.3, cached: 0.007, out: 1.2}
+
+  zai-org/GLM-5.3-Flash:
+    in: 0.10875
+    cached: 0.03
+    out: 0.5
+    n_providers: 29
+    n_endpoints: 32            # 33 listed, 1 exact duplicate (BaseTen fp8) dropped
+    providers: [AtlasCloud, BaseTen, CoreWeave, Crusoe, Decart, DeepInfra, DekaLLM, DigitalOcean, Fireworks, Friendli, GMICloud, Inceptron, InferenceNet, Modal, Morph, Near AI, Novita, OpenInference, Parasail, Phala, Reka, Relace, Sail Research, SiliconFlow, StreamLake, Together, Venice, Wafer, Z.AI]
+    source: https://openrouter.ai/api/v1/models/z-ai/glm-5.3-flash/endpoints
+    openrouter_id: z-ai/glm-5.3-flash
+    # 7 of 32 endpoints carry a discount. Undiscounted, the median equals the
+    # Z.AI first-party endpoint price (0.15 / 0.50).
+    undiscounted: {in: 0.15, cached: 0.03, out: 0.5}
+
+  # OpenRouter has no separate NVFP4 listing. It lists google/gemma-4-31b-it
+  # (the same weights) with the quantization as a per-endpoint attribute, so the
+  # NVFP4 checkpoint takes the base model's median over all endpoints, as
+  # DeepSeek and GLM do. Over the 5 fp4 endpoints only, the median is
+  # in 0.12 / cached 0.09 / out 0.36.
+  nvidia/Gemma-4-31B-IT-NVFP4:
+    in: 0.14
+    cached: 0.1                # 9 of 13 endpoints list a cache-read price
+    out: 0.4
+    n_providers: 12
+    n_endpoints: 13
+    providers: [Chutes, CoreWeave, Crusoe, DeepInfra, Friendli, Io Net, ModelRun, Novita, Parasail, SambaNova, SiliconFlow, Venice]
+    source: https://openrouter.ai/api/v1/models/google/gemma-4-31b-it/endpoints
+    openrouter_id: google/gemma-4-31b-it
+    undiscounted: {in: 0.14, cached: 0.1, out: 0.4}
+
+  # BF16 base model. Sail also serves it; it is not in the pilot sweep.
+  google/gemma-4-31B-it:
+    in: 0.14
+    cached: 0.1
+    out: 0.4
+    n_providers: 12
+    n_endpoints: 13
+    providers: [Chutes, CoreWeave, Crusoe, DeepInfra, Friendli, Io Net, ModelRun, Novita, Parasail, SambaNova, SiliconFlow, Venice]
+    source: https://openrouter.ai/api/v1/models/google/gemma-4-31b-it/endpoints
+    openrouter_id: google/gemma-4-31b-it
+    undiscounted: {in: 0.14, cached: 0.1, out: 0.4}
+
+  Qwen/Qwen3.5-9B:
+    in: 0.1
+    cached: null               # only 1 of 6 endpoints (Darkbloom, 0.04) lists a cache-read price
+    out: 0.15
+    n_providers: 6
+    n_endpoints: 6
+    providers: [Darkbloom, DeepInfra, Parasail, SiliconFlow, Together, Venice]
+    source: https://openrouter.ai/api/v1/models/qwen/qwen3.5-9b/endpoints
+    openrouter_id: qwen/qwen3.5-9b
+    undiscounted: {in: 0.1, cached: null, out: 0.15}
