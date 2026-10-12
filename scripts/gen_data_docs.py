@@ -65,11 +65,11 @@ ROUND_DOCS = {
     "round": "Judge round (1 = first judgement; each later round follows one debate round).",
     "judge_call_id": "CallRecord of this round's judge call (role arbiter).",
     "debate_call_ids": "CallRecords of the debate calls that preceded this judgement (empty in round 1).",
-    "winner": "0-based candidate index the judge picked (0 when unparseable).",
+    "winner": "0-based candidate index the judge picked in this round (0 when unparseable, the call failed or the round was aborted). The arbitration's final_winner can come from an earlier round (final_from_round).",
     "confidence": "Judge confidence in [0, 1]; None when unparseable.",
     "agreement": "Judge's verdict on whether the candidates agreed; None when unparseable.",
-    "rationale": "Judge's rationale text.",
-    "parse_ok": "Whether a complete judgement was parsed (tool call, or JSON in the text).",
+    "rationale": "Judge's rationale text ('judge call failed: ...' when the call failed).",
+    "parse_ok": "Whether a complete judgement was parsed (tool call, or JSON in the text); False for a failed or aborted round.",
     "t_start": "Round start (before its debate calls, if any).",
     "t_end": "Round end (judge call finished).",
 }
@@ -103,7 +103,7 @@ MANIFEST_DOCS = {
     "job": "Job name `<sweep>__r<round>__<condition>` (= harbor --job-name and the job dir).",
     "round": "Round number (1-based).",
     "condition": "Condition name.",
-    "event": "run | skipped_complete | moved_partial | interrupted. Consumers take outcomes from the job's last `run` line.",
+    "event": "run | skipped_complete | moved_partial | retried | duplicate_trials | interrupted. `retried`: a finished job with trials to rerun was moved aside before its rerun; `duplicate_trials`: the job dir holds more trials than one harbor run makes, so it was not run. Consumers take outcomes from the job's last `run` line.",
     "cmd": "The `harbor run` argv.",
     "config_path": "Materialized resolved config (`<jobs_dir>/configs/<cond>.yaml`).",
     "t_start": "Event start (epoch s).",
@@ -114,16 +114,24 @@ MANIFEST_DOCS = {
     "n_completed": "Finished trials (harbor counts errored trials as completed).",
     "n_errors": "Errored trials.",
     "complete": "Whether the job counts as complete (see DESIGN section 5).",
-    "status_reason": "Why the job is complete or partial.",
+    "status_reason": "Why the job is in its state (`run`, `retried` and `duplicate_trials` lines).",
+    "state": "Job state after the run (`run` lines): complete | needs_retry (finished, but a trial did not measure the condition) | partial | duplicate. See DESIGN section 5.",
+    "retry_trials": "trial -> reasons it must be rerun: billing, provider (a model call failed after all retries), infrastructure (harbor failed outside the agent), agent_exception (the agent raised and the verifier never ran). On `run` lines the trials of that run; on `retried` lines those of the job moved aside.",
+    "n_provider_error_trials": "Trials of the run with a provider failure (`run` lines); over half of the job's trials stops the sweep (exit 4).",
+    "invocation_id": "The sweep.json invocation that ran the job (`run` lines).",
+    "tasks": "Tasks the job ran (`run` lines).",
+    "harbor": "harbor settings the job ran with (`run` lines): env, n_concurrent, agent_timeout_multiplier, extra_args.",
+    "source_sha256": "Fingerprint of the harness source when the job started (`run` lines; subagents_bench.provenance.source_fingerprint, as episode.json source_sha256).",
+    "git_dirty": "Tracked harness source differed from git_commit when the job started (`run` lines).",
     "n_episode_json": "Trial dirs with agent/episode.json.",
     "billing_error_trials": "Trials whose episode ended in a billing error (the sweep aborts).",
-    "git_commit": "Harness commit that ran the job.",
-    "moved_to": "Where a partial job dir was moved (`moved_partial` lines).",
+    "git_commit": "Harness commit (HEAD) when the job started.",
+    "moved_to": "Where the job dir was moved (`moved_partial` and `retried` lines).",
 }
 SWEEP_JSON_DOCS = {
     "sweep_json_version": "Format version of this file.",
     "name": "Sweep name.",
-    "status": "Outcome of the latest invocation: running | complete | incomplete | interrupted | aborted_billing | aborted_failures.",
+    "status": "Outcome of the latest invocation: running | complete | incomplete (a job failed or still needs a retry) | interrupted | aborted_billing | aborted_provider (provider failures in over half a job's trials) | aborted_code_change (code that episodes run changed mid-sweep) | aborted_failures.",
     "jobs_total": "Jobs in the whole sweep (rounds x conditions).",
     "jobs_complete": "Of those, complete.",
     "spec_path": "Sweep spec file.",
@@ -132,7 +140,7 @@ SWEEP_JSON_DOCS = {
     "base_config_sha256": "Its sha256.",
     "spec": "The spec after `extends` resolution.",
     "dataset": "harbor dataset name@version.",
-    "tasks": "Task names run.",
+    "tasks": "Task names of the latest invocation (every invocation's are under `invocations`).",
     "rounds": "Rounds.",
     "order_seed": "Seed of the per-round condition shuffle.",
     "condition_order": "round -> condition order used.",
@@ -142,9 +150,11 @@ SWEEP_JSON_DOCS = {
     "jobs_dir": "Jobs dir.",
     "tasks_meta_path": "tasks_meta.json path.",
     "manifest_path": "sweep_manifest.jsonl path.",
-    "provenance": "Provenance of the latest invocation: invocation_id, date (UTC), git_commit, git_dirty, python_version, python_executable, harbor_version, harbor_executable, lockfile, lockfile_sha256, host_platform, host_machine, docker (`docker info` summary: server_version, architecture, ncpu, mem_total_bytes), argv.",
-    "mixed_git_commits": "True if the sweep's jobs span more than one git commit.",
-    "invocations": "History: one provenance record (the provenance keys plus status, only, rounds, n_ran, n_skipped, n_failed) per invocation.",
+    "provenance": "Provenance of the latest invocation: invocation_id, date (UTC), source_sha256 (fingerprint of the harness source: subagents_bench, configs, scripts, pyproject.toml, uv.lock), git_commit, git_dirty (tracked source files differ from it), untracked_source_files, python_version, python_executable, harbor_version, harbor_executable, lockfile, lockfile_sha256, host_platform, host_machine, docker (`docker info` summary: server_version, architecture, ncpu, mem_total_bytes), argv; a sweep run adds source_files_record (`provenance/source_<sha16>.json`: per-file sha256) and source_patch (`provenance/<invocation_id>.patch`: `git diff HEAD` plus the untracked source files, which `git apply` restores on a checkout of git_commit; None when the source matches git_commit).",
+    "source_sha256s": "Distinct harness source fingerprints the sweep's jobs ran with (their last manifest `run` lines and every episode.json source_sha256). An edit to files no episode uses (subagents_bench/analysis/, plots/, sweep.py, cli.py, configs/, scripts/: provenance.NON_RUNTIME_PATHS) adds an entry too.",
+    "mixed_source": "True if the fingerprints in source_sha256s hold more than one version of the code under test, i.e. their provenance/source_<sha16>.json records differ in a file episodes use (a fingerprint without a record counts as different). Edits confined to analysis, plots, the launcher, scripts or configs do not set it. A resume refuses runtime differences unless --allow-code-change.",
+    "mixed_git_commits": "True if the invocations recorded more than one git commit (see mixed_source, which also sees uncommitted changes).",
+    "invocations": "History: one provenance record (the provenance keys plus status, only, rounds, tasks, harbor, n_ran, n_skipped, n_failed) per invocation.",
 }
 TASK_META_DOCS = {
     "difficulty": "Terminal-Bench difficulty label (easy/medium/hard).",
@@ -160,7 +170,7 @@ TASKS_META_TOP_DOCS = {
     "dataset": "harbor dataset name@version.",
     "source_dir": "Where the task definitions were read.",
     "generated_at": "When the file was written (UTC).",
-    "tasks": "task name -> metadata (below), for the sweep's tasks only.",
+    "tasks": "task name -> metadata (below), for every task the sweep has run (a task dropped from the spec keeps its entry for its trials).",
 }
 PREFLIGHT_DOCS = {
     "spec": "Sweep spec checked.",
@@ -169,7 +179,7 @@ PREFLIGHT_DOCS = {
     "docker": "`docker info` summary (local Docker only).",
     "harbor": "{executable, version}.",
     "requests": "One tiny streaming request per distinct (model, provider, tier): model, provider, completion_window, ok, latency_sec, ttft_sec, streamed, n_chunks, n_attempts, finish_reason, prompt/completion/cached/reasoning tokens, usage_source, text_chars (or error_type, error).",
-    "oracle": "`--oracle`: {job_dir, reused, return_code, moved_partial_to, mean_reward, failing_tasks, trials}.",
+    "oracle": "`--oracle`: {job_dir, reused (an earlier oracle job that passed on every task), return_code, moved_partial_to (where an unfinished, failing or --redo-oracle job was moved), mean_reward, failing_tasks, trials}.",
     "checks": "[{name, ok, detail, required}] as printed.",
     "passed": "Every required check passed.",
 }
@@ -195,10 +205,10 @@ TABLE_INTRO = {
     "spawns.csv": "spawns.jsonl flattened, one row per spawn_subagents call.",
     "dispatches.csv": "dispatches.jsonl flattened, one row per subagent run.",
     "arbitrations.csv": "arbitrations.jsonl flattened, one row per arbitrated instruction.",
-    "conditions.csv": "One row per condition over its valid episodes: Wilson CI on the resolve rate, mean and bootstrap 95% CI (2000 resamples, seed 0) of every metric, per-solve cost and time. Cost, FLOPs, simulated-time and reasoning-token means are NaN if any valid episode is NaN (an unpriced model), never averaged over the priced subset.",
+    "conditions.csv": "One row per condition over its valid episodes (trials flagged `duplicate` left out): resolve rate with a Wilson CI, the task-balanced rate, delegation uptake and the per-protocol resolve rate, mean and bootstrap 95% CI (2000 resamples, seed 0) of every metric, per-solve cost and time, copy-isolation leaks and max_tokens truncation by role. Cost, FLOPs, simulated-time and reasoning-token means are NaN if any valid episode is NaN (an unpriced model), never averaged over the priced subset. Estimand: every interval treats the trials as independent draws for THESE tasks (their trial-to-trial randomness), not as a sample of Terminal-Bench tasks in general; compare a condition with a baseline through paired.csv (matched trials, McNemar) rather than by interval overlap.",
     "conditions_by_difficulty.csv": "conditions.csv split by Terminal-Bench difficulty (`unknown` when the task has no metadata).",
-    "paired.csv": "Each condition vs each baseline condition (default single_5step, single_matched), matched on (task, round) over valid episodes.",
-    "calibration.csv": "Provider latency per (model, provider, completion_window) over successful calls; feeds the `fitted` serving profile.",
+    "paired.csv": "Each condition vs each baseline condition (default single_5step, single_matched), matched on (sweep, task, round) over valid, non-duplicate episodes (pairs are formed within a sweep; rounds restart at 1 in every sweep).",
+    "calibration.csv": "Provider latency per (model, provider, completion_window) over successful calls. The joint call-time fit (`lat_fit_*`) feeds the `fitted` serving profile; the TTFT fit and decode rate are descriptive.",
 }
 
 KEY_DOCS = {
@@ -229,9 +239,10 @@ EPISODE_DOCS = {
     "reward": "Verifier reward (harbor result.json; local runs: episode.json).",
     "resolved": "1 if reward == 1, 0 otherwise; a valid trial the verifier could not score counts 0; empty for invalid trials without a reward.",
     "harbor_exception": "harbor exception type, if any.",
-    "exit_reason": "Episode exit reason: finished | max_steps | no_tool_call | token_budget | timeout | cancelled | billing_error | error.",
-    "valid": "False for no_episode, billing_error, harbor_exception_outside_agent and no_result (see invalid_reason); verifier exceptions stay valid.",
-    "invalid_reason": "Why the trial is invalid (empty when valid).",
+    "exit_reason": "Episode exit reason: finished | max_steps | no_tool_call | token_budget | timeout | cancelled | billing_error | provider_error | error (provider_error: the provider could not serve the orchestrator; harbor then records ProviderUnavailableError).",
+    "valid": "False when the trial does not measure its condition (invalid_reason); verifier exceptions and agent timeouts stay valid (graded, or unsolved).",
+    "invalid_reason": "Empty when valid, else the first that applies: no_episode (no episode.json); billing_error; harbor_exception_outside_agent (environment/setup error, CancelledError, or any exception before the agent started); provider_error (the orchestrator could not be served: exit_reason provider_error or harbor ProviderUnavailableError; or any call of any role failed with a provider error, n_provider_errors > 0; records before schema_version 3: exit_reason error with an 'LLMError:' error); agent_exception (the agent itself raised and harbor skipped the verifier: a harness bug or crash; not AgentTimeoutError, after which harbor still grades); no_result (a harbor trial without result.json).",
+    "duplicate": "True for every trial but one of the same (condition, sweep, task, round): a re-run, or the same sweep aggregated twice. The valid one (else the first by trial name) is kept; duplicates are left out of conditions*.csv and paired.csv. Never set for bare episodes (no round).",
     "episode_status": "done | running (crashed before finalizing) | missing.",
     "env_setup_sec": "harbor environment_setup phase seconds.",
     "agent_setup_sec": "harbor agent_setup phase seconds.",
@@ -241,6 +252,10 @@ EPISODE_DOCS = {
     "wall_clock_sec": "Episode wall-clock (episode.json t_end - t_start).",
     "orchestrator_steps": "Orchestrator LLM steps taken.",
     "spawn_calls": "spawn_subagents calls.",
+    "delegated": "1 if the orchestrator called spawn_subagents at least once (spawn_calls > 0), else 0; empty without an episode. Treatment uptake: a subagents episode with 0 measured only its prompt.",
+    "n_isolation_checked": "Arbitrations whose copy-isolation leak check ran (ArbitrationRecord.isolation_violated not None; copy isolation only). 0 without arbitrations; empty if the records predate the check (schema_version < 3).",
+    "n_isolation_violations": "Arbitrations in which a candidate changed the real workdir instead of its private copy (isolation_violated; the changes were restored before the winner was applied). Empty if the records predate the check.",
+    "n_leaked_files": "Real-workdir files those violations changed (sum of len(leaked_files), each capped at 200). Empty if the records predate the check.",
     "dispatches": "Subagent runs (arbiter candidates included).",
     "redispatches": "Dispatches from the 2nd and later spawn calls.",
     "arbitrations": "Arbitrations run.",
@@ -257,13 +272,14 @@ EPISODE_DOCS = {
     "cp_orch_llm_sec": "Critical-path seconds in orchestrator LLM calls.",
     "cp_sub_llm_sec": "Critical-path seconds in subagent LLM calls.",
     "cp_arb_llm_sec": "Critical-path seconds in judge and debate calls.",
-    "cp_tool_sec": "Critical-path seconds in tools (plus arbiter isolation, diff and apply time).",
+    "cp_tool_sec": "Critical-path seconds in tools (plus arbiter isolation, diff and apply time; apply runs from the end of the last judge or debate call).",
     "cp_group_sec": "Critical-path seconds inside spawn groups.",
     "overhead_sec": "wall_clock_sec - cp_total_sec: time on no agent's chain.",
-    "harness_exec_sec": "Seconds of the harness's own measurement commands (markers, modified-file scans, git diff --stat); explains most of overhead_sec (concurrent ones overlap).",
+    "harness_exec_sec": "Wall-clock seconds of the harness's own measurement commands (markers, modified-file scans, git diff --stat), as the union of their intervals (concurrent ones count once; the plain sum for records before schema_version 3); explains most of overhead_sec.",
     "sub_busy_sec": "Sum of dispatch durations (total subagent work).",
     "parallel_speedup": "sub_busy_sec / cp_group_sec (NaN without dispatches or group time). For arbiter groups the denominator also holds isolation, judging and apply.",
     "n_failed_calls": "Calls that failed or were abandoned (error set).",
+    "n_provider_errors": "Calls of any role whose error starts with 'LLMError:' (a provider failure after all retries; telemetry.is_provider_error), counted from calls.jsonl so older records count too. Over 0 makes the trial invalid (provider_error).",
     "n_usage_estimated": "Calls whose usage was estimated (provider sent none).",
     "container_arch": "uname -m in the container (x86_64 on an arm64 host = emulated).",
     "host_machine": "Host machine (e.g. arm64).",
@@ -274,16 +290,27 @@ CONDITION_DOCS = {
     "n": "Trials.",
     "n_valid": "Valid trials.",
     "n_resolved": "Resolved valid trials.",
-    "resolve_rate": "n_resolved / n_valid.",
-    "resolve_ci_lo": "Wilson 95% interval, lower bound.",
-    "resolve_ci_hi": "Wilson 95% interval, upper bound.",
-    "time_per_solve_sec": "Sum of wall_clock_sec over valid trials / n_resolved (NaN without solves).",
+    "resolve_rate": "n_resolved / n_valid: pooled over trials (intention to treat: every valid episode, delegated or not).",
+    "resolve_ci_lo": "Wilson 95% interval, lower bound. Treats the valid trials as independent Bernoulli draws, so it covers the rate on these tasks (trial-to-trial randomness), not Terminal-Bench as a whole.",
+    "resolve_ci_hi": "Wilson 95% interval, upper bound (same estimand as resolve_ci_lo).",
+    "n_tasks_valid": "Tasks with at least one valid trial.",
+    "resolve_rate_task_balanced": "Mean over those tasks of each task's resolve rate (n_resolved / n_valid per task), so every task weighs the same: unlike resolve_rate it does not shift when invalid trials (e.g. environment failures) remove some of a task's trials in one condition and not in another. A task with no valid trial left drops out of it, so compare n_tasks_valid across conditions. Compare with resolve_rate; the estimand is still these tasks.",
+    "n_delegated": "Valid episodes that delegated (episodes.csv delegated == 1).",
+    "delegated_frac": "n_delegated / n_valid: treatment uptake (0 for single-topology conditions). A subagents condition near 0 measured mostly its prompt text.",
+    "resolve_rate_delegated": "Per-protocol resolve rate: resolved / n_delegated among the valid episodes that delegated (NaN if none did). Not randomized: the episodes that delegate may differ from those that do not.",
+    "resolve_delegated_ci_lo": "Wilson 95% interval of resolve_rate_delegated, lower bound.",
+    "resolve_delegated_ci_hi": "Wilson 95% interval of resolve_rate_delegated, upper bound.",
+    "n_isolation_checked": "Sum of episodes.csv n_isolation_checked over valid episodes (NaN if any predates the check).",
+    "n_isolation_violations": "Sum of episodes.csv n_isolation_violations over valid episodes (NaN if any predates the check).",
+    "isolation_violated_frac": "n_isolation_violations / n_isolation_checked: share of copy-isolated arbitrations in which a candidate wrote the real workdir (NaN without checked arbitrations).",
+    "n_leaked_files": "Sum of episodes.csv n_leaked_files over valid episodes (NaN if any predates the check).",
+    "time_per_solve_sec": "Sum of wall_clock_sec over the valid trials whose wall clock is known / the solves among those same trials (NaN without solves). A crashed episode without a wall clock drops out of both.",
     "cost_per_solve_runtime": "Sum of cost_runtime_total / n_resolved (NaN if any valid trial is unpriced, or no solves).",
 }
 PAIRED_DOCS = {
     "condition": "Condition compared.",
     "baseline": "Baseline condition.",
-    "n_pairs": "(task, round) cells where both have a valid trial.",
+    "n_pairs": "(sweep, task, round) cells where both have a valid, non-duplicate trial.",
     "both": "Pairs both solved.",
     "only_cond": "Pairs only the condition solved.",
     "only_base": "Pairs only the baseline solved.",
@@ -302,10 +329,14 @@ CALIBRATION_DOCS = {
     "ttft_median": "Median ttft_sec.",
     "ttft_p90": "90th percentile ttft_sec.",
     "n_decode": "Calls with decode_sec > 0 and completion tokens.",
-    "decode_tok_s_median": "Median completion_tokens / decode_sec.",
-    "ttft_fit_a": "Least-squares intercept of ttft_sec on prompt tokens / 1000 (seconds).",
-    "ttft_fit_b_per_1k_prompt_tokens": "Least-squares slope (seconds per 1000 prompt tokens).",
+    "decode_tok_s_median": "Median completion_tokens / decode_sec (descriptive; the fitted profile uses lat_fit_*).",
+    "ttft_fit_a": "Least-squares intercept of ttft_sec on prompt tokens / 1000 (seconds; descriptive).",
+    "ttft_fit_b_per_1k_prompt_tokens": "Least-squares slope (seconds per 1000 prompt tokens; descriptive).",
     "ttft_fit_n": "Points in the fit.",
+    "lat_fit_a": "Joint call-time fit used by the `fitted` serving profile: call_sec = lat_fit_a + lat_fit_b_per_1k_prompt * prompt_tokens/1000 + lat_fit_c_per_completion_token * completion_tokens, least squares with every coefficient >= 0, of ttft_sec + decode_sec (else latency_sec - backoff_sec) over successful calls. This is the intercept (seconds per call); NaN with fewer than 2 calls.",
+    "lat_fit_b_per_1k_prompt": "Joint fit: seconds per 1000 prompt tokens.",
+    "lat_fit_c_per_completion_token": "Joint fit: seconds per completion token.",
+    "lat_fit_n": "Calls in the joint fit.",
     "latency_median": "Median call latency_sec (retries included).",
     "prompt_tokens_median": "Median prompt tokens.",
     "completion_tokens_median": "Median completion tokens.",
@@ -345,6 +376,7 @@ RECORD_DERIVED_DOCS = {
     "n_debate_calls": "Debate calls over all rounds.",
     "all_parse_ok": "Every judgement parsed.",
     "n_applied_files": "Files written or deleted when applying the winner.",
+    "n_leaked_files": "len(leaked_files); empty if the record predates the leak check.",
 }
 LIST_JOINED_NOTE = " (list fields are ';'-joined, dict fields JSON-encoded in the CSV)"
 SUMMARY_DOCS = {
@@ -352,6 +384,9 @@ SUMMARY_DOCS = {
     "harness_version": "subagents_bench version.",
     "inputs": "Jobs/trial/episode dirs aggregated.",
     "files": "pricing, serving and models files used (marked missing if absent).",
+    "input_sha256": "sha256 of every input file the tables were computed from: pricing.yaml and its includes, serving.yaml and any fitted params_file, models.yaml (None if missing).",
+    "analysis_source": "The analysis code that produced the tables: source_sha256 (subagents_bench.provenance.source_fingerprint), git_commit, git_dirty, untracked_source_files (None outside git).",
+    "episode_source_sha256": "condition -> distinct EpisodeRecord.source_sha256 of the runtime code that recorded its episodes ('unknown' for records before schema_version 3). The fingerprint covers all source, so an edit to analysis code or configs between jobs also adds a value; the sweep's sweep.json mixed_source says whether the code episodes run differed.",
     "n_trials": "Trials found.",
     "n_with_episode": "Trials with episode.json.",
     "n_valid": "Valid trials.",
@@ -366,12 +401,14 @@ SUMMARY_DOCS = {
     "rounds": "Rounds present.",
     "tasks": "Tasks present.",
     "tasks_meta": "datasets, n_tasks_with_meta, tasks_without_meta.",
-    "pricing": "schemes (with provenance), aliases, models_without_price per scheme.",
+    "pricing": "schemes (provenance meta, models, every price used in USD per 1M tokens {in, cached, out}, models whose cached tokens are charged at the input price), aliases, models_without_price per scheme.",
     "models_without_active_params": "Models with no parameter count (their FLOPs and roofline times are NaN).",
     "serving_profiles": "Serving profiles and their parameters/source.",
-    "latency_checks": "measured_replay_max_abs_diff_sec, overhead_frac_median, episodes_overhead_over_10pct, unexplained_overhead_frac_median, episodes_unexplained_overhead_over_10pct (overhead not explained by harness_exec_sec).",
+    "latency_checks": "measured_replay_max_abs_diff_sec, overhead_frac_median, episodes_overhead_over_10pct, unexplained_overhead_frac_median, episodes_unexplained_overhead_over_10pct (overhead not explained by harness_exec_sec), unexplained_overhead_sec_min and episodes_overhead_over_explained (overhead_sec - harness_exec_sec below -0.05 s: not clipped, e.g. the summed execs of records before schema_version 3), fitted_vs_measured (per fitted profile and model: n_calls and sum of fitted / sum of measured call time, overall and by completion length 0-99, 100-399, 400+; 1 in-sample means unbiased).",
+    "treatment_coverage": "Per subagents condition: strategy, n_episodes, n_delegated, delegated_frac, n_dispatches, n_arbitrations (arbiter only), ok, problem (no episode delegated, or an arbiter condition ran no arbitration).",
+    "duplicate_trials": "Trial names flagged duplicate (left out of the condition and paired tables).",
     "table_rows": "Rows per table.",
-    "warnings": "Loader warnings (missing files, unpriced models, malformed records).",
+    "warnings": "Loader warnings (missing files, malformed records), every pricing scheme lacking a price for a model that made calls, duplicate trials, and subagents conditions whose treatment was never exercised.",
 }
 
 
@@ -398,6 +435,8 @@ def describe_episode_col(c: str, schemes: list[str], profiles: list[str]) -> str
                 return d
         if c == f"flops_{s}":
             return f"FLOPs of {role} calls (2 x active params x tokens); NaN if a model's parameters are unknown."
+        if c == f"{s}_length_finishes":
+            return f"{role.capitalize()} calls cut off at max_tokens (finish_reason 'length')."
         if c == f"llm_sec_{s}":
             return f"Summed latency of {role} calls."
         if c == f"tool_sec_{s}":
@@ -418,6 +457,10 @@ def describe_episode_col(c: str, schemes: list[str], profiles: list[str]) -> str
 def describe_condition_col(c: str, schemes: list[str], profiles: list[str]) -> str | None:
     if c in CONDITION_DOCS:
         return CONDITION_DOCS[c]
+    for s, role in ROLE_SHORT.items():
+        if c == f"length_finish_frac_{s}":
+            return (f"Share of {role} calls cut off at max_tokens: sum of {s}_length_finishes / sum of {s}_calls "
+                    "over valid episodes (NaN without such calls).")
     if c in EPISODE_DOCS and c not in KEY_DOCS:  # design columns
         return EPISODE_DOCS[c]
     for sc in schemes:
@@ -518,7 +561,9 @@ def build(jobs_dir: Path, analysis_dir: Path, source_note: str) -> tuple[str, li
         "      agent/                           # the episode dir: the runtime's records below",
         "        episode.json calls.jsonl tools.jsonl steps.jsonl spawns.jsonl",
         "        dispatches.jsonl arbitrations.jsonl transcript.jsonl",
-        "  _partial/<job>.partial.<k>/          # partial jobs moved aside on resume (ignored by analysis)",
+        "  provenance/                          # source_<sha16>.json per-file hashes; <invocation>.patch uncommitted source",
+        "  .sweep.lock                          # held by the running sweep (pid, host, invocation)",
+        "  _partial/<job>.{partial,retry}.<k>/  # jobs moved aside on resume: unfinished, or rerun (ignored by analysis)",
         "  _oracle/                             # preflight --oracle feasibility run (ignored by analysis)",
         "analysis/<sweep>/                      # scripts/analyze.sh: the CSVs below + summary.json",
         "figures/<sweep>/                       # PNG + PDF figures and index.md (captions)",

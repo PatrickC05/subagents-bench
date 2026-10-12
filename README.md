@@ -9,7 +9,7 @@ Prior work (Kim et al. 2025, *Towards a Science of Scaling Agent Systems*)
 assigns the **same** model to every agent, reports **accuracy** rather than
 latency, and includes no repository-level coding with executable tests. This
 project instead varies **subagent size** independently of the orchestrator, runs
-on **Terminal-Bench 4.0** and **ExploitBench** (tasks with real, runnable
+on **Terminal-Bench 2.0** and **ExploitBench** (tasks with real, runnable
 scoring), and reports resolve rate against **tokens** and **wall-clock time** as
 Pareto curves.
 
@@ -48,14 +48,19 @@ so provider latency never changes a trajectory. The full contract is
 The pilot sweep ([`configs/sweeps/pilot.yaml`](configs/sweeps/pilot.yaml), on
 [`configs/sail/base.yaml`](configs/sail/base.yaml)) is 15 conditions × 10
 tasks × 3 rounds = 450 episodes. The smoke sweep
-([`configs/sweeps/smoke.yaml`](configs/sweeps/smoke.yaml)) is the same 12
-conditions on 2 tasks × 1 round; the size sweep is
-[`configs/sweeps/prime_size.yaml`](configs/sweeps/prime_size.yaml).
+([`configs/sweeps/smoke.yaml`](configs/sweeps/smoke.yaml)) is the same 15
+conditions on 2 tasks × 1 round. The optional size sweep
+([`configs/sweeps/prime_size.yaml`](configs/sweeps/prime_size.yaml)) runs the
+four Qwen3.5 subagent arms on Prime next to two anchors (`single_5step`,
+`gemma31b_parallel_hard`) in the same rounds, 180 episodes.
 
 ### Baselines
 
 - `single_5step`: the orchestrator alone, same 5 steps.
-- `single_matched`: alone, 40 steps (compute-matched).
+- `single_matched`: alone, 40 steps (step-matched: 40 = 5 orchestrator
+  steps × 8 subagent `max_steps`, one subagent's steps per orchestrator step
+  along the serial path; it matches steps, not FLOPs, tokens or the total
+  work of parallel subagents).
 - `samemodel_parallel_hard`: subagents running the orchestrator's own model,
   which separates *having* subagents from subagent *size*.
 
@@ -68,7 +73,12 @@ subagent-condition episodes of the first smoke sweep: it simply solved the
 task itself. The `manager_{parallel,sequential,arbiter}_hard` conditions set
 `tools.orchestrator_tools: [read_file, list_dir, search]`, so the
 orchestrator can read and plan but every command, edit and test must go
-through subagents.
+through subagents. In the follow-up smoke run, `manager_arbiter_hard`
+delegated in both of its episodes (11 dispatches, 3 arbitrations); one
+solved its task, the other is invalid because a provider outage failed two
+subagent calls.
+`subagents-bench completeness --strict` (step 2 of `scripts/analyze.sh`) now
+fails a sweep in which a subagent condition never delegated.
 The earlier Anthropic-orchestrator configs
 ([`configs/baselines/`](configs/baselines/), [`configs/unified.yaml`](configs/unified.yaml),
 [`configs/exploitbench.yaml`](configs/exploitbench.yaml)) still load but are
@@ -184,6 +194,7 @@ subagents_bench/
   subagent.py         bounded subagent loop, context guard
   arbiter.py          candidates, judge, confidence-aware debate, apply
   telemetry.py        EpisodeRecorder: writes the record files
+  provenance.py       source fingerprint and git state of the code that ran
   runner.py           local runs + `validate` / `run`
   sweep.py            sweep specs, preflight, harbor jobs, `tasks`
   analysis/           check-run, completeness, aggregate, calibrate
@@ -254,7 +265,11 @@ capability bitmap.
 
 - Subagents share the orchestrator's container, so their edits are visible to
   everyone. The exception is arbiter + hard scope: each candidate edits a
-  private copy, and only the judge's winner is applied to the workdir.
+  private copy of the workdir, and only the judge's winner is applied to it
+  (paths naming the workdir are redirected to the copy, and stray writes to
+  the real workdir are undone and recorded). Only the workdir is copied:
+  changes outside it (`/etc`, packages, services) are shared and made live by
+  every candidate.
 - Provider prices do not track model size, so the study logs raw tokens and
   timings and recomputes cost and latency offline; the run-time `cost_usd` is
   only an estimate from the config's prices (null when a model has none).
