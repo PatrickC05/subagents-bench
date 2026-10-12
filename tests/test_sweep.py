@@ -304,7 +304,7 @@ def test_base_config_values():
     base = yaml.safe_load((REPO / "configs/sail/base.yaml").read_text())
     o = base["orchestrator"]
     assert (o["model"], o["provider"], o["completion_window"]) == ("deepseek-ai/DeepSeek-V4.1-Flash", "sail", "balanced")
-    assert (o["temperature"], o["max_output_tokens"], o["context_window"]) == (0.7, 8192, None)
+    assert (o["temperature"], o["max_output_tokens"], o["context_window"]) == (0.7, 32768, None)
     assert (o["price_in"], o["price_cache_read"], o["price_out"]) == (0.07, 0.005, 0.22)
     s = base["subagent"]
     m = s["model"]
