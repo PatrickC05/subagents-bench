@@ -219,7 +219,11 @@ def test_provider_outage_stops_the_job_and_exits_4(fake, spec, capsys):
     fake.set(**{job: "outage"})
     fake.failing = {SUB_MODEL: "ProviderError: HTTP 503: no healthy upstream"}
     t0 = time.monotonic()
-    assert go(spec) == 4
+    saved = signal.signal(signal.SIGINT, signal.SIG_IGN)  # as for `sweep ... &` from a script: harbor inherits it
+    try:
+        assert go(spec) == 4
+    finally:
+        signal.signal(signal.SIGINT, saved)
     assert time.monotonic() - t0 < 20 and (spec.jobs_dir / job / "sigint").exists()  # harbor got SIGINT
     out = capsys.readouterr().out
     assert "trial fix-git__t0: reward None, exit provider_error" in out and "harbor ProviderUnavailableError" in out
