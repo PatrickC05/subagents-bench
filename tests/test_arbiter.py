@@ -6,6 +6,8 @@ from __future__ import annotations
 import os
 import re
 
+import pytest
+
 from fakes import ORCH, SUB, FakeFactory, Reply, assert_consistent, make_config, run_local, tc
 from subagents_bench.arbiter import parse_judgement
 from subagents_bench.llm import LLMResponse
@@ -142,3 +144,30 @@ def test_parse_judgement_rules():
     assert parse_judgement(resp('{"winner": 5}'), 3)["winner"] is None
     partial = parse_judgement(resp('```json\n{"winner": 2, "confidence": "high"}\n```'), 3)
     assert (partial["winner"], partial["confidence"], partial["parse_ok"]) == (2, None, False)
+
+
+@pytest.mark.docker
+def test_copy_isolation_in_a_linux_container(tmp_path):
+    from subagents_bench.orchestrator import Orchestrator
+    from subagents_bench.records import EpisodeRecorder
+    from test_tools import DockerEnv
+
+    d = DockerEnv("ubuntu:24.04")
+    try:
+        d.exec("mkdir -p /app && echo v0 > /app/app.py && echo old > /app/old.txt", 30)
+        judges = [judgement(1)]
+
+        def orch(system, messages, tools):
+            if system.startswith("You are an impartial arbiter"):
+                return judges.pop(0)
+            return Reply("", [tc("spawn_subagents", instructions=["fix"])]) if len(messages) == 1 else Reply("", [tc("finish")])
+
+        f = FakeFactory({ORCH: orch, SUB: lambda s, m, t: editing(int(re.search(r"cand(\d)", s).group(1)), m, "/app")})
+        cfg = make_config(subagent={"strategy": "arbiter", "scope": "hard"})
+        rec = EpisodeRecorder(tmp_path / "ep", cfg, task_name="t")
+        assert Orchestrator(cfg, d, rec, "/app", f).run("x") == "finished"
+        (a,) = assert_consistent(tmp_path / "ep")["arbitrations"]
+        assert (a["isolation_violated"], a["n_applied_files"]) == (False, 3)
+        assert d.exec("cat /app/app.py /app/new.txt; ls /app; ls /tmp/.sb/arb", 30).stdout.split() == ["v1", "new", "app.py", "new.txt"]
+    finally:
+        d.close()

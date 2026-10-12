@@ -44,13 +44,10 @@ def _sh(env: Any, script: str) -> str:
 
 
 def manifest(env: Any, root: str) -> dict[str, str]:
-    """relpath -> "crc size" (+ " x" if executable) for every regular file under ``root``."""
-    out = _sh(env, f"cd -- {shlex.quote(root)} && find . -type f -exec cksum {{}} + && echo __SB_X && find . -type f -perm -100")
+    """relpath -> md5 (+ " x" if executable) for every regular file under ``root``."""
+    out = _sh(env, f"cd -- {shlex.quote(root)} && find . -type f -exec md5sum {{}} + && echo __SB_X && find . -type f -perm -100")
     sums, _, execs = out.partition("__SB_X\n")
-    files = {}
-    for line in sums.splitlines():
-        crc, size, path = line.split(" ", 2)
-        files[path[2:]] = f"{crc} {size}"
+    files = {line[36:]: line[:32] for line in sums.splitlines()}  # "<md5>  ./<path>"
     for path in execs.splitlines():
         files[path[2:]] = files.get(path[2:], "") + " x"
     return files
