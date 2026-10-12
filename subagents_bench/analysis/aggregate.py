@@ -92,11 +92,16 @@ def condition_table(episodes: pd.DataFrame) -> pd.DataFrame:
         k, n = int(v["resolved"].sum()), len(v)
         lo, hi = wilson(k, n)
         n_del = int(v["delegated"].sum()) if n else 0
+        bugs = float(v["n_subtasks"].sum()) if n else 0.0  # SWE-sweep: bugs in the valid trials' tasks
         row = {"condition": cond, **{c: design.get(c) for c in ("topology", "strategy", "scope", "orchestrator_tools",
                                                                  "orchestrator_model", "subagent_model")},
                "n": len(g), "n_valid": n, "n_resolved": k, "resolve_rate": k / n if n else math.nan,
                "resolve_ci_lo": lo, "resolve_ci_hi": hi, "n_delegated": n_del,
-               "delegated_frac": n_del / n if n else math.nan}
+               "delegated_frac": n_del / n if n else math.nan,
+               "n_bugs": bugs, "bugs_fixed": float(v["bugs_fixed"].sum()) if n else 0.0,
+               "bug_fix_rate": float(v["bugs_fixed"].sum()) / bugs if bugs else math.nan,
+               "n_regressed": int(v["regressed"].sum()) if n else 0,
+               "reward_mean": float(v["reward"].mean()) if n and v["reward"].notna().any() else math.nan}
         for m in MEAN_METRICS:
             row[f"{m}_mean"], row[f"{m}_ci_lo"], row[f"{m}_ci_hi"] = bootstrap_mean(v[m] if n else [])
         row["cost_per_solve"] = float(v["cost_total"].sum(skipna=False)) / k if k else math.nan

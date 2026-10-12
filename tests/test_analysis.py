@@ -74,8 +74,9 @@ def judgement(winner, confidence, agreement):
                          rationale="r")], prompt_tokens=2000, completion_tokens=100)
 
 
-def trial(jobs: Path, job: str, task: str, cfg, scripts, reward=None, exception=None) -> Path:
-    """One real episode in ``<jobs>/<job>/<task>__x/agent`` plus harbor's config.json and result.json."""
+def trial(jobs: Path, job: str, task: str, cfg, scripts, reward=None, exception=None, rewards=None) -> Path:
+    """One real episode in ``<jobs>/<job>/<task>__x/agent`` plus harbor's config.json and result.json
+    (``rewards``: the grader's other fields, as SWE-sweep's verifier writes them)."""
     d = jobs / job / f"{task}__x"
     work = jobs.parent / "work" / job / task
     work.mkdir(parents=True)
@@ -91,7 +92,7 @@ def trial(jobs: Path, job: str, task: str, cfg, scripts, reward=None, exception=
     exc = {"exception_type": exception, "exception_message": "x", "exception_traceback": "", "occurred_at": iso(t1)}
     (d / "result.json").write_text(json.dumps({
         "task_name": task, "trial_name": d.name, "exception_info": exc if exception else None,
-        "verifier_result": None if reward is None else {"rewards": {"reward": reward}},
+        "verifier_result": None if reward is None else {"rewards": {"reward": reward, **(rewards or {})}},
         "started_at": iso(t0 - 2), "finished_at": iso(t1 + 2),
         "environment_setup": {"started_at": iso(t0 - 2), "finished_at": iso(t0 - 1)},
         "agent_setup": {"started_at": iso(t0 - 1), "finished_at": iso(t0)},
@@ -207,6 +208,8 @@ def test_validity_of_timeout_and_provider_failure(analysis):
     ({"exit_reason": "cancelled"}, {"exception_info": {"exception_type": "AgentTimeoutError"},
                                     "agent_execution": {"started_at": "2026-10-12T16:00:00Z"},
                                     "verifier": {"started_at": "2026-10-12T16:30:00Z"}}, None),
+    ({"exit_reason": "finished"}, {"verifier_result": {"rewards": {"reward": 0.0, "grader_failed": 1.0}},
+                                   "verifier": {"started_at": "2026-10-12T16:30:00Z"}}, "grader_failed"),
 ])
 def test_invalid_reason(tmp_path, episode, result, reason):
     (tmp_path / "agent").mkdir()
@@ -232,6 +235,25 @@ def test_conditions_rates_and_intervals(analysis):
     assert c.loc["gemma31b_arbiter_hard", "cost_total_mean"] == pytest.approx(v["cost_total"].mean())
     assert c.loc["gemma31b_arbiter_hard", "cost_per_solve"] == pytest.approx(v["cost_total"].sum())
     assert c.loc["single_5step", "delegated_frac"] == 0 and c.loc["single_5step", "resolve_rate"] == 0.5
+
+
+def test_bugs_fixed_and_regressions_from_swe_sweep_rewards(tmp_path, capsys):
+    """SWE-sweep's grader: reward = bugs fixed / bugs, 0 on a regression; a grader failure is invalid."""
+    jobs, job = tmp_path / "jobs" / "ss", "ss__r1__single_5step"
+    single, g = make_config(name="single_5step", topology="single"), {"n_subtasks": 14.0, "visible_ok": 1.0}
+    trial(jobs, job, "swe-sweep__goawk", single, models(0), reward=0.5, rewards=g)
+    trial(jobs, job, "swe-sweep__echo", single, models(0), reward=0.0, rewards={**g, "n_subtasks": 6.0, "visible_ok": 0.0})
+    trial(jobs, job, "swe-sweep__gin", single, models(0), reward=0.0, rewards={**g, "n_subtasks": 11.0, "grader_failed": 1.0})
+    pricing = tmp_path / "pricing.yaml"
+    pricing.write_text(yaml.safe_dump({"fake": PRICES}))
+    assert analyze([str(jobs), "--out", str(tmp_path / "out"), "--pricing", str(pricing), "--scheme", "fake"]) == 0
+    assert "bug_fix_rate" in capsys.readouterr().out
+    eps = pd.read_csv(tmp_path / "out" / "episodes.csv").set_index("task_name")
+    assert eps.loc["swe-sweep__goawk", ["n_subtasks", "bugs_fixed", "regressed", "resolved"]].tolist() == [14, 7.0, 0, 0]
+    assert eps.loc["swe-sweep__echo", ["bugs_fixed", "regressed"]].tolist() == [0.0, 1]
+    assert (eps.loc["swe-sweep__gin", "valid"], eps.loc["swe-sweep__gin", "invalid_reason"]) == (False, "grader_failed")
+    c = pd.read_csv(tmp_path / "out" / "conditions.csv").set_index("condition").loc["single_5step"]
+    assert c[["n_valid", "n_bugs", "bugs_fixed", "bug_fix_rate", "n_regressed", "reward_mean"]].tolist() == [2, 20, 7, 0.35, 1, 0.25]
 
 
 def test_stats():

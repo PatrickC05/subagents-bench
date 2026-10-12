@@ -1,7 +1,7 @@
 """Trial validity and outcome. A trial is invalid when the sweep would rerun it
 (:func:`subagents_bench.sweep.retry_reason`: billing error, provider failure, a harbor exception
-before the verifier) or when it has no episode or no result. An agent timeout is an outcome:
-harbor still runs the verifier, so the trial is scored.
+before the verifier, a grader failure) or when it has no episode or no result. An agent timeout
+is an outcome: harbor still runs the verifier, so the trial is scored.
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from ..sweep import retry_reason
+from ..sweep import rewards, retry_reason
 from .load import Trial
 
 
@@ -18,8 +18,8 @@ def _ts(value: str | None) -> datetime | None:
 
 
 def reward(result: dict | None) -> float | None:
-    rewards = ((result or {}).get("verifier_result") or {}).get("rewards") or {}
-    return None if rewards.get("reward") is None else float(rewards["reward"])
+    r = rewards(result or {}).get("reward")
+    return None if r is None else float(r)
 
 
 def exception_type(result: dict | None) -> str | None:
@@ -45,14 +45,21 @@ def invalid_reason(t: Trial) -> str | None:
     why = retry_reason(t.dir)
     if why in ("billing", "provider"):
         return f"{why}_error"
+    if why == "grader":
+        return "grader_failed"
     if why:
         return "harbor_exception" if _outside_agent(t.result) else "agent_crash"
     return None
 
 
 def outcome(t: Trial) -> dict[str, Any]:
-    """valid, invalid_reason, harbor_exception, reward, resolved (an unscored valid trial is unsolved)."""
-    why, r = invalid_reason(t), reward(t.result)
+    """valid, invalid_reason, harbor_exception, reward, resolved (an unscored valid trial is unsolved)
+    and, from SWE-sweep's grader, n_subtasks, bugs_fixed (reward x n_subtasks) and regressed (the
+    visible tests failed, which sets the reward to 0); null for other benchmarks."""
+    why, r, g = invalid_reason(t), reward(t.result), rewards(t.result or {})
     resolved = (1 if r >= 1.0 else 0) if r is not None else (0 if why is None else None)
+    n = g.get("n_subtasks")
     return {"valid": why is None, "invalid_reason": why, "harbor_exception": exception_type(t.result),
-            "reward": r, "resolved": resolved}
+            "reward": r, "resolved": resolved, "n_subtasks": n,
+            "bugs_fixed": None if r is None or n is None else r * n,
+            "regressed": None if g.get("visible_ok") is None else int(not g["visible_ok"])}
