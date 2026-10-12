@@ -1,0 +1,78 @@
+# Price schemes for offline cost recomputation (`subagents-bench aggregate`).
+#
+# Every LLM call's logged tokens are re-priced under each scheme below, giving
+# the episodes.csv columns cost_<scheme>_{orch,sub,arb,deb,total}. The cost the
+# runtime logged at run time is kept separately as cost_runtime_total.
+#
+# Units: USD per 1M tokens.
+#   in      uncached prompt tokens
+#   cached  prompt tokens served from the provider's prefix cache;
+#           null = the provider publishes no cached-input price, so cached
+#           tokens are charged at the `in` price (listed in summary.json under
+#           cached_price_missing_charged_at_input)
+#   out     completion tokens (reasoning tokens included)
+#
+# A model that has no entry in a scheme costs NaN under that scheme, never 0.
+# Model ids are the provider ids used in configs; `aliases` (here and in
+# configs/models.yaml) link the same model's ids across providers.
+#
+# The `reference` scheme lives in pricing_reference.yaml (written by the
+# research step with per-model sources). If that file is missing, aggregation
+# warns and skips the scheme.
+
+include:
+  - pricing_reference.yaml
+
+aliases:
+  # Prime serves DeepSeek V4.1 Flash under a different id than Sail.
+  deepseek/deepseek-v4.1-flash: deepseek-ai/DeepSeek-V4.1-Flash
+
+schemes:
+  sail_balanced:
+    provider: sail
+    completion_window: balanced
+    retrieved: "2026-10-11"
+    source: provider pricing pages
+    models:
+      deepseek-ai/DeepSeek-V4.1-Flash: {in: 0.07, cached: 0.005, out: 0.22}
+      google/gemma-4-12B-it: {in: 0.10, cached: 0.07, out: 2.00}
+      nvidia/Gemma-4-31B-IT-NVFP4: {in: 0.11, cached: 0.06, out: 0.32}
+      zai-org/GLM-5.3-Flash: {in: 0.08, cached: 0.02, out: 0.28}
+
+  sail_asap:
+    provider: sail
+    completion_window: asap
+    retrieved: "2026-10-11"
+    source: provider pricing pages
+    models:
+      deepseek-ai/DeepSeek-V4.1-Flash: {in: 0.09, cached: 0.006, out: 0.30}
+      google/gemma-4-12B-it: {in: 0.30, cached: 0.15, out: 2.00}
+      nvidia/Gemma-4-31B-IT-NVFP4: {in: 0.14, cached: 0.07, out: 0.40}
+      zai-org/GLM-5.3-Flash: {in: 0.11, cached: 0.02, out: 0.35}
+
+  sail_flex:
+    provider: sail
+    completion_window: flex
+    retrieved: "2026-10-11"
+    source: https://docs.sailresearch.com/pricing (core models table, flex row; snapshot in configs/provider_models.json)
+    models:
+      deepseek-ai/DeepSeek-V4.1-Flash: {in: 0.05, cached: 0.004, out: 0.15}
+      google/gemma-4-12B-it: {in: 0.05, cached: 0.02, out: 1.00}
+      nvidia/Gemma-4-31B-IT-NVFP4: {in: 0.07, cached: 0.04, out: 0.20}
+      zai-org/GLM-5.3-Flash: {in: 0.05, cached: 0.01, out: 0.18}
+
+  prime:
+    provider: prime
+    retrieved: "2026-10-11"
+    source: https://api.pinference.ai/api/v1/models (pricing.input/cache_read/output_usd_per_mtok; snapshot in configs/provider_models.json)
+    notes: >-
+      The hosted Qwen models list a cache-read price. The DeepSeek gateway
+      model lists none (cached: null), so its cached tokens are charged at the
+      input price. DeepSeek is listed under Prime's id; the alias above prices
+      Sail-served DeepSeek calls at Prime's rate.
+    models:
+      Qwen/Qwen3.5-0.8B: {in: 0.04, cached: 0.036, out: 0.08}
+      Qwen/Qwen3.5-2B: {in: 0.06, cached: 0.054, out: 0.18}
+      Qwen/Qwen3.5-4B: {in: 0.10, cached: 0.09, out: 0.30}
+      Qwen/Qwen3.5-9B: {in: 0.18, cached: 0.162, out: 0.54}
+      deepseek/deepseek-v4.1-flash: {in: 0.30, cached: null, out: 1.20}

@@ -1,0 +1,72 @@
+# Serving profiles for offline latency simulation (`subagents-bench aggregate`).
+#
+# Each profile gives every LLM call a duration; tool durations (and arbiter
+# apply time) always stay as measured. The episode's simulated wall time is the
+# critical path of its agent chains (docs/DESIGN.md section 6) and lands in
+# episodes.csv as sim_<profile>_wall_sec.
+#
+# kinds:
+#   measured  replay the logged per-call latency (retries and backoff included);
+#             must reproduce cp_total_sec exactly
+#   fitted    ttft_fit_a + ttft_fit_b * prompt_tokens/1000 + completion_tokens / decode_tok_s,
+#             per (model, provider, completion_window) from calibration.csv. Removes
+#             run-to-run noise but keeps the provider's typical queueing.
+#   roofline  theoretical dedicated batch-1 serving on one GPU:
+#               prefill_tok_s = mfu * peak_flops / (2 * active_params)
+#               decode_tok_s  = mbu * peak_bw / (active_params * bytes_per_param)
+#               call_sec      = overhead_sec + prompt/prefill_tok_s + completion/decode_tok_s
+#             active_params come from configs/models.yaml; a model without them
+#             simulates to NaN.
+#   table     measured local-GPU numbers per model:
+#               call_sec = ttft_base_sec + prompt/prefill_tok_s + completion/decode_tok_s
+#
+# Write large floats with a signed exponent (9.89e+14): PyYAML reads 989e12 as a string.
+
+profiles:
+  measured:
+    kind: measured
+    description: Replay of logged call latencies (provider queueing, retries and backoff included).
+
+  fitted:
+    kind: fitted
+    description: Per-model least-squares TTFT fit plus median decode rate from this sweep's calls.
+    # Optional: use a fit written by `subagents-bench calibrate JOBS_DIR --out configs/serving_fitted.yaml`
+    # (e.g. from a larger sweep) instead of fitting in-sample. Path is relative to this file.
+    # params_file: serving_fitted.yaml
+
+  roofline_h100:
+    kind: roofline
+    theoretical: true
+    description: >-
+      THEORETICAL. Dedicated single-request serving on one H100 SXM at assumed
+      utilization; ignores batching, KV-cache reads, attention FLOPs and
+      network time beyond overhead_sec.
+    peak_flops: 9.89e+14      # H100 SXM dense BF16 FLOP/s
+    peak_bw: 3.35e+12         # H100 SXM HBM3 bytes/s
+    mfu: 0.4                  # assumed model FLOPs utilization during prefill
+    mbu: 0.6                  # assumed memory-bandwidth utilization during decode
+    overhead_sec: 0.05        # assumed fixed per-request overhead
+    prefill_tokens: prompt    # prompt (all prompt tokens) | uncached (assume a prefix cache)
+    # Weight bytes read per parameter at decode. Precedence: a per-model entry
+    # under `models` below > models.yaml `bytes_per_param` (the exact effective
+    # value of the served checkpoint, incl. quantization scales and layers left
+    # unquantized) when use_model_bytes_per_param is true > this default.
+    bytes_per_param: 2.0      # default: bf16 weights
+    use_model_bytes_per_param: true
+    # Prefill uses models.yaml active_params_prefill_b and decode uses
+    # active_params_decode_b when given (DeepSeek V4.1 Flash: 8B / 16B), else active_params_b.
+    models:
+      # Per-model overrides (bytes_per_param, mfu, mbu, overhead_sec, active_params_b).
+      # Example: the nominal NVFP4 width. models.yaml's effective value for this
+      # checkpoint is 1.026 because embeddings and some layers stay in higher
+      # precision; H100 has no native FP4 math either way.
+      # nvidia/Gemma-4-31B-IT-NVFP4: {bytes_per_param: 0.5}
+      {}
+
+  # Example `table` profile. Fill in numbers from a real local-GPU calibration
+  # before enabling; never leave placeholder values in an enabled profile.
+  # local_gpu:
+  #   kind: table
+  #   description: vLLM on <GPU>, batch 1, measured <date>
+  #   models:
+  #     google/gemma-4-12B-it: {ttft_base_sec: <s>, prefill_tok_s: <tok/s>, decode_tok_s: <tok/s>}
