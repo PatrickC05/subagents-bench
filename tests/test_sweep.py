@@ -255,8 +255,12 @@ def test_billing_error_exits_3(fake, spec, capsys):
 def test_interrupt_stops_harbor_and_exits_130(fake, spec):
     job = first_job(spec)
     fake.set(**{job: "hang"})
+    saved = signal.signal(signal.SIGINT, signal.default_int_handler)  # also when pytest runs with it ignored
     threading.Timer(1.0, os.kill, (os.getpid(), signal.SIGINT)).start()
-    assert go(spec) == 130
+    try:
+        assert go(spec) == 130
+    finally:
+        signal.signal(signal.SIGINT, saved)
     assert (spec.jobs_dir / job / "sigint").exists() and manifest(spec)[-1]["event"] == "interrupted"
     assert fake.calls()[0]["pgid"] != os.getpgid(0)  # a terminal's Ctrl-C reaches harbor only via the sweep
     assert json.loads((spec.jobs_dir / "sweep.json").read_text())["status"] == "interrupted"
