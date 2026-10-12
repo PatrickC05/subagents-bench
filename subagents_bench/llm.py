@@ -1,41 +1,34 @@
-"""Provider-agnostic LLM turn interface with usage accounting.
-
-The orchestrator and subagents share one message/tool vocabulary so the same
-agent loop can drive an Anthropic frontier model and a vLLM-served smaller
-model without caring which is which. Each backend takes a list of
-:class:`Message` plus :class:`ToolSpec` definitions and returns a
-:class:`LLMResponse` carrying assistant text, any tool calls, and token usage.
-
-Backends:
-
-* :class:`AnthropicClient` -- native Messages API. Prompt caching is requested
-  on the system block so long repository context is cheap across steps.
-* :class:`OpenAIClient` -- any OpenAI-compatible ``/v1/chat/completions``
-  endpoint, including a local **vLLM** server for subagents.
-
-Both are thin and lazy-import their SDKs, so importing this module never
-requires either SDK to be installed.
-"""
+"""Sail chat-completions client (OpenAI-compatible, streamed SSE) and the message types."""
 
 from __future__ import annotations
 
 import json
 import os
+import random
 import time
+import uuid
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Callable
+
+import httpx
 
 from .config import ModelConfig
-from .telemetry import Usage
 
-MessageRole = Literal["system", "user", "assistant", "tool"]
+SAIL_URL = "https://api.sailresearch.com/v1/chat/completions"
+RETRYABLE_STATUS = frozenset({408, 409, 425, 429})
+BACKOFF_BASE_SEC = 2.0
+BACKOFF_MAX_SEC = 15.0
+_BILLING_WORDS = ("balance", "billing", "credit", "payment")
+_BILLING_WORDS_429 = ("insufficient_quota", "billing")
+# Matched after "_" -> " " (so "context_length_exceeded" counts); vLLM says "maximum model length".
+_CONTEXT_PHRASES = ("context length", "context window", "maximum context", "too long", "reduce the length",
+                    "maximum model length")
 
 
 @dataclass
 class ToolSpec:
     name: str
     description: str
-    # JSON schema for the tool's input object.
     parameters: dict[str, Any]
 
 
@@ -55,315 +48,305 @@ class ToolResult:
 
 @dataclass
 class Message:
-    role: MessageRole
-    # Plain assistant/user text.
+    role: str  # system | user | assistant | tool
     content: str | None = None
-    # For assistant turns that called tools.
     tool_calls: list[ToolCall] = field(default_factory=list)
-    # For tool-result turns (role == "tool").
     tool_results: list[ToolResult] = field(default_factory=list)
+    reasoning: str | None = None  # sent back as reasoning_content on later turns
 
 
 @dataclass
 class LLMResponse:
     text: str
     tool_calls: list[ToolCall]
-    usage: Usage
-    stop_reason: str
-    cost_usd: float
-    t_start: float
-    t_end: float
-    raw: Any = None
+    finish_reason: str
+    reasoning: str = ""
+    prompt_tokens: int = 0  # includes cached_tokens
+    cached_tokens: int = 0
+    completion_tokens: int = 0  # includes reasoning_tokens
+    reasoning_tokens: int | None = None
+    t_start: float = 0.0
+    t_first_chunk: float | None = None  # first chunk carrying content, reasoning or a tool call
+    t_end: float = 0.0
+    n_attempts: int = 1
+    backoff_sec: float = 0.0
+    stream_repairs: int = 0
 
 
-# Convenience providers for the endpoints we deploy against. Each is just an
-# OpenAI-compatible server reached at a known base URL; naming them lets a
-# config set `provider: sail` / `provider: prime` and a model id, nothing else.
-# An explicit `base_url` in the config always wins.
-DEFAULT_BASE_URLS: dict[str, str] = {
-    "sail": "https://api.sailresearch.com/v1",
-    "prime": "https://api.pinference.ai/api/v1",
-    "prime_intellect": "https://api.pinference.ai/api/v1",
-    "pinference": "https://api.pinference.ai/api/v1",
-}
+class LLMError(Exception):
+    """A failed call; ``n_attempts``/``backoff_sec`` describe its retries."""
 
-DEFAULT_API_KEY_ENVS: dict[str, str] = {
-    "sail": "SAIL_API_KEY",
-    "prime": "PRIME_API_KEY",
-    "prime_intellect": "PRIME_API_KEY",
-    "pinference": "PRIME_API_KEY",
-}
-
-OPENAI_COMPATIBLE = {"openai", "vllm", "openai_compatible", *DEFAULT_BASE_URLS}
+    def __init__(self, message: str, *, status: int | None = None, n_attempts: int = 1, backoff_sec: float = 0.0):
+        super().__init__(message)
+        self.status = status
+        self.n_attempts = n_attempts
+        self.backoff_sec = backoff_sec
 
 
-def make_client(cfg: ModelConfig) -> "LLMClient":
-    if cfg.provider == "anthropic":
-        return AnthropicClient(cfg)
-    if cfg.provider in OPENAI_COMPATIBLE:
-        if cfg.base_url is None and cfg.provider in DEFAULT_BASE_URLS:
-            cfg.base_url = DEFAULT_BASE_URLS[cfg.provider]
-        if cfg.api_key_env is None and cfg.provider in DEFAULT_API_KEY_ENVS:
-            cfg.api_key_env = DEFAULT_API_KEY_ENVS[cfg.provider]
-        return OpenAIClient(cfg)
-    raise ValueError(f"unknown provider: {cfg.provider}")
+class ProviderError(LLMError):
+    """The provider could not serve the call: retries exhausted or a non-retryable error."""
 
 
-def _reported_cost(usage: Any) -> float | None:
-    """Extract a provider-reported USD cost from an OpenAI-style usage object.
+class BillingError(LLMError):
+    """402, or a 4xx about balance/billing/credit/payment. Never retried."""
 
-    Sail and Prime Intellect surface cost on the usage object (directly as
-    ``cost``, or nested under ``cost.total_usd`` / a details object). Returns
-    None when no cost field is present.
+
+class ContextLengthError(LLMError):
+    """400/413 saying the prompt exceeds the model's context. Never retried."""
+
+
+class _Retry(Exception):
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
+
+
+def _classify(status: int, text: str) -> LLMError | None:
+    """The error to raise for a non-2xx answer, or None to retry it."""
+    low = text.lower()
+    msg = f"HTTP {status}: {text[:500]}"
+    if status == 402 or (status == 429 and any(w in low for w in _BILLING_WORDS_429)) or (
+        400 <= status < 500 and status != 429 and any(w in low for w in _BILLING_WORDS)
+    ):
+        return BillingError(msg, status=status)
+    if status in (400, 413) and any(p in low.replace("_", " ") for p in _CONTEXT_PHRASES):
+        return ContextLengthError(msg, status=status)
+    if status in RETRYABLE_STATUS or status >= 500:
+        return None
+    return ProviderError(msg, status=status)
+
+
+def _is_object(text: str) -> bool:
+    try:
+        return isinstance(json.loads(text), dict)
+    except ValueError:
+        return False
+
+
+def _parse_arguments(text: str) -> dict[str, Any]:
+    if not text.strip():
+        return {}
+    try:
+        value = json.loads(text)
+    except ValueError:
+        return {"_raw": text}
+    return value if isinstance(value, dict) else {"_raw": text}
+
+
+@dataclass
+class _Slot:
+    id: str | None = None
+    name: str = ""
+    args: str = ""
+
+
+class _Accumulator:
+    """Assembles one streamed reply.
+
+    Sail streams each finished tool call twice: under index 3, then in full under
+    index 0 with the same id (Gemma-4-31B, 2026-10-11); keyed by index that ran every
+    command twice and the duplicate id later failed the request. So deltas are routed
+    by id, a full re-send of an existing call is dropped, and clashing ids get unique
+    names; each repair counts in ``stream_repairs``.
     """
-    if usage is None:
-        return None
-    cost = getattr(usage, "cost", None)
-    if cost is None:
-        return None
-    if isinstance(cost, (int, float)):
-        return float(cost)
-    for attr in ("total_usd", "usd", "total"):
-        val = getattr(cost, attr, None)
-        if isinstance(val, (int, float)):
-            return float(val)
-    if isinstance(cost, dict):
-        for key in ("total_usd", "usd", "total"):
-            if isinstance(cost.get(key), (int, float)):
-                return float(cost[key])
-    return None
+
+    def __init__(self) -> None:
+        self.text: list[str] = []
+        self.reasoning: list[str] = []
+        self.slots: dict[int, _Slot] = {}
+        self.by_id: dict[str, int] = {}
+        self.finish_reason: str | None = None
+        self.usage: dict[str, Any] = {}
+        self.stream_repairs = 0
+
+    def feed(self, chunk: dict[str, Any]) -> bool:
+        """Merge one SSE chunk; True if it carried content, reasoning or tool-call deltas."""
+        if isinstance(chunk.get("usage"), dict):
+            self.usage = chunk["usage"]
+        carried = False
+        for choice in chunk.get("choices") or []:
+            if choice.get("index", 0) != 0:
+                continue
+            delta = choice.get("delta") or {}
+            reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+            if reasoning:
+                self.reasoning.append(reasoning)
+                carried = True
+            if delta.get("content"):
+                self.text.append(delta["content"])
+                carried = True
+            for pos, tc in enumerate(delta.get("tool_calls") or []):
+                self._tool_delta(tc, pos)
+                carried = True
+            if choice.get("finish_reason"):
+                self.finish_reason = choice["finish_reason"]
+        return carried
+
+    def _tool_delta(self, tc: dict[str, Any], pos: int) -> None:
+        idx = tc.get("index", pos)
+        fn = tc.get("function") or {}
+        name, args, tc_id = fn.get("name") or "", fn.get("arguments") or "", tc.get("id")
+        if tc_id in self.by_id and self.by_id[tc_id] != idx:
+            owner = self.slots[self.by_id[tc_id]]
+            same_args = not args or args == owner.args or (_is_object(args) and _is_object(owner.args))
+            if name in ("", owner.name) and same_args:
+                self.stream_repairs += 1  # a re-send of a call we already have
+                return
+            idx = self.by_id[tc_id]
+        slot = self.slots.setdefault(idx, _Slot())
+        if tc_id and not slot.id:
+            slot.id = tc_id
+            self.by_id.setdefault(tc_id, idx)
+        if name and name != slot.name:
+            slot.name += name
+        slot.args += args
+
+    def tool_calls(self) -> list[ToolCall]:
+        """The calls in index order, ids unique (exact duplicates dropped, clashes renamed)."""
+        out: list[ToolCall] = []
+        seen: dict[str, tuple[str, str]] = {}
+        for idx in sorted(self.slots):
+            s = self.slots[idx]
+            if not s.name and not s.args:
+                continue
+            call_id = s.id or f"call_{uuid.uuid4().hex[:24]}"
+            if call_id in seen:
+                self.stream_repairs += 1
+                if seen[call_id] == (s.name, s.args):
+                    continue
+                call_id = f"{call_id}_dup{uuid.uuid4().hex[:8]}"
+            seen[call_id] = (s.name, s.args)
+            out.append(ToolCall(call_id, s.name, _parse_arguments(s.args)))
+        return out
 
 
-def _cost(cfg: ModelConfig, usage: Usage) -> float:
-    cache_price = cfg.price_cache_read
-    non_cached_in = max(usage.input_tokens - usage.cache_read_tokens, 0)
-    cost = non_cached_in / 1e6 * cfg.price_in
-    cost += usage.output_tokens / 1e6 * cfg.price_out
-    if cache_price is not None:
-        cost += usage.cache_read_tokens / 1e6 * cache_price
-    else:
-        # Fall back to full input price for cached tokens if unspecified.
-        cost += usage.cache_read_tokens / 1e6 * cfg.price_in
-    return cost
+def _wire(m: Message) -> list[dict[str, Any]]:
+    if m.role == "tool":
+        return [{"role": "tool", "tool_call_id": r.call_id, "content": r.content} for r in m.tool_results]
+    msg: dict[str, Any] = {"role": m.role, "content": m.content or ""}
+    if m.tool_calls:
+        msg["tool_calls"] = [
+            {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": json.dumps(c.arguments)}}
+            for c in m.tool_calls
+        ]
+    if m.reasoning:
+        msg["reasoning_content"] = m.reasoning
+    return [msg]
 
 
-class LLMClient:
-    def __init__(self, cfg: ModelConfig):
+class SailClient:
+    """One Sail model; thread-safe (one pooled httpx client). Tests inject ``transport``,
+    ``sleep`` and ``rng``."""
+
+    def __init__(
+        self,
+        cfg: ModelConfig,
+        *,
+        transport: httpx.BaseTransport | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+        rng: random.Random | None = None,
+    ):
         self.cfg = cfg
+        self._http = httpx.Client(timeout=httpx.Timeout(cfg.request_timeout_sec), transport=transport)
+        self._sleep = sleep
+        self._rng = rng or random.Random()
 
-    def _api_key(self) -> str | None:
-        if self.cfg.api_key_env:
-            return os.environ.get(self.cfg.api_key_env)
-        return None
+    def close(self) -> None:
+        self._http.close()
 
-    def complete(self, system: str, messages: list[Message], tools: list[ToolSpec]) -> LLMResponse:
-        raise NotImplementedError
+    def _body(self, system: str, messages: list[Message], tools: list[ToolSpec]) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "model": self.cfg.model,
+            "messages": [{"role": "system", "content": system}] + [w for m in messages for w in _wire(m)],
+            "max_tokens": self.cfg.max_output_tokens,
+            "temperature": self.cfg.temperature,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        if tools:
+            body["tools"] = [
+                {"type": "function", "function": {"name": t.name, "description": t.description, "parameters": t.parameters}}
+                for t in tools
+            ]
+        return body
 
-
-# --------------------------------------------------------------------------
-# Anthropic
-# --------------------------------------------------------------------------
-
-
-class AnthropicClient(LLMClient):
-    def __init__(self, cfg: ModelConfig):
-        super().__init__(cfg)
-        self._client = None
-
-    def _lazy(self):
-        if self._client is None:
-            import anthropic  # noqa: PLC0415
-
-            key = self._api_key() or os.environ.get("ANTHROPIC_API_KEY")
-            self._client = anthropic.Anthropic(api_key=key, base_url=self.cfg.base_url)
-        return self._client
-
-    def _to_anthropic(self, messages: list[Message]) -> list[dict[str, Any]]:
-        out: list[dict[str, Any]] = []
-        for m in messages:
-            if m.role == "assistant":
-                blocks: list[dict[str, Any]] = []
-                if m.content:
-                    blocks.append({"type": "text", "text": m.content})
-                for tc in m.tool_calls:
-                    blocks.append(
-                        {
-                            "type": "tool_use",
-                            "id": tc.id,
-                            "name": tc.name,
-                            "input": tc.arguments,
-                        }
-                    )
-                out.append({"role": "assistant", "content": blocks})
-            elif m.role == "tool":
-                blocks = [
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": tr.call_id,
-                        "content": tr.content,
-                        "is_error": tr.is_error,
-                    }
-                    for tr in m.tool_results
-                ]
-                out.append({"role": "user", "content": blocks})
-            else:  # user
-                out.append({"role": "user", "content": m.content or ""})
-        return out
-
-    def complete(self, system: str, messages: list[Message], tools: list[ToolSpec]) -> LLMResponse:
-        client = self._lazy()
-        tool_defs = [
-            {"name": t.name, "description": t.description, "input_schema": t.parameters}
-            for t in tools
-        ]
-        system_blocks = [
-            {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
-        ]
-        t0 = time.time()
-        resp = client.messages.create(
-            model=self.cfg.model,
-            max_tokens=self.cfg.max_output_tokens,
-            temperature=self.cfg.temperature,
-            system=system_blocks,
-            tools=tool_defs,
-            messages=self._to_anthropic(messages),
-            **self.cfg.extra_body,
-        )
-        t1 = time.time()
-
-        text_parts: list[str] = []
-        tool_calls: list[ToolCall] = []
-        for block in resp.content:
-            if block.type == "text":
-                text_parts.append(block.text)
-            elif block.type == "tool_use":
-                tool_calls.append(ToolCall(id=block.id, name=block.name, arguments=block.input))
-
-        u = resp.usage
-        usage = Usage(
-            input_tokens=u.input_tokens + getattr(u, "cache_read_input_tokens", 0) + getattr(u, "cache_creation_input_tokens", 0),
-            output_tokens=u.output_tokens,
-            cache_read_tokens=getattr(u, "cache_read_input_tokens", 0) or 0,
-        )
-        return LLMResponse(
-            text="".join(text_parts),
-            tool_calls=tool_calls,
-            usage=usage,
-            stop_reason=resp.stop_reason or "end_turn",
-            cost_usd=_cost(self.cfg, usage),
-            t_start=t0,
-            t_end=t1,
-            raw=resp,
-        )
-
-
-# --------------------------------------------------------------------------
-# OpenAI-compatible (covers vLLM)
-# --------------------------------------------------------------------------
-
-
-class OpenAIClient(LLMClient):
-    def __init__(self, cfg: ModelConfig):
-        super().__init__(cfg)
-        self._client = None
-
-    def _lazy(self):
-        if self._client is None:
-            import openai  # noqa: PLC0415
-
-            key = self._api_key() or os.environ.get("OPENAI_API_KEY") or "EMPTY"
-            self._client = openai.OpenAI(api_key=key, base_url=self.cfg.base_url)
-        return self._client
-
-    def _to_openai(self, system: str, messages: list[Message]) -> list[dict[str, Any]]:
-        out: list[dict[str, Any]] = [{"role": "system", "content": system}]
-        for m in messages:
-            if m.role == "assistant":
-                msg: dict[str, Any] = {"role": "assistant", "content": m.content or ""}
-                if m.tool_calls:
-                    msg["tool_calls"] = [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.name,
-                                "arguments": json.dumps(tc.arguments),
-                            },
-                        }
-                        for tc in m.tool_calls
-                    ]
-                out.append(msg)
-            elif m.role == "tool":
-                for tr in m.tool_results:
-                    out.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tr.call_id,
-                            "content": tr.content,
-                        }
-                    )
-            else:
-                out.append({"role": "user", "content": m.content or ""})
-        return out
+    def _attempt(self, body: dict[str, Any], headers: dict[str, str]) -> tuple[_Accumulator, float | None]:
+        """One HTTP attempt. Fails (retryable) once ``request_timeout_sec`` pass without a
+        chunk carrying data: Sail attempts hung 468-2015 s on keep-alive bytes alone."""
+        acc = _Accumulator()
+        t_first: float | None = None
+        last = time.time()
+        done = False
+        try:
+            with self._http.stream("POST", SAIL_URL, json=body, headers=headers) as resp:
+                if resp.status_code >= 300:
+                    text = resp.read().decode("utf-8", "replace")
+                    raise _classify(resp.status_code, text) or _Retry(f"HTTP {resp.status_code}: {text[:300]}", resp.status_code)
+                for line in resp.iter_lines():
+                    now = time.time()
+                    carried = False
+                    if line.startswith("data:"):
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            done = True
+                            break
+                        chunk = json.loads(data)
+                        if chunk.get("error"):
+                            raise _Retry(f"stream error: {str(chunk['error'])[:300]}", 200)
+                        carried = acc.feed(chunk)
+                    if carried:
+                        t_first, last = t_first or now, now
+                    elif now - last > self.cfg.request_timeout_sec:
+                        raise _Retry(f"stalled: no data for {now - last:.0f}s (keep-alive bytes only)", 200)
+        except httpx.TransportError as e:
+            raise _Retry(f"{type(e).__name__}: {e}") from None
+        except json.JSONDecodeError as e:
+            raise _Retry(f"unparseable SSE data: {e}", 200) from None
+        if not done and acc.finish_reason is None:
+            raise _Retry("stream ended without finish_reason or [DONE]", 200)
+        return acc, t_first
 
     def complete(self, system: str, messages: list[Message], tools: list[ToolSpec]) -> LLMResponse:
-        client = self._lazy()
-        tool_defs = [
-            {
-                "type": "function",
-                "function": {
-                    "name": t.name,
-                    "description": t.description,
-                    "parameters": t.parameters,
-                },
-            }
-            for t in tools
-        ]
-        t0 = time.time()
-        resp = client.chat.completions.create(
-            model=self.cfg.model,
-            max_tokens=self.cfg.max_output_tokens,
-            temperature=self.cfg.temperature,
-            messages=self._to_openai(system, messages),
-            tools=tool_defs or None,
-            **self.cfg.extra_body,
-        )
-        t1 = time.time()
-
-        choice = resp.choices[0]
-        msg = choice.message
-        tool_calls: list[ToolCall] = []
-        for tc in msg.tool_calls or []:
+        """One call with retries (full-jitter backoff; no retry starts past ``retry_budget_sec``)."""
+        key = os.environ.get("SAIL_API_KEY")
+        if not key:
+            raise ProviderError("SAIL_API_KEY is not set", n_attempts=0)
+        headers = {"Authorization": f"Bearer {key}", "X-Sail-Completion-Window": self.cfg.completion_window}
+        body = self._body(system, messages, tools)
+        t_start = time.time()
+        attempts, backoff = 0, 0.0
+        while True:
+            attempts += 1
             try:
-                args = json.loads(tc.function.arguments or "{}")
-            except json.JSONDecodeError:
-                args = {"_raw": tc.function.arguments}
-            tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=args))
-
-        u = resp.usage
-        cached = 0
-        if u is not None and getattr(u, "prompt_tokens_details", None) is not None:
-            cached = getattr(u.prompt_tokens_details, "cached_tokens", 0) or 0
-        usage = Usage(
-            input_tokens=(u.prompt_tokens if u else 0),
-            output_tokens=(u.completion_tokens if u else 0),
-            cache_read_tokens=cached,
-        )
-        # Sail and Prime Intellect report a USD cost in the usage object; trust
-        # it when the config hasn't set explicit prices, so hosted endpoints are
-        # costed accurately without us tracking a price table per model.
-        reported = _reported_cost(u)
-        if reported is not None and self.cfg.price_in == 0 and self.cfg.price_out == 0:
-            cost = reported
-        else:
-            cost = _cost(self.cfg, usage)
+                acc, t_first = self._attempt(body, headers)
+                break
+            except _Retry as e:
+                delay = self._rng.uniform(0.0, min(BACKOFF_MAX_SEC, BACKOFF_BASE_SEC * 2 ** (attempts - 1)))
+                if attempts > self.cfg.max_retries or time.time() + delay - t_start > self.cfg.retry_budget_sec:
+                    raise ProviderError(
+                        f"{self.cfg.model}: giving up after {attempts} attempt(s) in {time.time() - t_start:.0f}s: {e}",
+                        status=e.status, n_attempts=attempts, backoff_sec=backoff,
+                    ) from None
+                self._sleep(delay)
+                backoff += delay
+            except LLMError as e:
+                e.n_attempts, e.backoff_sec = attempts, backoff
+                raise
+        usage = acc.usage
+        calls = acc.tool_calls()
         return LLMResponse(
-            text=msg.content or "",
-            tool_calls=tool_calls,
-            usage=usage,
-            stop_reason=choice.finish_reason or "stop",
-            cost_usd=cost,
-            t_start=t0,
-            t_end=t1,
-            raw=resp,
+            text="".join(acc.text),
+            tool_calls=calls,
+            finish_reason=acc.finish_reason or "unknown",
+            reasoning="".join(acc.reasoning),
+            prompt_tokens=usage.get("prompt_tokens") or 0,
+            cached_tokens=(usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0,
+            completion_tokens=usage.get("completion_tokens") or 0,
+            reasoning_tokens=(usage.get("completion_tokens_details") or {}).get("reasoning_tokens"),
+            t_start=t_start,
+            t_first_chunk=t_first,
+            t_end=time.time(),
+            n_attempts=attempts,
+            backoff_sec=backoff,
+            stream_repairs=acc.stream_repairs,
         )
