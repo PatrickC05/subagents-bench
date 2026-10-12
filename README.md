@@ -133,11 +133,13 @@ scripts/run_experiment.sh configs/sweeps/swe_sweep.yaml
 
 [`configs/sweeps/swe_sweep.yaml`](configs/sweeps/swe_sweep.yaml) is the
 pilot's 15 conditions on 10 small repositories (Go, Python, JavaScript, C;
-4-14 bugs each, about 100 in all) x 3 rounds. It passes the clone's `tasks/`
-to harbor with `-p`, builds the images as `linux/amd64`
-(`DOCKER_DEFAULT_PLATFORM`: the verifier image ships an x86-64 Python), caps
-each container at 3 CPUs and 7 GB (the tasks ask for 16 and 64 GB), gives
-commands 600 s (test suites run emulated) and the agent one hour. The
+4-14 bugs each, about 100 in all) x 3 rounds. It copies the 10 tasks to
+`jobs/swe_sweep/tasks/` with every Dockerfile `FROM` pinned to `linux/amd64`
+(the verifier image ships an x86-64 Python; `jobs/swe_sweep/tasks.json`
+records the clone's commit and a hash per task) and passes that copy to
+harbor with `-p`, caps each container at 3 CPUs and 7 GB (the tasks ask for
+16 and 64 GB), gives commands 600 s (test suites run emulated) and the agent
+one hour. The
 orchestrator's step budget is the sweep's `overrides.budget.orchestrator_steps`
 (5, as in the pilot; the larger budget is a one-line change there). The
 analysis adds the bugs fixed (reward x bugs) and regressions per episode and

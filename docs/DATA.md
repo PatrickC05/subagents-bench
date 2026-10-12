@@ -17,6 +17,9 @@ jobs/<sweep>/
       agent/                          harbor's logs_dir: this harness's records (below)
   _partial/<job>.<k>/                 a job run moved aside before its rerun (never analysed)
   _oracle/                            preflight --oracle: harbor's oracle agent on every task
+  tasks/<task>/, tasks.json           with `platform` set: the sweep's tasks copied from `dataset_path` with
+                                      their Dockerfiles pinned, and the source dir, its git commit, dirtiness
+                                      and a sha256 per copied task
 ```
 
 The analysis loads only job dirs whose name does not start with `_` or `.`,
@@ -181,7 +184,7 @@ computed from the records, so they equal the JSONL sums.
 
 | Field | Meaning |
 |---|---|
-| `name`, `spec` | the sweep and its spec (after `extends`): `dataset` or `dataset_path`, `tasks`, `rounds`, `harbor` (`n_concurrent`, `agent_timeout_multiplier`, `env`, `extra_args`), `overrides`, `conditions` |
+| `name`, `spec` | the sweep and its spec (after `extends`): `dataset` or `dataset_path` (with `platform`), `tasks`, `rounds`, `harbor` (`n_concurrent`, `agent_timeout_multiplier`, `extra_args`), `overrides`, `conditions` |
 | `status` | `running`, `complete`, `incomplete`, `aborted: billing error`, `aborted: provider outage`, `interrupted` |
 | `git_commit`, `argv` | the code and command line of the last invocation |
 | `t_start`, `t_update` | that invocation's start, last write |

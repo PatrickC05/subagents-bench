@@ -344,24 +344,40 @@ sweep spends money on it.
 **A second benchmark is a spec, not a code path.** Four spec keys cover
 what differs: `dataset_path`, a local directory of harbor task dirs passed as
 `harbor run -p` instead of a registry `dataset` (preflight checks that every
-task has a `task.toml`); `harbor.env`, variables for every harbor run;
-`harbor.extra_args`, flags appended to every harbor run (the oracle's too,
-which never gets the agent timeout multiplier); and `overrides`, deep-merged
-onto the base config before every condition, so a sweep-wide setting such
-as the step budget or the command timeouts lives in one place.
-`configs/sweeps/swe_sweep.yaml` uses all four. SWE-sweep's tasks are a git
-clone; on Apple Silicon its images must be `linux/amd64`, since the verifier
-image bundles an x86-64 Python, and a compose overlay (the obvious
-`platform:` fix) does not reach harbor's separate verifier environment while
-`DOCKER_DEFAULT_PLATFORM` reaches both `docker compose build`s; its tasks
-request 16 CPUs and 64 GB (`--override-cpus 3 --override-memory-mb 7000`,
-which harbor applies to the verifier container as well); and its test
-suites run for minutes under emulation (`command_timeout_sec` 600,
+task has a `task.toml`); `platform`, below; `harbor.extra_args`, flags
+appended to every harbor run (the oracle's too, which never gets the agent
+timeout multiplier); and `overrides`, deep-merged onto the base config
+before every condition, so a sweep-wide setting such as the step budget or
+the command timeouts lives in one place. `configs/sweeps/swe_sweep.yaml`
+uses all four. SWE-sweep's tasks are a git clone; its tasks request 16 CPUs
+and 64 GB (`--override-cpus 3 --override-memory-mb 7000`, which harbor
+applies to the verifier container as well); and its test suites run for
+minutes under emulation (`command_timeout_sec` 600,
 `max_command_timeout_sec` 1800, agent timeout 43200 s x 0.0833 = 1 h). In
 the user's runs of 2026-10-09 (mini-SWE-agent, 15-minute cap, emulated),
 the first build of a small repository took 5-6 minutes, the verifier
 2-5 minutes (goawk, symfony) and up to 13 minutes for a Maven project, which
 is why the sweep's 10 repositories are Go, Python, JavaScript and C.
+
+**Platform.** On Apple Silicon SWE-sweep's images must be `linux/amd64`:
+the verifier image bundles an x86-64 Python. With `platform` set, the sweep
+(and the oracle preflight) copies its tasks to `jobs/<sweep>/tasks/`, pins
+every `FROM` of `environment/Dockerfile` and `tests/Dockerfile` that has no
+platform to `FROM --platform=linux/amd64` (upper-case `FROM` only: a
+lower-case `from distutils...` continuation line sits at column 0 in
+pendulum's Dockerfile), passes the copy to harbor and writes
+`jobs/<sweep>/tasks.json` with the source dir, its git commit and dirtiness
+and a hash per task; a rerun rewrites identical files. Two simpler routes
+failed. A compose overlay with `services.main.platform` (the user's
+2026-10-09 route) does not reach harbor's separate verifier environment,
+which harbor builds without the overlays. A global `DOCKER_DEFAULT_PLATFORM`
+broke harbor 0.24.0 before any trial: its egress-control probe runs
+`docker run alpine:3.23.4@sha256:...`, a multi-arch digest whose arm64
+variant this overlay2 image store already holds, so the amd64 run failed
+with "cannot overwrite digest", the probe reported no kernel support, egress
+control stayed off, and the tasks' `no-network` phases were rejected
+(`ValueError: network_mode='no-network' is not supported`); the egress
+sidecar image is built for arm64 too.
 
 ## Analysis (`analysis/`, `plots/`)
 
