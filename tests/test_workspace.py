@@ -305,6 +305,55 @@ def test_apply_copy_errors(env, tmp_path):
     assert err is not None and "thing" in err
 
 
+def test_apply_copy_only_restores_just_those_files(env, tmp_path):
+    # The arbiter's leak restore: dst back to a pristine copy for the leaked
+    # files only; other changes (a concurrent arbitration's apply) stay.
+    dst = tmp_path / "dst"
+    dst.mkdir()
+    build_tree(dst)
+    base = tmp_path / "arb" / "base"
+    assert copy_tree(env, str(dst), str(base))
+    pristine = manifest(env, str(dst), include_mode=True)
+    (dst / "keep.txt").write_text("leaked edit\n")
+    (dst / "leak dir").mkdir()
+    (dst / "leak dir" / "new.txt").write_text("leaked\n")
+    (dst / "old.txt").unlink()
+    (dst / "other.txt").write_text("applied by a sibling\n")
+    leaked = ["keep.txt", "leak dir/new.txt", "old.txt"]
+    assert workspace.changed_paths(pristine, manifest(env, str(dst), include_mode=True)) == sorted(leaked + ["other.txt"])
+    applied, err = apply_copy(env, str(base), str(dst), None, only=leaked, relative=True)
+    assert err is None and applied == sorted(leaked)
+    assert (dst / "keep.txt").read_text() == "unchanged\n" and (dst / "old.txt").read_text() == "old line\n"
+    assert not (dst / "leak dir").exists()  # emptied dir removed
+    assert (dst / "other.txt").read_text() == "applied by a sibling\n"
+    assert workspace.changed_paths(pristine, manifest(env, str(dst), include_mode=True)) == ["other.txt"]
+
+
+def test_replace_in_tree_maps_text_files_and_symlinks(env, tmp_path):
+    root = tmp_path / "arb" / "c&nd 0"  # '&' and a space: escaped for sed and the shell
+    (root / "sub dir").mkdir(parents=True)
+    old, new = str(root), "/app"
+    (root / "run.sh").write_text(f"cd {old} && python {old}/p.py\n")
+    (root / "run.sh").chmod(0o755)
+    (root / "sub dir" / "cfg.ini").write_text(f"path={old}/data\n")
+    (root / "plain.txt").write_text("nothing to map\n")
+    (root / "blob.bin").write_bytes(b"\x00\x01" + old.encode())
+    os.symlink(f"{old}/sub dir", root / "link")
+    os.symlink("plain.txt", root / "rel link")
+    ino = (root / "run.sh").stat().st_ino
+    changed = workspace.replace_in_tree(env, str(root), old, new)
+    assert changed == ["link", "run.sh", "sub dir/cfg.ini"]
+    assert (root / "run.sh").read_text() == "cd /app && python /app/p.py\n"
+    assert (root / "run.sh").stat().st_ino == ino and stat.S_IMODE((root / "run.sh").stat().st_mode) & 0o100
+    assert (root / "sub dir" / "cfg.ini").read_text() == "path=/app/data\n"
+    assert os.readlink(root / "link") == "/app/sub dir" and os.readlink(root / "rel link") == "plain.txt"
+    assert (root / "blob.bin").read_bytes() == b"\x00\x01" + old.encode()  # binary files are left alone
+    assert not [p for p in os.listdir(root) if ".sb_rw_" in p]
+    assert workspace.replace_in_tree(env, str(root), old, new) == []  # idempotent
+    assert workspace.replace_in_tree(env, str(tmp_path / "missing"), old, new) is None
+    assert workspace.replace_in_tree(env, str(root), "", new) is None
+
+
 # ---------------------------------------------------------------------------
 # git
 # ---------------------------------------------------------------------------
@@ -359,6 +408,7 @@ def test_helpers_never_raise(bad):
     assert manifest(bad, "/") is None
     assert diff_summary(bad, "/a", "/b").startswith("(diff summary unavailable")
     assert apply_copy(bad, "/a", "/b") == ([], "could not hash files under /b")
+    assert workspace.replace_in_tree(bad, "/a", "/a", "/b") is None
     assert git_diff_stat(bad, "/") is None
 
 

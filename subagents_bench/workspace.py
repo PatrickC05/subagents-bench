@@ -30,7 +30,7 @@ import shlex
 import threading
 import uuid
 import weakref
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from .environment import DEFAULT_STATE_ROOT, ExecResult, check_stopped, plan_b64_upload
 from .types import AgentStopped
@@ -325,6 +325,12 @@ def _changes(orig: dict[str, str], new: dict[str, str]) -> tuple[list[str], list
     return modified, added, deleted
 
 
+def changed_paths(orig: dict[str, str], new: dict[str, str]) -> list[str]:
+    """Sorted relpaths modified, added or deleted between two manifests."""
+    modified, added, deleted = _changes(orig, new)
+    return sorted(modified + added + deleted)
+
+
 def diff_summary(env: Any, orig_root: str, copy_root: str, cap_chars: int = 4000) -> str:
     """Changed files plus a ``diff -ruN`` excerpt, at most ``cap_chars``.
 
@@ -371,21 +377,30 @@ def diff_summary(env: Any, orig_root: str, copy_root: str, cap_chars: int = 4000
 
 
 def apply_copy(
-    env: Any, copy_root: str, dst_root: str, cap: int = 200, *, base: dict[str, str] | None = None
+    env: Any,
+    copy_root: str,
+    dst_root: str,
+    cap: int | None = 200,
+    *,
+    base: dict[str, str] | None = None,
+    only: Iterable[str] | None = None,
+    relative: bool = False,
 ) -> tuple[list[str], str | None]:
     """Make ``dst_root`` match ``copy_root`` (the arbiter applying a winner).
 
     Compares md5 manifests (with mode) and copies added and modified files
     with ``cp -a``, deletes files the copy no longer has, and removes
     directories left empty by those deletions. Untouched files are not
-    rewritten. Returns ``(applied absolute dst paths, capped at cap; error
-    or None)``. Empty directories created in the copy are not propagated.
+    rewritten. Returns ``(applied absolute dst paths, capped at cap (None:
+    all); error or None)``; with ``relative``, paths relative to
+    ``dst_root``. Empty directories created in the copy are not propagated.
 
     ``base`` (a ``manifest(..., include_mode=True)`` of the copy taken when it
     was created) restricts the apply to what changed in the copy since then:
     files changed in ``dst_root`` meanwhile by someone else (e.g. a
     concurrent arbitration applying its own winner) are left alone instead of
-    being reverted or deleted.
+    being reverted or deleted. ``only`` (relpaths) restricts it to those
+    files: with ``copy_root`` a pristine copy, that restores just them.
     """
     m_dst = manifest(env, dst_root, include_mode=True)
     m_copy = manifest(env, copy_root, include_mode=True)
@@ -399,6 +414,10 @@ def apply_copy(
     else:
         writes = sorted(p for p in m_copy if base.get(p) != m_copy[p] and m_dst.get(p) != m_copy[p])
         deletes = sorted(p for p in base if p not in m_copy and p in m_dst)
+    if only is not None:
+        keep = set(only)
+        writes = [p for p in writes if p in keep]
+        deletes = [p for p in deletes if p in keep]
     if not writes and not deletes:
         return [], None
 
@@ -449,7 +468,7 @@ def apply_copy(
     for i in range(1, len(toks) - 1, 2):
         kind, rel = toks[i], toks[i + 1]
         if kind in ("W", "D"):
-            applied.append(posixpath.join(dst_abs, rel))
+            applied.append(rel if relative else posixpath.join(dst_abs, rel))
         elif kind == "E":
             errors.append(rel)
     err = None
@@ -458,6 +477,66 @@ def apply_copy(
     elif len(applied) != len(writes) + len(deletes):
         err = f"applied {len(applied)} of {len(writes) + len(deletes)} changes"
     return sorted(applied)[:cap], err
+
+
+def _sed_replace_expr(old: str, new: str) -> str | None:
+    """A ``sed`` command replacing every literal ``old`` by ``new`` (None if
+    no delimiter fits or either string spans lines)."""
+    delim = next((c for c in "|#@,%!~:" if c not in old and c not in new), None)
+    if delim is None or not old or "\n" in old or "\n" in new:
+        return None
+    pattern = re.sub(r"([\\.*\[\]^$])", r"\\\1", old)
+    replacement = re.sub(r"([\\&])", r"\\\1", new)
+    return f"s{delim}{pattern}{delim}{replacement}{delim}g"
+
+
+def replace_in_tree(env: Any, root: str, old: str, new: str, cap: int = 200) -> list[str] | None:
+    """Replace the literal string ``old`` by ``new`` in every text file and
+    every symlink target under ``root`` (the arbiter mapping a candidate's
+    copy path back to the real workdir path inside its copy).
+
+    Text files are found with ``grep -rlI --null -F`` (binary files are left
+    alone) and rewritten in place with ``sed`` (``cat`` back over the
+    original, so inode, mode and owner are kept); symlinks are re-pointed
+    with ``ln -sfn`` (first occurrence in the target). Returns the sorted relpaths changed (capped at cap), or
+    None if the rewrite could not run. A file that could not be rewritten is
+    skipped (logged).
+    """
+    expr = _sed_replace_expr(old, new)
+    if expr is None:
+        return None
+    tag = uuid.uuid4().hex[:8]
+    script = (
+        f"cd -- {shlex.quote(root)} 2>/dev/null || exit 3\n"
+        f"__o={shlex.quote(old)}; __n={shlex.quote(new)}\n"
+        "grep -rlI --null -F -e \"$__o\" . 2>/dev/null | while IFS= read -r -d '' f; do\n"
+        f'  t="$f.sb_rw_{tag}"\n'
+        f'  if sed {shlex.quote(expr)} "$f" > "$t" 2>/dev/null && cat "$t" > "$f"; then printf "W\\0%s\\0" "$f"; '
+        'else printf "E\\0%s\\0" "$f"; fi\n'
+        '  rm -f -- "$t"\n'
+        "done\n"
+        "find . -type l -print0 | while IFS= read -r -d '' l; do\n"
+        '  t=$(readlink -- "$l")\n'
+        '  case "$t" in *"$__o"*) ;; *) continue ;; esac\n'
+        # First occurrence only (prefix/suffix expansion: portable across bash
+        # versions, unlike ${t//old/new}, whose replacement quoting differs).
+        '  if ln -sfn -- "${t%%"$__o"*}$__n${t#*"$__o"}" "$l" 2>/dev/null; then printf "L\\0%s\\0" "$l"; '
+        'else printf "E\\0%s\\0" "$l"; fi\n'
+        "done\n"
+        "exit 0\n"
+    )
+    res = _run(env, script, SCAN_TIMEOUT_SEC)
+    if not _ok(res):
+        return None
+    toks = res.stdout.split("\0")
+    changed, errors = [], []
+    for i in range(0, len(toks) - 1, 2):
+        kind, rel = toks[i], toks[i + 1]
+        rel = rel[2:] if rel.startswith("./") else rel
+        (errors if kind == "E" else changed).append(rel)
+    if errors:
+        log.debug("replace_in_tree: %d file(s) under %s not rewritten: %s", len(errors), root, errors[:10])
+    return sorted(changed)[:cap]
 
 
 def git_diff_stat(env: Any, workdir: str) -> str | None:

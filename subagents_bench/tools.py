@@ -32,13 +32,20 @@ code of 124/137 after at least ~T seconds, or a host-side timeout, sets
 ``timed_out``. After a host-side timeout a follow-up exec fetches the partial
 output and, on Linux, kills the command's process tree via ``/proc`` (the
 fallback when there is no ``timeout`` binary).
+
+**Private copies.** An arbiter candidate working in a private copy of the
+workdir gets a :class:`CopyToolContext`: :func:`run_tool` passes its
+arguments through :class:`PathRemap` first, so a path or command naming the
+real workdir lands in the copy (see :class:`PathRemap`).
 """
 
 from __future__ import annotations
 
 import base64
+import dataclasses
 import functools
 import posixpath
+import re
 import shlex
 import time
 import uuid
@@ -849,6 +856,97 @@ def _write(ctx: ToolContext, meter: _Meter, abspath: str, data: bytes) -> None:
 
 
 # ---------------------------------------------------------------------------
+# private-copy path remapping (arbiter candidates)
+# ---------------------------------------------------------------------------
+
+# Tools whose ``path`` argument is remapped (bash: its ``command``).
+_PATH_TOOLS = ("read_file", "list_dir", "search", "edit_file")
+# In a command, an occurrence is remapped only as a whole path prefix: not
+# the tail of a longer name or path (/srv/app, ~/app, $HOME/app, ${HOME}/app,
+# $(pwd)/app) ...
+_REMAP_BEFORE = r"(?<![\w.~/$@%+\-})])"
+# ... and followed by a separator, whitespace, a quote or a shell/list
+# delimiter, so /app does not match /apple or /app_data.
+_REMAP_AFTER = r"""(?=$|[/\s'"`;&|()<>:,}\]\\])"""
+
+
+def _under(path: str, root: str) -> bool:
+    return path == root or path.startswith(root.rstrip("/") + "/")
+
+
+@dataclass
+class PathRemap:
+    """Redirects ``src`` (the real workdir) to ``dst`` (an arbiter candidate's
+    private copy) in tool arguments.
+
+    File tools: an absolute ``path`` equal to or under ``src`` becomes the
+    same path under ``dst``. bash: every literal occurrence of ``src`` in the
+    command string that is a whole path prefix is replaced by ``dst`` --
+    quoted text and heredoc bodies included, so file contents written by a
+    command can name ``dst``; the arbiter maps ``dst`` back to ``src`` inside
+    the copies when the candidates are done. Paths already under ``dst`` are
+    left alone. Inactive when ``src`` is ``/`` (everything would move).
+    ``n`` counts the tool calls whose arguments were rewritten.
+    """
+
+    src: str
+    dst: str
+    n: int = 0
+
+    def __post_init__(self) -> None:
+        self.src = posixpath.normpath(self.src) if self.src else ""
+        self.dst = posixpath.normpath(self.dst)
+        # Longest first, so an occurrence of dst (which may start with src) is
+        # matched as dst and kept.
+        alts = sorted({self.src, self.dst}, key=len, reverse=True)
+        self._re = re.compile(_REMAP_BEFORE + "(" + "|".join(map(re.escape, alts)) + ")" + _REMAP_AFTER)
+
+    @property
+    def active(self) -> bool:
+        return self.src.startswith("/") and self.src not in ("/", self.dst)
+
+    def path(self, path: str) -> str:
+        if not self.active or not path.startswith("/"):
+            return path
+        norm = posixpath.normpath(path)
+        if _under(norm, self.dst) or not _under(norm, self.src):
+            return path
+        return self.dst + norm[len(self.src) :]
+
+    def command(self, command: str) -> str:
+        if not self.active:
+            return command
+        return self._re.sub(lambda m: self.dst if m.group(1) == self.src else m.group(0), command)
+
+    def args(self, name: str, args: Any) -> Any:
+        """``args`` with the tool's path/command remapped: a new dict (and
+        ``n`` incremented) if anything changed, else ``args`` itself."""
+        key = "command" if name == "bash" else "path" if name in _PATH_TOOLS else None
+        if key is None or not isinstance(args, dict) or not isinstance(args.get(key), str):
+            return args
+        old = args[key]
+        new = self.command(old) if name == "bash" else self.path(old)
+        if new == old:
+            return args
+        self.n += 1
+        return {**args, key: new}
+
+
+@dataclass
+class CopyToolContext(ToolContext):
+    """A :class:`ToolContext` whose tool arguments go through ``path_remap``
+    (the arbiter gives one to each candidate working in a private copy)."""
+
+    path_remap: PathRemap | None = None
+
+
+def copy_context(ctx: ToolContext, remap: PathRemap) -> CopyToolContext:
+    """``ctx`` (every field kept) with ``remap`` applied to tool arguments."""
+    kept = {f.name: getattr(ctx, f.name) for f in dataclasses.fields(ctx) if f.init and f.name != "path_remap"}
+    return CopyToolContext(**kept, path_remap=remap)
+
+
+# ---------------------------------------------------------------------------
 # specs and registry
 # ---------------------------------------------------------------------------
 
@@ -993,15 +1091,27 @@ def specs_for(
 
 
 def run_tool(ctx: ToolContext, name: str, args: dict) -> ToolOutput:
-    """Run tool ``name``. Never raises except AgentStopped."""
+    """Run tool ``name``. Never raises except AgentStopped.
+
+    With a ``ctx.path_remap`` (:class:`CopyToolContext`) the arguments are
+    remapped first, and a note saying so is appended to the output."""
     fn = TOOL_FNS.get(name)
     if fn is None:
         msg = f"unknown tool {name!r}; available: {', '.join(TOOL_FNS)}"
         return ToolOutput(text=f"[error] {msg}", is_error=True, error=msg)
+    remap: PathRemap | None = getattr(ctx, "path_remap", None)
+    note = None
+    if remap is not None:
+        mapped = remap.args(name, args)
+        if mapped is not args:
+            args, note = mapped, f"[note: {remap.src} was redirected to your private copy {remap.dst}]"
     try:
-        return fn(ctx, args)
+        out = fn(ctx, args)
     except AgentStopped:
         raise
     except Exception as e:  # noqa: BLE001 - last resort; the tool wrappers catch first
         msg = f"{type(e).__name__}: {e}"
-        return ToolOutput(text=f"[error] {name} failed: {msg}", is_error=True, error=msg)
+        out = ToolOutput(text=f"[error] {name} failed: {msg}", is_error=True, error=msg)
+    if note:
+        out.text = f"{out.text}\n{note}"
+    return out
