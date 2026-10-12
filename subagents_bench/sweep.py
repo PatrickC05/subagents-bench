@@ -375,6 +375,8 @@ def run(spec: Spec, jobs: list[tuple[int, str]], dry_run: bool = False) -> int:
     _write_status(spec, STATUS[code], t_start)
     say(f"Sweep {spec.name!r} {STATUS[code]}" + (f": {n_failed} job(s) failed or need a retry; re-run to retry"
                                                   if n_failed and code == 1 else ""))
+    if code == 0:
+        say(f"Next: scripts/analyze.sh {_rel(spec.jobs_dir, spec.root)}")
     return code
 
 
