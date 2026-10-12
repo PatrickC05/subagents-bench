@@ -138,21 +138,27 @@ behind them, in [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Findings so far
 
-Two smoke sweeps (2 easy tasks x 1 round each, so no resolve-rate claims yet):
+Three smoke sweeps (2 easy tasks x 1 round each, so no resolve-rate claims yet).
+The first two ran on the earlier, larger harness; the third (2026-10-12) on
+this code: 30 of 30 trials valid, 21 solved, no reruns, $0.11, about 45 min.
 
-- **An orchestrator with every tool does not delegate.** In the first smoke
-  sweep (2026-10-11) it spawned subagents in 0 of 18 Gemma-subagent episodes
-  (and 0 of 2 same-model ones); in the second (2026-10-12), again in 0 of 20.
-  It solved the tasks itself, so those conditions measured only the
-  orchestrator: 12 of 20 solved, about 30 s and $0.0008 per episode, like
-  `single_5step` (1 of 2). `single_matched` solved 2 of 2.
-- **The manager conditions do delegate**: 6 of 6 episodes, 3 of 6 solved
-  (arbiter 2 of 2, parallel 1 of 2, sequential 0 of 2), about 9 min and
-  $0.02 per episode, 25 times the cost of an all-tools episode. They make
-  up most of a sweep's cost and time.
+- **An orchestrator with every tool does not delegate.** It spawned subagents
+  in 0 of 18 Gemma-subagent episodes (and 0 of 2 same-model ones) in the first
+  sweep, and in 0 of 20 in each of the next two. It solved the tasks itself,
+  so those conditions measured only the orchestrator: 12 of 20 solved in the
+  second and third sweeps, about 30 s and $0.0008 per episode, like the
+  single-agent baselines (`single_5step` 1 of 2, then 2 of 2;
+  `single_matched` 2 of 2 both times).
+- **The manager conditions do delegate**: 6 of 6 episodes in both sweeps.
+  They solved 3 of 6 on the earlier harness and 5 of 6 on this one
+  (parallel 2 of 2, sequential 2 of 2, arbiter 1 of 2), at about 7-9 min and
+  $0.016-0.02 per episode, 20-25 times the cost of an all-tools episode.
+  They make up most of a sweep's cost and time.
 - **Sail is the main source of failed trials**: a 7-9 minute outage and a
   dropped network invalidated trials, and attempts hung for up to 2015 s on
   keep-alive bytes; the client and the sweep now fail fast (docs/DESIGN.md).
+  Sail re-sends Gemma's tool calls in about 85% of its streamed replies; the
+  client repairs them (186 repairs in 220 Gemma calls in the third sweep).
 
 ## Study notes
 
