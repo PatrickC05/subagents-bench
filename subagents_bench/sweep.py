@@ -130,8 +130,8 @@ def job_name(spec: Spec, round_: int, cond: str) -> str:
 
 
 def harbor_bin() -> str | None:
-    """``harbor`` on PATH, else the one next to this Python (the project's venv)."""
-    return shutil.which("harbor") or shutil.which("harbor", path=str(Path(sys.executable).parent))
+    """The ``harbor`` next to this Python (the venv's, pinned in uv.lock), else one on PATH."""
+    return shutil.which("harbor", path=str(Path(sys.executable).parent)) or shutil.which("harbor")
 
 
 def _rel(p: Path, root: Path) -> str:

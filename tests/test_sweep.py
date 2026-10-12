@@ -64,7 +64,7 @@ def fake(tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_HARBOR_MODES", str(f.modes))
     monkeypatch.setattr(sweep, "POLL_SEC", 0.05)
     monkeypatch.setattr(sweep, "ping", f.ping)
-    assert sweep.harbor_bin() == str(bin_dir / "harbor")  # never the real harbor
+    monkeypatch.setattr(sweep, "harbor_bin", lambda: str(bin_dir / "harbor"))  # never the venv's real harbor
     return f
 
 
@@ -280,6 +280,19 @@ def test_preflight_checks_and_oracle(fake, spec, monkeypatch, capsys):
     fake.failing = {SUB_MODEL: "ProviderError: HTTP 401"}
     assert sweep.preflight(spec) == 1
     assert f"[FAIL] request {SUB_MODEL}: ProviderError: HTTP 401" in capsys.readouterr().out
+
+
+def test_harbor_bin_prefers_the_venv(tmp_path, monkeypatch):
+    venv, other = tmp_path / "venv", tmp_path / "other"
+    for d in (venv, other):
+        d.mkdir()
+        (d / "harbor").write_text("#!/bin/sh\n")
+        (d / "harbor").chmod(0o755)
+    monkeypatch.setattr(sys, "executable", str(venv / "python"))
+    monkeypatch.setenv("PATH", str(other))
+    assert sweep.harbor_bin() == str(venv / "harbor")  # not a global harbor that cannot import the agent
+    (venv / "harbor").unlink()
+    assert sweep.harbor_bin() == str(other / "harbor")
 
 
 def test_probe_sends_one_short_request_per_model(spec, monkeypatch):
