@@ -14,9 +14,9 @@ are computed from the records exactly as the contract states.
 (``result.json`` modeled on a real harbor 0.24.0 result), and
 :func:`make_sweep` writes a whole sweep: ``<root>/<sweep>__r<round>__<cond>/``
 job dirs, ``sweep_manifest.jsonl``, ``tasks_meta.json`` and resolved condition
-configs, plus edge cases (environment failure without an agent dir, a crashed
-``running`` episode, a missing ``result.json``, a zero-dispatch episode and a
-billing error).
+configs, plus edge cases (environment failure without an agent dir, a
+``running`` episode whose agent raised so harbor skipped the verifier, a
+missing ``result.json``, a zero-dispatch episode and a billing error).
 
 EVERY NUMBER HERE IS SYNTHETIC: latencies, token counts, rewards and model
 parameter counts are test fixtures, not measurements.
@@ -88,9 +88,12 @@ class T:
 
 @dataclass
 class Judge:
-    """One judge round; ``debates`` (one per candidate) run concurrently before the judge call."""
+    """One judge round; ``debates`` (one per candidate) run concurrently before the judge call.
 
-    judge: C
+    ``judge=None`` is a round aborted before its judge call (a cancel during the
+    debate): the round is recorded with ``judge_call_id`` None, as the arbiter does."""
+
+    judge: C | None
     debates: list[C] = field(default_factory=list)
     winner: int = 0
     confidence: float | None = 0.9
@@ -107,6 +110,8 @@ class Arb:
     applied_files: list[str] = field(default_factory=lambda: ["src/main.py"])
     isolation_sec: float = 0.0  # private copies before the candidates start
     diff_sec: float = 0.0  # diff summaries between the candidates' end and the first judge round
+    leaked_files: list[str] = field(default_factory=list)  # copy isolation: real-workdir files a candidate wrote
+    n_path_remaps: int = 0
 
 
 @dataclass
@@ -411,6 +416,11 @@ class EpisodeBuilder:
                     debate_ids.append(c["call_id"])
                     ends.append(c["t_end"])
                 t = max(ends)
+            if j.judge is None:  # aborted before the judge call: a fallback judgement, as the arbiter records
+                rounds.append({"round": r, "judge_call_id": None, "debate_call_ids": debate_ids, "winner": 0,
+                               "confidence": None, "agreement": None, "rationale": "aborted", "parse_ok": False,
+                               "t_start": r_start, "t_end": t})
+                continue
             jc = self._call(j.judge, t_start=t, role="arbiter", agent_id=judge_agent, model=self.arbiter_model,
                             step=r, tool_names=["submit_judgement"], group_id=group_id, arbitration_id=aid)
             t = jc["t_end"]
@@ -418,16 +428,21 @@ class EpisodeBuilder:
                            "winner": j.winner, "confidence": j.confidence, "agreement": j.agreement,
                            "rationale": "synthetic", "parse_ok": j.parse_ok, "t_start": r_start, "t_end": t})
         t_end = t + a.apply_sec
-        last = a.rounds[-1] if a.rounds else Judge(C(0.0))
+        judged = [(k, j) for k, j in enumerate(a.rounds, 1) if j.judge is not None]
+        final_round, last = judged[-1] if judged else (None, Judge(C(0.0)))
+        copy = a.isolation == "copy"
         rec = ArbitrationRecord(
             episode_id=self.episode_id, arbitration_id=aid, group_id=group_id, instruction_index=instr_idx,
             instruction=f"instruction {instr_idx}", n_candidates=len(cands),
             candidate_dispatch_ids=[d["dispatch_id"] for d in cands], isolation=a.isolation, rounds=rounds,
             debate_rounds_used=sum(1 for j in a.rounds if j.debates), final_winner=last.winner,
-            final_confidence=last.confidence, agreement=last.agreement, applied=a.isolation == "copy",
-            applied_files=list(a.applied_files) if a.isolation == "copy" else [], apply_error=None,
+            final_confidence=last.confidence, agreement=last.agreement, applied=copy,
+            applied_files=list(a.applied_files) if copy else [], apply_error=None,
             isolation_sec=a.isolation_sec, t_start=t_start, t_candidates_end=t_cand_end, t_end=t_end,
             duration_sec=t_end - t_start,
+            isolation_violated=bool(a.leaked_files) if copy else None,
+            leaked_files=[f"/app/{p}" for p in a.leaked_files] if copy else [],
+            n_path_remaps=a.n_path_remaps if copy else 0, final_from_round=final_round,
         )
         d = asdict(rec)
         self.arbitrations.append(d)
@@ -477,7 +492,7 @@ class EpisodeBuilder:
 
     # -- episode.json ------------------------------------------------------------
     def finish(self, *, exit_reason: str | None = "finished", status: str = "done", end_gap: float = 0.0,
-               n_files_modified: int | None = 1) -> dict:
+               n_files_modified: int | None = 1, error: str | None = None) -> dict:
         t_end = self.t + end_gap
         base = dict(
             schema_version=SCHEMA_VERSION, status=status, episode_id=self.episode_id, experiment=self.condition,
@@ -486,6 +501,7 @@ class EpisodeBuilder:
             arbiter_model=self.arbiter_model, task_name=self.task_name, trial_name=self.trial_name,
             harbor_session_id="sess-1", harbor_trial_id="trial-uuid", logs_dir="/logs/agent",
             instruction="Fix the repository.", harness_version="0.1.0", git_commit="abc123", git_dirty=False,
+            source_sha256="0" * 64,
             harbor_version="0.24.0", python_version="3.13.0", host_platform="macOS-27.0-arm64",
             host_machine="arm64", container_arch="x86_64", sandbox_kind="harbor", workdir="/app",
             has_timeout_binary=True, t_start=self.t0,
@@ -496,9 +512,10 @@ class EpisodeBuilder:
                 **base, t_end=None, wall_clock_sec=None, exit_reason=None, error=None, final_summary=None,
                 orchestrator_steps=0, spawn_calls=0, dispatches=0, redispatches=0, arbitrations=0, requested_total=0,
                 granted_total=0, instruction_following=None, n_calls={}, n_tool_calls={}, tokens={}, cost_usd={},
-                llm_sec={}, tool_sec={}, n_retries=0, backoff_sec=0.0, n_command_timeouts=0, n_context_trims=0,
+                llm_sec={}, tool_sec={}, n_retries=0, backoff_sec=0.0, n_provider_errors=0, n_command_timeouts=0,
+                n_context_trims=0, cancel_kill=None,
                 files_modified=None, n_files_modified=None, git_diff_stat=None,
-                harness_exec_n=None, harness_exec_sec=None,
+                harness_exec_n=None, harness_exec_sec=None, harness_exec_sum_sec=None,
             )
             self.episode = asdict(ep)
             return self.episode
@@ -519,7 +536,8 @@ class EpisodeBuilder:
         ratios = [s["granted"] / s["requested"] for s in self.spawns if s["requested"]]
         ep = EpisodeRecord(
             **base, t_end=t_end, wall_clock_sec=t_end - self.t0, exit_reason=exit_reason,
-            error="billing" if exit_reason in ("error", "billing_error") else None, final_summary="done",
+            error=error or ("billing" if exit_reason in ("error", "billing_error") else None), final_summary="done",
+            cancel_kill=None,
             orchestrator_steps=len(self.steps), spawn_calls=len(self.spawns), dispatches=len(self.dispatches),
             redispatches=sum(1 for d in self.dispatches if d["group_id"] != first),
             arbitrations=len(self.arbitrations), requested_total=sum(s["requested"] for s in self.spawns),
@@ -530,12 +548,13 @@ class EpisodeBuilder:
             llm_sec={r: sum(c["latency_sec"] for c in cs) for r, cs in by_role.items()},
             tool_sec={r: sum(x["duration_sec"] for x in ts) for r, ts in tools_by_role.items()},
             n_retries=sum(c["n_attempts"] - 1 for c in self.calls), backoff_sec=sum(c["backoff_sec"] for c in self.calls),
+            n_provider_errors=sum(1 for c in self.calls if (c["error"] or "").startswith("LLMError:")),
             n_command_timeouts=sum(1 for x in self.tools if x["timed_out"]),
             n_context_trims=sum(d["context_trims"] for d in self.dispatches),
             files_modified=["src/main.py"] if n_files_modified else None, n_files_modified=n_files_modified,
             git_diff_stat=None,
             # Synthetic: the builder runs no measurement commands (the gaps model all overhead).
-            harness_exec_n=0, harness_exec_sec=0.0,
+            harness_exec_n=0, harness_exec_sec=0.0, harness_exec_sum_sec=0.0,
         )
         self.episode = asdict(ep)
         return self.episode
@@ -589,13 +608,18 @@ def config_dict(name: str, topology: str, strategy: str | None, scope: str | Non
 def harbor_result(task_name: str, trial_name: str, trial_dir: Path, *, t_agent_start: float, t_agent_end: float,
                   reward: float | None, exception: str | None = None, exception_phase: str = "agent",
                   agent_meta: dict | None = None) -> dict:
-    """A trial result.json shaped like harbor 0.24.0's (see jobs/oracle-smoke for a real one)."""
+    """A trial result.json shaped like harbor 0.24.0's (see jobs/oracle-smoke for a real one).
+
+    ``exception_phase``: environment (setup failed; no agent ran), agent (raised by
+    the agent; harbor skips the verifier unless ``reward`` is given, as after an
+    AgentTimeoutError) or verifier (the verifier started, then failed: no reward)."""
     env0, env1 = t_agent_start - 8.0, t_agent_start - 1.0
     ver0, ver1 = t_agent_end + 0.4, t_agent_end + 6.0
     env_failed = exception_phase == "environment"
+    ver_ran = not env_failed and (reward is not None or exception_phase == "verifier")
     exc = None
     if exception:
-        occurred = env0 + 5.0 if env_failed else t_agent_end
+        occurred = env0 + 5.0 if env_failed else (ver0 + 1.0 if exception_phase == "verifier" else t_agent_end)
         exc = {"exception_type": exception, "exception_message": f"synthetic {exception}",
                "exception_traceback": "Traceback (synthetic)", "occurred_at": _iso(occurred)}
     end = (env0 + 5.5) if env_failed else ver1 + 0.5
@@ -618,7 +642,7 @@ def harbor_result(task_name: str, trial_name: str, trial_dir: Path, *, t_agent_s
         "environment_setup": {"started_at": _iso(env0), "finished_at": None if env_failed else _iso(env1)},
         "agent_setup": None if env_failed else {"started_at": _iso(env1), "finished_at": _iso(env1 + 0.5)},
         "agent_execution": None if env_failed else {"started_at": _iso(t_agent_start), "finished_at": _iso(t_agent_end)},
-        "verifier": None if (env_failed or reward is None) else {"started_at": _iso(ver0), "finished_at": _iso(ver1)},
+        "verifier": {"started_at": _iso(ver0), "finished_at": _iso(ver1)} if ver_ran else None,
         "step_results": None,
     }
 
@@ -707,8 +731,10 @@ def standard_episode(b: EpisodeBuilder, task_idx: int = 0, rnd: int = 1) -> Epis
         if rnd % 2 == 0:
             rounds = rounds[:1]
             rounds[0] = Judge(rounds[0].judge, confidence=0.95, agreement=True)
+        # Copy isolation; on the second task a candidate also wrote the real workdir (a restored leak).
         arb = Arb(candidates=[sub(1.0 + v), sub(1.4), sub(0.9)], rounds=rounds,
-                  apply_sec=0.3 if b.scope == "hard" else 0.0, isolation="copy" if b.scope == "hard" else "shared")
+                  apply_sec=0.3 if b.scope == "hard" else 0.0, isolation="copy" if b.scope == "hard" else "shared",
+                  leaked_files=["notes.txt", "src/main.py"] if task_idx == 1 else [], n_path_remaps=2)
         b.step(big, [Spawn(arbitrations=[arb], requested=2, start_overhead=0.05, end_overhead=0.1)])
     else:
         b.step(big, [Spawn(members=[sub(1.0 + v), sub(1.6), sub(1.2)], start_overhead=0.05, end_overhead=0.1)])
@@ -824,14 +850,14 @@ def _edge_trials(job_dir: Path, job: str, cond: str, rnd: int, spec: dict, t_clo
                     exception_phase="environment", t0=t_clock + 50.0)
         out.append(SynthTrial(job, cond, rnd, "overfull-hbox", name, None, None, edge="env_failure",
                               expected_valid=False, expected_resolved=None))
-    if cond == "gemma31b_sequential_medium":  # agent process died mid-episode: status stays running
+    if cond == "gemma31b_sequential_medium":  # the agent raised mid-episode: status stays running, no verifier
         b = builder("cobol-modernization", "crash")
         b.step(C(2.0, prompt=8000, completion=500, cached=2560, reasoning=200),
                [Spawn(members=[[C(1.0), T("bash", 0.3)], [C(1.5)]])])
         b.finish(status="running")
         write_trial(job_dir, "cobol-modernization", b.trial_name, b, reward=None, exception="RuntimeError")
         out.append(SynthTrial(job, cond, rnd, "cobol-modernization", b.trial_name, None, b, edge="running",
-                              expected_valid=True, expected_resolved=0))
+                              expected_valid=False, expected_resolved=None))
     if cond == "gemma31b_arbiter_hard":  # harbor never wrote result.json
         b = builder("overfull-hbox", "nores")
         standard_episode(b)

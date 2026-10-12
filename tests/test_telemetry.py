@@ -3,7 +3,9 @@ finalization, stop-aware LLM calls and schema validity."""
 
 from __future__ import annotations
 
+import dataclasses
 import json
+import subprocess
 import threading
 import time
 from collections import Counter
@@ -11,18 +13,29 @@ from collections import Counter
 import pytest
 
 from fakes import FakeClient, Reply, tc
+from subagents_bench import provenance as prov_mod
 from subagents_bench.config import ExperimentConfig, ModelConfig
-from subagents_bench.schema import RECORD_TYPES, SCHEMA_VERSION, DispatchRecord, StepRecord
+from subagents_bench.schema import RECORD_TYPES, SCHEMA_VERSION, DispatchRecord, EpisodeRecord, StepRecord, validate_record
 from subagents_bench.telemetry import (
     AgentLog,
     EpisodeRecorder,
     Telemetry,
     ToolEvent,
+    is_provider_error,
     provenance,
     read_jsonl,
     validate_episode_dir,
 )
-from subagents_bench.types import AgentStopped, Attempt, BillingError, Message, ToolOutput, ToolSpec
+from subagents_bench.types import (
+    AgentStopped,
+    Attempt,
+    BillingError,
+    ContextLengthError,
+    LLMError,
+    Message,
+    ToolOutput,
+    ToolSpec,
+)
 
 SPEC = ToolSpec(name="bash", description="run", parameters={"type": "object", "properties": {}})
 
@@ -222,6 +235,8 @@ def test_finalize_aggregates_equal_record_sums_and_is_idempotent(tmp_path):
     assert totals["total"]["n_input_tokens"] == 350 and totals["total"]["n_cache_tokens"] == 60
     s = rec.summary()
     assert s["exit_reason"] == "finished" and s["dispatches"] == 1 and s["n_calls"]["subagent"] == 3
+    assert final["n_provider_errors"] == 0 and final["cancel_kill"] is None
+    assert (final["harness_exec_n"], final["harness_exec_sec"], final["harness_exec_sum_sec"]) == (None, None, None)
 
 
 def test_redispatches_and_instruction_following(tmp_path):
@@ -281,13 +296,88 @@ def test_validate_episode_dir_reports_problems(tmp_path):
     assert "spawns.jsonl: missing" in problems
 
 
+def _in_git_worktree() -> bool:
+    """Whether the code under test is a git checkout (not a ZIP/tarball copy)."""
+    try:
+        res = subprocess.run(["git", "-C", str(prov_mod.repo_root()), "rev-parse", "HEAD"], capture_output=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return res.returncode == 0
+
+
 def test_provenance_and_alias():
     p = provenance()
-    assert set(p) == {"harness_version", "git_commit", "git_dirty", "harbor_version", "python_version",
-                      "host_platform", "host_machine"}
-    assert isinstance(p["git_commit"], str) and len(p["git_commit"]) == 40  # this checkout is a git repo
-    assert isinstance(p["git_dirty"], bool)
+    assert set(p) == {"harness_version", "git_commit", "git_dirty", "source_sha256", "harbor_version",
+                      "python_version", "host_platform", "host_machine"}
+    # The fingerprint exists with or without git, and is the source tree's.
+    assert isinstance(p["source_sha256"], str) and len(p["source_sha256"]) == 64
+    assert p["source_sha256"] == prov_mod.source_fingerprint(prov_mod.repo_root())
+    if _in_git_worktree():
+        assert isinstance(p["git_commit"], str) and len(p["git_commit"]) == 40
+        assert isinstance(p["git_dirty"], bool)
+    else:  # e.g. a ZIP or tarball copy of the repo
+        assert p["git_commit"] is None and p["git_dirty"] is None
     assert Telemetry is EpisodeRecorder
+
+
+def test_episode_records_source_fingerprint(tmp_path):
+    rec = make_recorder(tmp_path, provenance_fields={"harness_version": "x", "source_sha256": "ab" * 32})
+    assert rec.record["source_sha256"] == "ab" * 32 and rec.record["git_commit"] is None
+    assert rec.finalize("finished")["source_sha256"] == "ab" * 32
+    assert make_recorder(tmp_path / "2").record["source_sha256"] == provenance()["source_sha256"]
+
+
+def test_provider_errors_counted_from_failed_calls(tmp_path):
+    rec = make_recorder(tmp_path)
+    att = [Attempt(attempt=1, t_start=1.0, t_end=2.0, status=503, error_type="ServerError", error="down")]
+    client = FakeClient(ModelConfig(model="m"), [
+        LLMError("giving up after 9 attempts; last ServerError (HTTP 503)", attempts=att, status=503),
+        LLMError("ServerError", status=401),
+        BillingError("no balance", status=402),
+        ContextLengthError("prompt is too long", status=400),
+        Reply("fine"),
+    ])
+    orch = AgentLog(rec, "orchestrator", "orchestrator")
+    sub = AgentLog(rec, "sub-1", "subagent", dispatch_id="d0001")
+    for log in (orch, sub, orch, sub):
+        with pytest.raises(LLMError):
+            log.llm(client, "s", [Message(role="user", content="q")], [], step=1)
+    orch.llm(client, "s", [Message(role="user", content="q")], [], step=2)
+    stop = threading.Event()
+    stop.set()
+    with pytest.raises(AgentStopped):  # abandoned on stop: not a provider error
+        AgentLog(rec, "orchestrator", "orchestrator", stop_event=stop).llm(client, "s", [], [], step=3)
+    errors = [c["error"] for c in read_jsonl(rec.dir / "calls.jsonl")]
+    assert [is_provider_error(e) for e in errors] == [True, True, False, False, False, False]
+    assert rec._running_record().n_provider_errors == 0  # noqa: SLF001
+    final = rec.finalize("provider_error", error=errors[0])
+    # Calls of any role; billing, context-length and cancelled calls have their own outcomes.
+    assert final["n_provider_errors"] == 2 and rec.summary()["n_provider_errors"] == 2
+    assert validate_episode_dir(rec.dir) == []
+
+
+def test_update_record_after_finalize(tmp_path):
+    rec = make_recorder(tmp_path)
+    rec.finalize("finished")
+    kill = {"attempted": True, "ok": True, "n_killed": 2, "error": None}
+    rec.update_record(cancel_kill=kill)
+    ep = json.loads((rec.dir / "episode.json").read_text())
+    assert ep["cancel_kill"] == kill and ep["exit_reason"] == "finished" and ep["status"] == "done"
+    with pytest.raises(KeyError):
+        rec.update_record(no_such_field=1)
+    assert validate_episode_dir(rec.dir) == []
+
+
+def test_validate_accepts_older_schema_without_new_fields(tmp_path):
+    rec = make_recorder(tmp_path)
+    ep = dict(rec.finalize("finished"))
+    added = [f.name for f in dataclasses.fields(EpisodeRecord) if f.metadata.get("since") == 3]
+    assert set(added) == {"source_sha256", "cancel_kill", "n_provider_errors", "harness_exec_sum_sec"}
+    old = {k: v for k, v in ep.items() if k not in added}
+    assert validate_record(EpisodeRecord, old) == [f"missing field {n!r}" for n in added]
+    # episode.json written by schema-2 code (e.g. a sweep already running) lacks them legitimately.
+    assert validate_record(EpisodeRecord, {**old, "schema_version": 2}) == []
+    assert validate_record(EpisodeRecord, {**old, "schema_version": 2, "harness_version": 1}) != []
 
 
 def test_concurrent_writes_produce_valid_lines(tmp_path):

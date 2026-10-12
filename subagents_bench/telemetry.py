@@ -40,7 +40,6 @@ import json
 import logging
 import os
 import platform
-import subprocess
 import threading
 import time
 import uuid
@@ -97,27 +96,22 @@ def new_episode_id() -> str:
 # ---------------------------------------------------------------------------
 
 
-def _git(args: list[str], cwd: Path) -> str | None:
-    try:
-        res = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True, timeout=15)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return res.stdout if res.returncode == 0 else None
-
-
 @functools.lru_cache(maxsize=1)
 def provenance() -> dict[str, Any]:
     """Harness/host provenance for ``episode.json`` (None where unknown).
 
-    ``git_commit``/``git_dirty`` describe the repository containing this
-    package (``git -C <package dir>``); an installed wheel has neither.
-    ``git_dirty`` counts untracked, non-ignored files as dirty.
+    Computed once per process (each harbor job is a fresh process that
+    imports the code on disk). ``source_sha256`` fingerprints the source
+    that ran, committed or not (:func:`subagents_bench.provenance.source_fingerprint`);
+    ``git_commit``/``git_dirty`` describe the repository holding the package
+    and are None outside a git work tree (:func:`subagents_bench.provenance.git_info`:
+    ``git_dirty`` looks at tracked source files only).
     """
     from . import __version__  # noqa: PLC0415 - avoid an import cycle at module load
+    from .provenance import git_info, repo_root, source_fingerprint  # noqa: PLC0415
 
-    pkg = Path(__file__).resolve().parent
-    head = _git(["rev-parse", "HEAD"], pkg)
-    status = _git(["status", "--porcelain"], pkg) if head is not None else None
+    root = repo_root()
+    git = git_info(root)
     try:
         from importlib.metadata import PackageNotFoundError, version  # noqa: PLC0415
 
@@ -129,8 +123,9 @@ def provenance() -> dict[str, Any]:
         harbor_version = None
     return {
         "harness_version": str(__version__),
-        "git_commit": head.strip() if head else None,
-        "git_dirty": None if status is None else bool(status.strip()),
+        "git_commit": git["git_commit"],
+        "git_dirty": git["git_dirty"],
+        "source_sha256": source_fingerprint(root),
         "harbor_version": harbor_version,
         "python_version": platform.python_version(),
         "host_platform": platform.platform(),
@@ -163,6 +158,19 @@ def sum_or_none(values: Any) -> float | None:
             return None
         total += float(v)
     return total
+
+
+# ``error`` prefix (CallRecord, DispatchRecord) of a provider failure: a plain
+# LLMError, i.e. retries exhausted, a non-retryable 4xx (401/403, ...) or a
+# missing API key. BillingError and ContextLengthError have their own names
+# and outcomes.
+PROVIDER_ERROR_PREFIX = "LLMError:"
+
+
+def is_provider_error(error: Any) -> bool:
+    """Whether a recorded ``error`` text is a provider failure (counted in
+    ``EpisodeRecord.n_provider_errors``); works on records of any schema version."""
+    return isinstance(error, str) and error.startswith(PROVIDER_ERROR_PREFIX)
 
 
 def _request_fields(req: RequestInfo) -> dict[str, Any]:
@@ -455,6 +463,7 @@ class EpisodeRecorder:
             "harness_version": prov.get("harness_version", ""),
             "git_commit": prov.get("git_commit"),
             "git_dirty": prov.get("git_dirty"),
+            "source_sha256": prov.get("source_sha256"),
             "harbor_version": prov.get("harbor_version"),
             "python_version": prov.get("python_version", platform.python_version()),
             "host_platform": prov.get("host_platform", platform.platform()),
@@ -570,6 +579,7 @@ class EpisodeRecorder:
             t_first_call=None,
             exit_reason=None,
             error=None,
+            cancel_kill=None,
             final_summary=None,
             orchestrator_steps=0,
             spawn_calls=0,
@@ -587,6 +597,7 @@ class EpisodeRecorder:
             tool_sec={},
             n_retries=0,
             backoff_sec=0.0,
+            n_provider_errors=0,
             n_command_timeouts=0,
             n_context_trims=0,
             files_modified=None,
@@ -594,6 +605,7 @@ class EpisodeRecorder:
             git_diff_stat=None,
             harness_exec_n=None,
             harness_exec_sec=None,
+            harness_exec_sum_sec=None,
             reward=None,
             resolved=None,
         )
@@ -638,6 +650,7 @@ class EpisodeRecorder:
             "tool_sec": {r: sum(t["duration_sec"] for t in ts) for r, ts in tools_by_role.items()},
             "n_retries": sum(max(c["n_attempts"] - 1, 0) for c in calls),
             "backoff_sec": float(sum(c["backoff_sec"] for c in calls)),
+            "n_provider_errors": sum(1 for c in calls if is_provider_error(c.get("error"))),
             "n_command_timeouts": sum(1 for t in tools if t["timed_out"]),
             "n_context_trims": sum(d["context_trims"] for d in dispatches),
         }
@@ -686,7 +699,8 @@ class EpisodeRecorder:
             "episode_id", "status", "experiment", "topology", "strategy", "scope", "orchestrator_model",
             "subagent_model", "arbiter_model", "task_name", "trial_name", "logs_dir", "exit_reason", "error",
             "wall_clock_sec", "container_arch", "has_timeout_binary", "workdir", "git_commit", "git_dirty",
-            "harbor_version", "harness_version", "config_hash", "n_files_modified", "harness_exec_sec",
+            "source_sha256", "harbor_version", "harness_version", "config_hash", "n_files_modified",
+            "harness_exec_sec", "harness_exec_sum_sec", "cancel_kill",
         )
         out = {k: rec.get(k) for k in keys}
         if out.get("error"):
@@ -694,8 +708,8 @@ class EpisodeRecorder:
         out.update({k: agg[k] for k in (
             "orchestrator_steps", "spawn_calls", "dispatches", "redispatches", "arbitrations",
             "requested_total", "granted_total", "instruction_following", "n_calls", "n_tool_calls",
-            "tokens", "cost_usd", "llm_sec", "tool_sec", "n_retries", "backoff_sec", "n_command_timeouts",
-            "n_context_trims",
+            "tokens", "cost_usd", "llm_sec", "tool_sec", "n_retries", "backoff_sec", "n_provider_errors",
+            "n_command_timeouts", "n_context_trims",
         )})
         return out
 
@@ -720,12 +734,16 @@ class EpisodeRecorder:
         git_diff_stat: str | None = None,
         harness_exec_n: int | None = None,
         harness_exec_sec: float | None = None,
+        harness_exec_sum_sec: float | None = None,
+        cancel_kill: dict[str, Any] | None = None,
         reward: float | None = None,
         resolved: bool | None = None,
     ) -> dict[str, Any]:
         """Write the final ``episode.json`` (first call wins; later calls
         return the existing record unchanged) and close the JSONL files.
-        Measurements the caller did not take stay None."""
+        Measurements the caller did not take stay None. ``harness_exec_sec``
+        is the union of the measurement execs, ``harness_exec_sum_sec`` their
+        plain sum (:meth:`subagents_bench.subagent.MeteredEnv.union_sec`)."""
         with self._lock:
             if self._finalized:
                 return self.record
@@ -738,12 +756,14 @@ class EpisodeRecorder:
                 wall_clock_sec=t_end - self.t_start,
                 exit_reason=exit_reason,
                 error=error,
+                cancel_kill=cancel_kill,
                 final_summary=final_summary,
                 files_modified=files_modified,
                 n_files_modified=n_files_modified,
                 git_diff_stat=git_diff_stat,
                 harness_exec_n=harness_exec_n,
                 harness_exec_sec=harness_exec_sec,
+                harness_exec_sum_sec=harness_exec_sum_sec,
                 reward=reward,
                 resolved=resolved,
                 **agg,
@@ -760,13 +780,19 @@ class EpisodeRecorder:
 
     def set_outcome(self, reward: float | None, resolved: bool | None) -> None:
         """Record the verifier outcome in the final episode.json (local runs)."""
+        self.update_record(reward=reward, resolved=resolved)
+
+    def update_record(self, **fields: Any) -> None:
+        """Rewrite ``episode.json`` with ``fields`` changed (e.g. what happened
+        after the episode was finalized: the verifier outcome, harbor's
+        cancel-time kill). Unknown names raise."""
+        unknown = set(fields) - {f.name for f in dataclasses.fields(EpisodeRecord)}
+        if unknown:
+            raise KeyError(f"not EpisodeRecord fields: {sorted(unknown)}")
         with self._lock:
             if not self.record:
                 return
-            d = dict(self.record)
-            d["reward"] = reward
-            d["resolved"] = resolved
-            self._write_episode(EpisodeRecord(**d))
+            self._write_episode(EpisodeRecord(**{**self.record, **fields}))
 
 
 # Back-compat name for older callers.
@@ -1036,6 +1062,7 @@ __all__ = [
     "call_record_from_response",
     "complete_stoppable",
     "failed_call_record",
+    "is_provider_error",
     "new_episode_id",
     "provenance",
     "read_jsonl",

@@ -37,13 +37,26 @@ import typing
 from dataclasses import dataclass, field
 from typing import Any
 
-SCHEMA_VERSION = 2
+# 3: episode.json gained n_provider_errors, cancel_kill, source_sha256 and
+# harness_exec_sum_sec (harness_exec_sec became the union of the execs);
+# arbitrations.jsonl gained isolation_violated, leaked_files, n_path_remaps
+# and final_from_round.
+SCHEMA_VERSION = 3
 
 Role = typing.Literal["orchestrator", "subagent", "arbiter", "debate"]
 
 
-def _f(doc: str, default: Any = dataclasses.MISSING, default_factory: Any = dataclasses.MISSING):
-    md = {"doc": doc}
+def _f(
+    doc: str,
+    default: Any = dataclasses.MISSING,
+    default_factory: Any = dataclasses.MISSING,
+    since: int | None = None,
+):
+    """A documented field. ``since``: the schema version that added it, so
+    :func:`validate_record` accepts its absence from older records."""
+    md: dict[str, Any] = {"doc": doc}
+    if since is not None:
+        md["since"] = since
     if default_factory is not dataclasses.MISSING:
         return field(default_factory=default_factory, metadata=md)
     if default is not dataclasses.MISSING:
@@ -283,17 +296,21 @@ class ArbitrationRecord:
     isolation: str = _f("shared | copy | shared_fallback.")
     rounds: list = _f("Per judge round: {round, judge_call_id, debate_call_ids, winner, confidence, agreement, rationale, parse_ok, t_start, t_end}.")
     debate_rounds_used: int = _f("Debate rounds actually run (confidence-aware: 0 if the first judgement was confident).")
-    final_winner: int = _f("Chosen candidate index.")
-    final_confidence: float | None = _f("Judge confidence in [0,1] for the final round.")
-    agreement: bool | None = _f("Judge's verdict on whether candidates agreed (final round).")
+    final_winner: int = _f("Chosen candidate index: the winner of the judgement in final_from_round (0 when no round produced one).")
+    final_confidence: float | None = _f("Judge confidence in [0,1] of the judgement used (final_from_round).")
+    agreement: bool | None = _f("Judge's verdict on whether candidates agreed, from the judgement used (final_from_round).")
     applied: bool = _f("Whether the winner's changes were applied to the real workdir (copy isolation only).")
     applied_files: list = _f("Files written/deleted when applying the winner (capped at 200).")
-    apply_error: str | None = _f("Error while applying, if any.")
-    isolation_sec: float = _f("Seconds spent before the candidates started on isolation: workdir size check, private copies and their base manifest (~0 for shared).")
+    apply_error: str | None = _f("Error while applying the winner, or while restoring leaked files (prefixed 'restoring leaked files: '), if any.")
+    isolation_sec: float = _f("Seconds spent before the candidates started on isolation: workdir size check, the workdir's pristine manifest, the base copy and the candidates' private copies (~0 for shared).")
     t_start: float = _f("Candidates start (after isolation setup).")
-    t_candidates_end: float = _f("All candidates finished (the judge's diff summaries are taken between this and rounds[0].t_start).")
+    t_candidates_end: float = _f("All candidates finished. With copy isolation, the leak check and restore, mapping copy paths back to the workdir path inside the copies, and the judge's diff summaries happen between this and rounds[0].t_start.")
     t_end: float = _f("Final judgement, apply and private-copy cleanup finished.")
     duration_sec: float = _f("t_end - t_start (isolation_sec is not included).")
+    isolation_violated: bool | None = _f("Copy isolation only: whether files in the real workdir changed while the candidates ran (other than files a concurrent arbitration of the episode applied meanwhile), i.e. a candidate wrote the real workdir instead of its copy (or a process started before the arbitration, e.g. a server logging there, kept writing it). Those changes were undone (restored from the base copy) before the winner was applied, unless the restore failed (apply_error then starts with 'restoring leaked files: '). Changes outside the workdir are not checked. None for shared/shared_fallback isolation or when the check could not run.", default=None, since=3)
+    leaked_files: list = _f("The real-workdir files behind isolation_violated (absolute paths, capped at 200; modified, added or deleted while the candidates ran, then restored).", default_factory=list, since=3)
+    n_path_remaps: int = _f("Candidate tool calls whose arguments named the real workdir and were redirected to the candidate's private copy (a file tool's path, or occurrences in a bash command); summed over the candidates, 0 without copy isolation.", default=0, since=3)
+    final_from_round: int | None = _f("Judge round whose judgement was used: the latest round with a complete judgement (parse_ok), else the latest with a parseable winner. A later round whose judge call failed or whose reply did not parse never replaces it. None when no round produced a winner (final_winner is then the fallback 0).", default=None, since=3)
 
 
 # ---------------------------------------------------------------------------
@@ -345,8 +362,9 @@ class EpisodeRecord:
     instruction: str = _f("Full task instruction given to the orchestrator.")
     # --- environment provenance ---------------------------------------------
     harness_version: str = _f("subagents_bench.__version__.")
-    git_commit: str | None = _f("Harness git commit.")
-    git_dirty: bool | None = _f("Uncommitted changes in the harness repo.")
+    git_commit: str | None = _f("Harness git commit (HEAD of the repo holding the package); None outside a git work tree (e.g. a ZIP or tarball copy) or when that work tree tracks none of the package (a copy unpacked inside an unrelated repository).")
+    git_dirty: bool | None = _f("Uncommitted changes to tracked harness source (subagents_bench/, configs/, scripts/, pyproject.toml, uv.lock; untracked files and other paths are ignored); None outside a git work tree. Use source_sha256 to tell code versions apart.")
+    source_sha256: str | None = _f("Fingerprint of the harness source that ran: sha256 over the sorted (path, sha256 of contents) of subagents_bench/, configs/, scripts/, pyproject.toml and uv.lock, uncommitted and untracked files included (subagents_bench.provenance.source_fingerprint). Equal values = identical code, with or without git; computed once per process, when harbor imports the agent (local runs: at the first episode). Analysis-only files (subagents_bench/analysis/, plots/, sweep.py, cli.py, configs/, scripts/: provenance.NON_RUNTIME_PATHS) are included, though no episode uses them. None if it could not be computed.", since=3)
     harbor_version: str | None = _f("Installed harbor version.")
     python_version: str = _f("Python version.")
     host_platform: str = _f("platform.platform() of the host.")
@@ -361,8 +379,9 @@ class EpisodeRecord:
     wall_clock_sec: float | None = _f("t_end - t_start.")
     t_first_call: float | None = _f("First LLM call start.")
     # --- outcome --------------------------------------------------------------
-    exit_reason: str | None = _f("finished | max_steps | no_tool_call | token_budget | timeout | cancelled | billing_error | error.")
-    error: str | None = _f("Traceback/message for exit_reason in (error, billing_error).")
+    exit_reason: str | None = _f("finished | max_steps | no_tool_call | token_budget | timeout | cancelled | billing_error | provider_error | error. provider_error: an orchestrator LLM call failed with a provider error after all retries (see n_provider_errors); under harbor the agent then raises ProviderUnavailableError, so the verifier is skipped.")
+    error: str | None = _f("Traceback/message for exit_reason in (error, billing_error, provider_error): '<ExceptionType>: message' (the message carries the HTTP status when there was one); harbor's cancel note for cancelled.")
+    cancel_kill: dict | None = _f("Set only when harbor cancelled the agent: the best-effort kill of the agent's still-running in-container commands, run after the cancel grace wait and before the verifier. {attempted: a kill exec was sent, ok: it completed, n_killed: commands whose process group/tree was killed, error: why it failed or None}. None when there was no cancel.", since=3)
     final_summary: str | None = _f("Orchestrator's finish summary (or last text).")
     # --- counts ---------------------------------------------------------------
     orchestrator_steps: int = _f("Orchestrator LLM steps taken.")
@@ -381,10 +400,12 @@ class EpisodeRecord:
     tool_sec: dict = _f("role -> summed tool seconds (the orchestrator's includes the time blocked in spawn_subagents).")
     n_retries: int = _f("Extra HTTP attempts across all calls.")
     backoff_sec: float = _f("Total retry backoff sleep.")
+    n_provider_errors: int = _f("LLM calls of any role that failed with a provider error after all retries: a plain LLMError, not a BillingError or ContextLengthError (retries exhausted, a non-retryable 4xx such as 401/403, a missing API key); their calls.jsonl error starts with 'LLMError:' (telemetry.is_provider_error, which also works on older records). Over 0 means a provider failure touched the episode (a subagent dispatch that failed this way has status error), so the trial does not measure the condition.", since=3)
     n_command_timeouts: int = _f("Commands that hit their timeout.")
     n_context_trims: int = _f("Context-guard trims across all agents.")
     harness_exec_n: int | None = _f("Environment exec round-trips the harness made for its own measurements (workdir markers, modified-file scans, git diff --stat), None if not counted.")
-    harness_exec_sec: float | None = _f("Summed seconds of those measurement execs. They belong to no agent's chain, so they show up in overhead_sec; concurrent ones (parallel dispatches) overlap in wall-clock.")
+    harness_exec_sec: float | None = _f("Wall-clock seconds during which at least one of those measurement execs ran (the union of their intervals: concurrent ones, e.g. parallel dispatches' markers and scans, count once). They belong to no agent's chain, so they show up in overhead_sec. Before schema_version 3 this was the plain sum (now harness_exec_sum_sec).")
+    harness_exec_sum_sec: float | None = _f("Summed seconds of those measurement execs (concurrent ones counted in full); >= harness_exec_sec.", since=3)
     # --- final container state -------------------------------------------------
     files_modified: list | None = _f("Files under the workdir modified during the episode (capped at 500), None if not measured.")
     n_files_modified: int | None = _f("Count (uncapped), None if not measured.")
@@ -411,7 +432,10 @@ def field_docs(cls: type) -> list[tuple[str, str, str]]:
     out = []
     hints = typing.get_type_hints(cls)
     for f in dataclasses.fields(cls):
-        out.append((f.name, _type_name(hints.get(f.name, Any)), f.metadata.get("doc", "")))
+        doc = f.metadata.get("doc", "")
+        if f.metadata.get("since") is not None:
+            doc = f"{doc} (Added in schema_version {f.metadata['since']}; absent from older records.)"
+        out.append((f.name, _type_name(hints.get(f.name, Any)), doc))
     return out
 
 
@@ -446,13 +470,26 @@ def _accepts(tp: Any, value: Any) -> bool:
 
 
 def validate_record(cls: type, record: dict[str, Any]) -> list[str]:
-    """Return a list of problems (missing fields, wrong types, unknown fields)."""
+    """Return a list of problems (missing fields, wrong types, unknown fields).
+
+    A field added in a later schema version (``since``) may be missing from a
+    record that carries an older ``schema_version`` (episode.json written by
+    older code). Per-event records (the JSONL lines) carry no
+    ``schema_version``; there a ``since`` field that has a default may be
+    missing (readers use the default)."""
     problems = []
     hints = typing.get_type_hints(cls)
+    version = record.get("schema_version")
     names = set()
     for f in dataclasses.fields(cls):
         names.add(f.name)
         if f.name not in record:
+            since = f.metadata.get("since")
+            if since is not None and isinstance(version, int) and version < since:
+                continue
+            has_default = f.default is not dataclasses.MISSING or f.default_factory is not dataclasses.MISSING
+            if since is not None and "schema_version" not in record and has_default:
+                continue
             problems.append(f"missing field {f.name!r}")
             continue
         if not _accepts(hints[f.name], record[f.name]):

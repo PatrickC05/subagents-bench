@@ -247,6 +247,16 @@ class ContextLengthError(LLMError):
     context/length message). The runtime may trim and retry once."""
 
 
+class ProviderUnavailableError(LLMError):
+    """The provider could not serve the orchestrator (a plain
+    :class:`LLMError`: retries exhausted, a non-retryable 4xx such as
+    401/403, a missing API key), so the episode ended with
+    ``exit_reason="provider_error"``. Never raised by a client: the harbor
+    agent raises it after finalizing the episode, so harbor records an
+    exception instead of grading a container the task was never attempted in
+    (the trial is invalid and the sweep reruns it)."""
+
+
 class AgentStopped(RuntimeError):
     """Raised inside the runtime when the episode was cancelled from outside
     (e.g. harbor's agent timeout) so worker threads unwind promptly."""
