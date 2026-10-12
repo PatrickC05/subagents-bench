@@ -13,7 +13,8 @@ on **Terminal-Bench 2.0** and **ExploitBench** (tasks with real, runnable
 scoring), and reports resolve rate against **tokens** and **wall-clock time** as
 Pareto curves.
 
-This version runs Terminal-Bench 2.0 only; the ExploitBench adapter is not part of it.
+This version runs Terminal-Bench 2.0 and [SWE-sweep](#swe-sweep); the
+ExploitBench adapter is not part of it.
 
 ## The experiment
 
@@ -114,6 +115,36 @@ resolved config, and one harbor trial by hand is
 SUBAGENTS_BENCH_CONFIG=configs/sail/base.yaml .venv/bin/harbor run -d terminal-bench@2.0 \
   -i fix-git -a subagents_bench.harness.harbor_agent:OrchestratorAgent -e docker -o jobs/manual -y
 ```
+
+## SWE-sweep
+
+[SWE-sweep](https://github.com/facebookresearch/swe-sweep) (Lieret et al.
+2026) hands the agent a whole repository with no issue text: find and fix as
+many bugs as you can without breaking a passing test. A separate verifier
+container runs hidden tests per bug; the reward is the fraction of the task's
+bugs fixed, 0 if a visible test regressed. It is not on the harbor registry:
+clone it next to this repository (`git clone
+https://github.com/facebookresearch/swe-sweep ../class-6-swe-sweep/swe-sweep`,
+or set `dataset_path` in the spec to your clone's `tasks/`) and run
+
+```bash
+scripts/run_experiment.sh configs/sweeps/swe_sweep.yaml
+```
+
+[`configs/sweeps/swe_sweep.yaml`](configs/sweeps/swe_sweep.yaml) is the
+pilot's 15 conditions on 10 small repositories (Go, Python, JavaScript, C;
+4-14 bugs each, about 100 in all) x 3 rounds. It passes the clone's `tasks/`
+to harbor with `-p`, builds the images as `linux/amd64`
+(`DOCKER_DEFAULT_PLATFORM`: the verifier image ships an x86-64 Python), caps
+each container at 3 CPUs and 7 GB (the tasks ask for 16 and 64 GB), gives
+commands 600 s (test suites run emulated) and the agent one hour. The
+orchestrator's step budget is the sweep's `overrides.budget.orchestrator_steps`
+(5, as in the pilot; the larger budget is a one-line change there). The
+analysis adds the bugs fixed (reward x bugs) and regressions per episode and
+the micro-averaged `bug_fix_rate` per condition, SWE-sweep's own metric;
+`resolved` keeps meaning every bug of the task fixed. Expect 5-20 minutes and
+about ten times the tokens of a Terminal-Bench episode, and an image build of
+a few minutes per task the first time (1-2.5 GB each).
 
 ## Where data and figures land
 
@@ -251,7 +282,7 @@ subagents_bench/
   sweep.py, cli.py    sweep specs, preflight, harbor jobs; `subagents-bench`
   analysis/           validity, cost, critical path, tables, delegation gate
   plots/              the eight figures
-configs/              sail/base.yaml, sweeps/{pilot,smoke}.yaml, pricing.yaml
+configs/              sail/base.yaml, sweeps/{pilot,smoke,swe_sweep}.yaml, pricing.yaml
 scripts/              setup.sh, run_experiment.sh, analyze.sh
 tests/                offline tests (fake models, fake harbor); RUN_DOCKER=1, RUN_LIVE=1 opt in
 ```

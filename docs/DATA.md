@@ -27,7 +27,7 @@ and in them only trial dirs that hold harbor's `config.json`.
 | File | Fields used |
 |---|---|
 | job `result.json` | `n_total_trials`, `finished_at` (null while the job runs): a job is complete when both are set and every trial has finished |
-| trial `result.json` | `task_name`, `trial_name`, `started_at`, `finished_at`, `exception_info.exception_type`, `exception_info.occurred_at`, `agent_execution.started_at`, `verifier.started_at`, `verifier_result.rewards.reward` |
+| trial `result.json` | `task_name`, `trial_name`, `started_at`, `finished_at`, `exception_info.exception_type`, `exception_info.occurred_at`, `agent_execution.started_at`, `verifier.started_at`, `verifier_result.rewards.reward`, and from SWE-sweep's grader `verifier_result.rewards.{n_subtasks, visible_ok, grader_failed}` |
 | trial `config.json` | `task.path` (its last component is the task name) |
 
 harbor timestamps are ISO 8601 strings (`...Z`). The trial's `result.json`
@@ -181,7 +181,7 @@ computed from the records, so they equal the JSONL sums.
 
 | Field | Meaning |
 |---|---|
-| `name`, `spec` | the sweep and its spec (after `extends`) |
+| `name`, `spec` | the sweep and its spec (after `extends`): `dataset` or `dataset_path`, `tasks`, `rounds`, `harbor` (`n_concurrent`, `agent_timeout_multiplier`, `env`, `extra_args`), `overrides`, `conditions` |
 | `status` | `running`, `complete`, `incomplete`, `aborted: billing error`, `aborted: provider outage`, `interrupted` |
 | `git_commit`, `argv` | the code and command line of the last invocation |
 | `t_start`, `t_update` | that invocation's start, last write |
@@ -219,9 +219,10 @@ Every per-trial and per-record table starts with the **keys**: `sweep`,
 | `orchestrator_tools` | `all`, or the tools joined with `+` (a manager) |
 | `exit_reason` | the episode's |
 | `valid` | the trial measures its condition |
-| `invalid_reason` | `no_episode`, `no_result`, `billing_error`, `provider_error` (an exit `provider_error`, harbor's `ProviderUnavailableError`, or any provider error in a call), `harbor_exception` (before the agent started, or a job cancel), `agent_crash` (an exception before the verifier); empty when valid. Exactly the trials the sweep reruns are invalid, plus those without an episode or result; an agent timeout is valid |
+| `invalid_reason` | `no_episode`, `no_result`, `billing_error`, `provider_error` (an exit `provider_error`, harbor's `ProviderUnavailableError`, or any provider error in a call), `harbor_exception` (before the agent started, or a job cancel), `agent_crash` (an exception before the verifier), `grader_failed` (SWE-sweep's grader could not grade); empty when valid. Exactly the trials the sweep reruns are invalid, plus those without an episode or result; an agent timeout is valid |
 | `harbor_exception` | harbor's exception type (`AgentTimeoutError` on a timeout), else empty |
-| `reward`, `resolved` | the verifier's reward; resolved = 1 if reward >= 1, else 0 (a valid unscored trial is 0, an invalid one empty) |
+| `reward`, `resolved` | the verifier's reward (Terminal-Bench: 1 or 0; SWE-sweep: the fraction of the task's bugs fixed, 0 on a regression); resolved = 1 if reward >= 1, else 0 (a valid unscored trial is 0, an invalid one empty) |
+| `n_subtasks`, `bugs_fixed`, `regressed` | SWE-sweep only (else empty): the task's bugs, reward x n_subtasks, and 1 if a visible test regressed (`visible_ok` 0) |
 | `t_start`, `wall_clock_sec` | the episode's |
 | `steps`, `spawns`, `dispatches`, `arbitrations` | record counts |
 | `delegated` | 1 if the orchestrator spawned at least once |
@@ -253,6 +254,7 @@ Each row is one record of a trial plus the keys and `valid`:
 | `n`, `n_valid`, `n_resolved` | trials, valid trials, solved valid trials |
 | `resolve_rate`, `resolve_ci_lo`, `resolve_ci_hi` | n_resolved / n_valid with its Wilson 95% interval |
 | `n_delegated`, `delegated_frac` | valid episodes that spawned at least once |
+| `n_bugs`, `bugs_fixed`, `bug_fix_rate`, `n_regressed`, `reward_mean` | over the valid trials: bugs in their tasks, bugs fixed, their ratio (SWE-sweep's micro-average; NaN without bugs), trials with a regression, and the mean reward |
 | `{cost_total,wall_clock_sec,total_tokens}_{mean,ci_lo,ci_hi}` | mean per valid episode with a seeded percentile bootstrap 95% interval (2000 resamples; no interval for one episode; NaN if any value is NaN) |
 | `cost_per_solve` | total cost of the valid episodes / n_resolved (NaN without a solve) |
 

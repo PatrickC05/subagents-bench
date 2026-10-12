@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "subagents-bench"
 version = "0.1.0"
-description = "Cost and latency of a large orchestrator directing smaller subagents on executable coding tasks (Terminal-Bench 2.0 via harbor)."
+description = "Cost and latency of a large orchestrator directing smaller subagents on executable coding tasks (Terminal-Bench 2.0 and SWE-sweep via harbor)."
 readme = "README.md"
 requires-python = ">=3.11"
 # Runtime + analysis + plots. Exact versions are pinned in uv.lock

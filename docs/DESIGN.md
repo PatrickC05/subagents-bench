@@ -341,6 +341,28 @@ and with `--oracle` runs harbor's oracle agent on every task (reused while
 it still solves them all), so a broken task image is found before the
 sweep spends money on it.
 
+**A second benchmark is a spec, not a code path.** Four spec keys cover
+what differs: `dataset_path`, a local directory of harbor task dirs passed as
+`harbor run -p` instead of a registry `dataset` (preflight checks that every
+task has a `task.toml`); `harbor.env`, variables for every harbor run;
+`harbor.extra_args`, flags appended to every harbor run (the oracle's too,
+which never gets the agent timeout multiplier); and `overrides`, deep-merged
+onto the base config before every condition, so a sweep-wide setting such
+as the step budget or the command timeouts lives in one place.
+`configs/sweeps/swe_sweep.yaml` uses all four. SWE-sweep's tasks are a git
+clone; on Apple Silicon its images must be `linux/amd64`, since the verifier
+image bundles an x86-64 Python, and a compose overlay (the obvious
+`platform:` fix) does not reach harbor's separate verifier environment while
+`DOCKER_DEFAULT_PLATFORM` reaches both `docker compose build`s; its tasks
+request 16 CPUs and 64 GB (`--override-cpus 3 --override-memory-mb 7000`,
+which harbor applies to the verifier container as well); and its test
+suites run for minutes under emulation (`command_timeout_sec` 600,
+`max_command_timeout_sec` 1800, agent timeout 43200 s x 0.0833 = 1 h). In
+the user's runs of 2026-10-09 (mini-SWE-agent, 15-minute cap, emulated),
+the first build of a small repository took 5-6 minutes, the verifier
+2-5 minutes (goawk, symfony) and up to 13 minutes for a Maven project, which
+is why the sweep's 10 repositories are Go, Python, JavaScript and C.
+
 ## Analysis (`analysis/`, `plots/`)
 
 **Validity.** A trial is invalid exactly when the sweep would rerun it
@@ -348,7 +370,20 @@ sweep spends money on it.
 is `billing_error`, `provider_error`, `harbor_exception` (before the agent
 started, or a job cancel), `agent_crash`, `no_episode` or `no_result`. An
 agent timeout is valid and scored, and a valid trial without a reward
-counts as unsolved.
+counts as unsolved. A SWE-sweep trial whose grader reports `grader_failed`
+(the verifier's own setup failed, not the patch) is `grader_failed`: invalid
+and rerun, like a harbor exception.
+
+**Partial rewards.** SWE-sweep's reward is the fraction of the task's bugs
+whose hidden tests pass, 0 when a visible test regressed, with the grader's
+counts next to it in harbor's `result.json`. `episodes.csv` adds
+`n_subtasks`, `bugs_fixed` (reward x n_subtasks) and `regressed`;
+`conditions.csv` adds `n_bugs`, `bugs_fixed`, `bug_fix_rate` (bugs fixed over
+bugs in the valid trials, the micro-average SWE-sweep reports), `n_regressed`
+and `reward_mean`. `resolved` stays reward >= 1, every bug of the task fixed,
+which is rare there (frontier models fix 2-12% of bugs), so the resolve-rate
+figures say little for this benchmark; read `bug_fix_rate`. Terminal-Bench
+trials leave the bug columns empty.
 
 **Cost.** Tokens times per-model prices from `configs/pricing.yaml`, per role
 (scheme `sail_balanced`, USD per 1M tokens: DeepSeek-V4.1-Flash in 0.07,
