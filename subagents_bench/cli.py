@@ -58,7 +58,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     load_dotenv(spec.root / ".env")
     for sig in (signal.SIGTERM, signal.SIGHUP):  # harbor has its own process group: stop it as on Ctrl-C
-        signal.signal(sig, signal.default_int_handler)
+        if signal.getsignal(sig) == signal.SIG_DFL:  # a SIGHUP ignored by nohup stays ignored
+            signal.signal(sig, signal.default_int_handler)
     try:
         if args.cmd == "preflight":
             return sweep.preflight(spec, oracle=args.oracle)

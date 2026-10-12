@@ -261,8 +261,11 @@ def test_interrupt_stops_harbor_and_exits_130(fake, spec):
 def test_sigterm_and_sighup_stop_the_sweep_like_ctrl_c(fake, tmp_path):
     saved = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGHUP)}
     try:
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)  # as under nohup
         assert cli.main(["sweep", str(make_spec(tmp_path)), "--dry-run"]) == 0
-        assert all(signal.getsignal(s) is signal.default_int_handler for s in saved)  # harbor is not in our group
+        assert signal.getsignal(signal.SIGTERM) is signal.default_int_handler  # harbor is not in our group
+        assert signal.getsignal(signal.SIGHUP) == signal.SIG_IGN
     finally:
         for s, handler in saved.items():
             signal.signal(s, handler)
