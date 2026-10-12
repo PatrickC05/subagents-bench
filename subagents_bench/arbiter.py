@@ -63,9 +63,9 @@ def _copy_files(env: Any, src: str, dst: str, rels: list[str]) -> None:
     for rel in rels:
         s, d = shlex.quote(f"{src}/{rel}"), shlex.quote(f"{dst}/{rel}")
         lines.append(f'if [ -e {s} ]; then mkdir -p -- "$(dirname -- {d})" && rm -f -- {d} && cp -a -- {s} {d}; '
-                     f"else rm -f -- {d}; fi")
+                     f"else rm -f -- {d}; fi || exit 1")
     if lines:
-        _sh(env, "set -e\n" + "\n".join(lines))
+        _sh(env, "\n".join(lines))
 
 
 def _json_objects(text: str) -> list[Any]:
@@ -108,7 +108,7 @@ def run_arbitration(rt: Runtime, instruction: str, index: int, group_id: str, st
     try:
         if copy:
             pristine = manifest(env, rt.workdir)
-            _sh(env, "\n".join(f"mkdir -p {q(f'{root}/{x}')} && cp -a {q(rt.workdir)}/. {q(f'{root}/{x}')}/"
+            _sh(env, "\n".join(f"mkdir -p {q(f'{root}/{x}')} && cp -a {q(rt.workdir)}/. {q(f'{root}/{x}')}/ || exit 1"
                                for x in ["base"] + [f"cand{k}" for k in range(n)]))
         cands = [new_dispatch(rt, instruction, index, group_id, step, cwd=f"{root}/cand{k}" if copy else None,
                               arbitration_id=aid, candidate_index=k, private_copy=copy) for k in range(n)]

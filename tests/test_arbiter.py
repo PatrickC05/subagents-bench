@@ -136,6 +136,27 @@ def test_easy_scope_shares_the_workdir_and_json_text_fallback(tmp_path):
     assert "applied files" not in result
 
 
+def test_a_failed_copy_ends_the_episode_before_any_candidate_runs(tmp_path):
+    from subagents_bench.environment import LocalShellEnvironment
+    from subagents_bench.orchestrator import Orchestrator
+    from subagents_bench.records import EpisodeRecorder
+
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "app.py").write_text("v0\n")
+    env = LocalShellEnvironment(os.path.realpath(work))
+    os.makedirs(f"{env.state_root}/arb/arb-1")
+    open(f"{env.state_root}/arb/arb-1/base", "w").close()  # the base copy fails (as on a full disk)
+    f = FakeFactory({ORCH: [Reply("", [tc("spawn_subagents", instructions=["x"])])]})
+    cfg = make_config(subagent={"strategy": "arbiter", "scope": "hard"})
+    rec = EpisodeRecorder(tmp_path / "ep", cfg, task_name="t")
+    with pytest.raises(RuntimeError, match="arbiter shell step failed"):
+        Orchestrator(cfg, env, rec, env.workdir, f).run("x")
+    env.close()
+    assert rec.episode["exit_reason"] == "error" and f[SUB].requests == []
+    assert os.listdir(work) == ["app.py"] and (work / "app.py").read_text() == "v0\n"
+
+
 def test_parse_judgement_rules():
     def resp(text="", calls=()):
         return LLMResponse(text, list(calls), "stop")
