@@ -430,6 +430,14 @@ def _parse_arguments(text: str) -> dict[str, Any]:
     return val if isinstance(val, dict) else {"_raw": text}
 
 
+def _is_json_object(text: str) -> bool:
+    """True if ``text`` is one complete JSON object (a whole arguments string)."""
+    try:
+        return isinstance(json.loads(text), dict)
+    except ValueError:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Client interface and factory
 # ---------------------------------------------------------------------------
@@ -505,6 +513,13 @@ class _Accumulator:
     text: list[str] = field(default_factory=list)
     reasoning: list[str] = field(default_factory=list)
     tools: dict[int, _ToolSlot] = field(default_factory=dict)
+    # tool-call id -> the slot index it first arrived under.
+    id_index: dict[str, int] = field(default_factory=dict)
+    # Deltas dropped because they repeated an already complete call.
+    tool_call_repeats_dropped: int = 0
+    # Calls dropped / re-identified in tool_calls() (same id twice).
+    tool_call_duplicates_dropped: int = 0
+    tool_call_ids_renamed: int = 0
     finish_reason: str | None = None
     usage_raw: dict[str, Any] | None = None
     response_id: str | None = None
@@ -584,38 +599,64 @@ class _Accumulator:
                 kinds.add("tool")
                 idx = tc.get("index", pos)
                 idx = idx if isinstance(idx, int) else pos
-                slot = self.tools.setdefault(idx, _ToolSlot())
-                if tc.get("id") and not slot.id:
-                    slot.id = str(tc["id"])
                 fn = tc.get("function") or {}
                 name = fn.get("name")
+                args = fn.get("arguments")
+                if args is not None and not isinstance(args, str):
+                    args = json.dumps(args)
+                tc_id = str(tc["id"]) if tc.get("id") else None
+                # Sail re-sends each finished call in full under another
+                # index with the same id (seen 2026-10-11 for Gemma-4-31B:
+                # index 3, then index 0). Route by id, and drop a delta that
+                # repeats the slot's complete name and arguments.
+                if tc_id and tc_id in self.id_index and self.id_index[tc_id] != idx:
+                    owner = self.tools[self.id_index[tc_id]]
+                    have = "".join(owner.args)
+                    if (not name or name == owner.name) and (
+                        not args or args == have or (_is_json_object(args) and _is_json_object(have))
+                    ):
+                        self.tool_call_repeats_dropped += 1
+                        continue
+                    idx = self.id_index[tc_id]
+                slot = self.tools.setdefault(idx, _ToolSlot())
+                if tc_id and not slot.id:
+                    slot.id = tc_id
+                    self.id_index.setdefault(tc_id, idx)
                 # Names normally arrive whole once; tolerate fragments, and
                 # servers that repeat the full name on every fragment.
                 if isinstance(name, str) and name and name != slot.name:
                     slot.name += name
-                args = fn.get("arguments")
-                if isinstance(args, str):
-                    if args:
-                        slot.args.append(args)
-                elif args is not None:
-                    slot.args.append(json.dumps(args))
+                if args:
+                    slot.args.append(args)
         return kinds
 
     def tool_calls(self) -> list[ToolCall]:
-        out = []
+        """The assembled calls, in index order. Ids are unique: an exact
+        duplicate (same id, name and arguments) is dropped, and a different
+        call reusing an id gets a fresh one, so the conversation sent back
+        to the provider never carries two tool calls with one id."""
+        out: list[ToolCall] = []
+        seen: dict[str, tuple[str, str]] = {}
         for idx in sorted(self.tools):
             slot = self.tools[idx]
             raw_args = "".join(slot.args)
             if not slot.name and not raw_args:
                 continue
-            out.append(
-                ToolCall(
-                    id=slot.id or f"call_{uuid.uuid4().hex[:24]}",
-                    name=slot.name,
-                    arguments=_parse_arguments(raw_args),
-                )
-            )
+            call_id = slot.id or f"call_{uuid.uuid4().hex[:24]}"
+            if call_id in seen:
+                if seen[call_id] == (slot.name, raw_args):
+                    self.tool_call_duplicates_dropped += 1
+                    continue
+                call_id = f"{call_id}_dup{uuid.uuid4().hex[:8]}"
+                self.tool_call_ids_renamed += 1
+            seen[call_id] = (slot.name, raw_args)
+            out.append(ToolCall(id=call_id, name=slot.name, arguments=_parse_arguments(raw_args)))
         return out
+
+    @property
+    def stream_repairs(self) -> int:
+        """How many tool-call repairs this response needed (0 normally)."""
+        return self.tool_call_repeats_dropped + self.tool_call_duplicates_dropped + self.tool_call_ids_renamed
 
     def completion_chars(self) -> int:
         n = sum(len(s) for s in self.text) + sum(len(s) for s in self.reasoning)
@@ -965,6 +1006,11 @@ class OpenAIClient(LLMClient):
 
         acc = ok.acc
         tool_calls = acc.tool_calls()
+        if acc.stream_repairs:
+            log.warning(
+                "%s %s: repaired streamed tool calls (%d repeated deltas, %d duplicate calls dropped, %d ids renamed)",
+                cfg.provider, cfg.model, acc.tool_call_repeats_dropped, acc.tool_call_duplicates_dropped, acc.tool_call_ids_renamed,
+            )
         text = "".join(acc.text)
         reasoning = "".join(acc.reasoning)
         usage = _parse_usage(acc.usage_raw) if acc.usage_raw else None

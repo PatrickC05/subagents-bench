@@ -61,7 +61,7 @@ tier. Every Sail model in a sweep uses the same tier.
 4. `samemodel_parallel_hard`: subagent model = orchestrator (same-model control).
    The orchestrator's prompt is the same text as in `gemma31b_parallel_hard`
    (see "Prompt policy" below). The subagents do run with the orchestrator's
-   model settings (`max_output_tokens` 8192 and no context guard, against
+   model settings (`max_output_tokens` 32768 and no context guard, against
    Gemma's 4096 and 262144); per-call `finish_reason` in `calls.csv` shows
    any truncation.
 5. Three **manager** conditions `manager_{parallel,sequential,arbiter}_hard`:

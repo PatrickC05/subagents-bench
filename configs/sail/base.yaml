@@ -22,7 +22,11 @@ orchestrator:
   # 0.7 for every model: repeated trials are independent samples, not replays.
   temperature: 0.7
   # Room for DeepSeek's (provider-default) reasoning plus a tool call per step.
-  max_output_tokens: 8192
+  # 8192 was too small: in the 2026-10-11 smoke runs the orchestrator reached
+  # 7976 output tokens and the arbiter judge (same model) hit the limit in 2
+  # of 5 calls, all reasoning and no verdict. Sail accepts up to 131072; you
+  # pay only for tokens generated.
+  max_output_tokens: 32768
   # Sail balanced-tier list prices, USD per 1M tokens (scheme `sail_balanced`).
   price_in: 0.07
   price_cache_read: 0.005
