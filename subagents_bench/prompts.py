@@ -5,7 +5,10 @@ really does (non-interactive shell, persisted cwd/exports, timeouts, nohup for
 servers), what subagents can and cannot do under the configured strategy and
 scope, and the per-call and per-episode dispatch caps -- because a model that
 misjudges its budget or tools wastes steps, and wasted steps are what the
-study measures.
+study measures. The orchestrator's description of subagents never names or
+characterizes the subagent model, so it is the same text in the Gemma
+conditions and the same-model control, and the default (all-tools) prompt
+never asks the orchestrator to delegate.
 
 The legacy ``subtask_type`` knob still selects a prefix from
 :data:`SUBTASK_PREFIXES` (``none`` in the study's sweeps).
@@ -111,15 +114,22 @@ SUBAGENT_TOOL_LINE = (
     "Your step waits until every spawned subagent has finished."
 )
 
+# The wording is identical in every condition: it does not name or
+# characterize the subagent model, so the same-model control sees the same
+# text as the Gemma conditions.
 ORCHESTRATOR_SUBAGENT_NOTE = """
 ## Subagents
 `spawn_subagents(instructions)` takes a list of instructions. Subagents are \
-smaller, cheaper models running in the SAME container as you. Each one starts \
+separate model instances running in the SAME container as you. Each one starts \
 fresh: it sees only its instruction, not your conversation or the task \
 description, so make every instruction self-contained (the goal, relevant \
 paths, commands, constraints, and what to report). Each subagent runs at most \
 {max_steps} steps of its own and returns a written report; you receive all \
 reports as the result of the spawn_subagents call.
+
+Step accounting: one spawn_subagents call uses one of your steps, like any \
+other tool call; the subagents' own steps do not count against your step \
+budget.
 
 Strategy: {strategy_text}
 
@@ -149,6 +159,15 @@ STRATEGY_TEXT: dict[Strategy, str] = {
     ),
 }
 
+# Arbiter with hard scope: what the private copies do and do not isolate.
+ARBITER_ISOLATION_TEXT = (
+    " Each candidate edits a private copy of the working directory (if it is "
+    "small enough to copy); only the winner's changes are applied to the real "
+    "working directory. Only the working directory is copied: changes outside "
+    "it (for example under /etc, installed packages or running services) are "
+    "made directly in the container by every candidate."
+)
+
 SCOPE_TEXT: dict[Scope, str] = {
     Scope.EASY: (
         "easy. Subagents can only read: `read_file`, `list_dir` and `search`. "
@@ -159,8 +178,10 @@ SCOPE_TEXT: dict[Scope, str] = {
         "medium. Subagents can read (`read_file`, `list_dir`, `search`) and "
         "run shell commands (`bash`), so they can execute programs and tests, "
         "observe the output and diagnose problems. They have no `edit_file` "
-        "and are told to investigate and report rather than modify project "
-        "files, but the commands they run can change the container."
+        "and will not apply changes to project files, even if you ask them "
+        "to: they report the exact change (a diff or the commands to run) "
+        "for you to apply. The commands they run (builds, tests, installs) "
+        "can still change the container."
     ),
     Scope.HARD: (
         "hard. Subagents have the same tools as you except spawning and "
@@ -232,13 +253,7 @@ def orchestrator_system(
             strategy_text = strategy_text.format(
                 n=n_candidates,
                 diffs=" (and, for edits, their file changes)" if hard else "",
-                isolation=(
-                    " Each candidate edits a private copy of the working directory (if it is "
-                    "small enough to copy); only the winner's changes are applied to the real "
-                    "working directory."
-                    if hard
-                    else ""
-                ),
+                isolation=ARBITER_ISOLATION_TEXT if hard else "",
             )
         body += ORCHESTRATOR_SUBAGENT_NOTE.format(
             max_steps=subagent_max_steps,
@@ -317,8 +332,9 @@ SUBAGENT_SCOPE_TEXT: dict[Scope, str] = {
     Scope.MEDIUM: (
         "Your tools: `read_file`, `list_dir`, `search` and `bash`. With bash you "
         "can run programs and tests and inspect their output; your job is to "
-        "investigate, execute, observe and diagnose. Do not modify project files "
-        "unless the instruction explicitly asks you to. {bash_text}"
+        "investigate, execute, observe and diagnose. Do not modify project files, "
+        "even if the instruction asks you to; instead, report the exact change "
+        "(a diff or the commands to run) for the orchestrator to apply. {bash_text}"
     ),
     Scope.HARD: (
         "Your tools: `read_file`, `list_dir`, `search`, `bash` and `edit_file`. "
@@ -339,9 +355,14 @@ BASH_TEXT = (
 PRIVATE_COPY_NOTE = """
 Isolation: your private working copy of {orig} is {copy}. Make all edits \
 there and do not modify {orig}: wherever the instruction mentions a path under \
-{orig}, use the corresponding path under {copy}. Other candidates are working \
-on the same instruction in their own copies; afterwards an arbiter compares \
-the results and only the best copy's changes are applied to {orig}.
+{orig}, use the corresponding path under {copy}. Paths under {orig} in your \
+tool arguments and commands are redirected to {copy} automatically, and \
+changes made in {orig} by other means are undone. Only {orig} is copied: \
+anything outside it (for example /etc, /var, installed packages and running \
+services) is shared with the other candidates and changes immediately. Other \
+candidates are working on the same instruction in their own copies; \
+afterwards an arbiter compares the results and only the best copy's changes \
+are applied to {orig} (mentions of {copy} inside its files become {orig}).
 """
 
 LAST_STEP_NOTE = "[note: you have 1 step left; call submit with your report in that step]"
@@ -397,10 +418,19 @@ def arbiter_user(instruction: str, candidates: list[dict[str, Any]], round_no: i
     optional diff (the candidate's file changes)."""
     parts = [f"Instruction given to every candidate:\n{instruction}\n"]
     if round_no > 1:
-        parts.append(
+        note = (
             "The candidates have seen each other's reports and revised theirs "
-            f"(debate round {round_no - 1}). Judge the revised reports.\n"
+            f"(debate round {round_no - 1}). The revisions were written without "
+            "tools: nothing in the container changed after the candidates finished."
         )
+        if any(c.get("diff") is not None for c in candidates):
+            note += (
+                " The file changes shown are unchanged since then, and they are "
+                "what would be applied: weigh them over claims in the revised reports."
+            )
+        else:
+            note += " Judge the revised reports, weighing claims against the evidence each candidate actually gathered."
+        parts.append(note + "\n")
     for c in candidates:
         parts.append(f"## Candidate {c['index']} (status: {c['status']}, {c['steps']} steps)")
         parts.append(f"Report:\n{c['report'] or '(empty report)'}")
@@ -417,8 +447,40 @@ wrote a report; the other candidates worked on the same instruction \
 independently. Read their reports and re-examine your own conclusions \
 critically: keep what is correct and supported by evidence, fix what is \
 wrong, and state remaining disagreements with the evidence for each side. You \
-cannot run tools now. Reply with your revised final report only.
+cannot run tools now, and nothing you did can be changed any more: describe \
+only work you actually did, and do not claim commands, edits or results you \
+did not make.{frozen} Reply with your revised final report only.
 """
+
+# Appended to DEBATE_SYSTEM for candidates that worked in a private copy.
+DEBATE_FROZEN_NOTE = (
+    " The files in your private copy are frozen as you left them: the arbiter "
+    "compares those files, and if you win they are applied exactly as they "
+    "are, whatever your revised report says."
+)
+
+
+def debate_system(index: int, n: int, *, private_copy: bool = False) -> str:
+    """A debater's system prompt (``private_copy``: copy isolation)."""
+    return DEBATE_SYSTEM.format(index=index, n=n, frozen=DEBATE_FROZEN_NOTE if private_copy else "")
+
+
+# Prefix of the post-debate revision appended (copy isolation) to the
+# winner's original report in the orchestrator's spawn result.
+POST_DEBATE_NOTE = (
+    "[post-debate revision, written without tools after reading the other "
+    "candidates' reports. No files changed after the candidates finished: the "
+    "report above and the applied files listed below are what was actually done]"
+)
+
+# Leads the combined report: the orchestrator's per-report cap keeps head and
+# tail, so with long reports POST_DEBATE_NOTE (in the middle) can be elided.
+POST_DEBATE_HEADER = "[original report first; its post-debate revision, written without tools, follows at the end]"
+
+
+def report_with_revision(original: str, revised: str) -> str:
+    """The winner's original report plus its post-debate revision (copy isolation)."""
+    return f"{POST_DEBATE_HEADER}\n{original}\n\n{POST_DEBATE_NOTE}\n{revised}"
 
 
 def debate_user(instruction: str, own_report: str, others: list[tuple[int, str]]) -> str:
