@@ -56,7 +56,8 @@ def main(args: list[str]) -> int:
         print("0.24.0")
         return 0
     with open(os.environ["FAKE_HARBOR_LOG"], "a") as f:
-        f.write(json.dumps({"argv": args, "config": os.environ.get("SUBAGENTS_BENCH_CONFIG"), "cwd": os.getcwd()}) + "\n")
+        f.write(json.dumps({"argv": args, "config": os.environ.get("SUBAGENTS_BENCH_CONFIG"), "cwd": os.getcwd(),
+                            "pgid": os.getpgid(0)}) + "\n")
     tasks = [args[i + 1] for i, a in enumerate(args) if a == "-i"]
     job = args[args.index("--job-name") + 1]
     mode = json.loads(Path(os.environ["FAKE_HARBOR_MODES"]).read_text()).get(job, "ok")

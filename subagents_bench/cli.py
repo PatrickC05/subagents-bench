@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import signal
 import sys
 
 import yaml
@@ -56,6 +57,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[FAIL] {e}", file=sys.stderr)
         return 2
     load_dotenv(spec.root / ".env")
+    for sig in (signal.SIGTERM, signal.SIGHUP):  # harbor has its own process group: stop it as on Ctrl-C
+        signal.signal(sig, signal.default_int_handler)
     try:
         if args.cmd == "preflight":
             return sweep.preflight(spec, oracle=args.oracle)

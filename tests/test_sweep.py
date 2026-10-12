@@ -254,7 +254,18 @@ def test_interrupt_stops_harbor_and_exits_130(fake, spec):
     threading.Timer(1.0, os.kill, (os.getpid(), signal.SIGINT)).start()
     assert go(spec) == 130
     assert (spec.jobs_dir / job / "sigint").exists() and manifest(spec)[-1]["event"] == "interrupted"
+    assert fake.calls()[0]["pgid"] != os.getpgid(0)  # a terminal's Ctrl-C reaches harbor only via the sweep
     assert json.loads((spec.jobs_dir / "sweep.json").read_text())["status"] == "interrupted"
+
+
+def test_sigterm_and_sighup_stop_the_sweep_like_ctrl_c(fake, tmp_path):
+    saved = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGHUP)}
+    try:
+        assert cli.main(["sweep", str(make_spec(tmp_path)), "--dry-run"]) == 0
+        assert all(signal.getsignal(s) is signal.default_int_handler for s in saved)  # harbor is not in our group
+    finally:
+        for s, handler in saved.items():
+            signal.signal(s, handler)
 
 
 # --- preflight, probe, CLI ------------------------------------------------------------------------

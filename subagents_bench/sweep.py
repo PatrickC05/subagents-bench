@@ -227,8 +227,10 @@ def probe(models: list[ModelConfig]) -> list[str]:
 
 
 def run_job(cmd: list[str], env: dict[str, str], cwd: Path, watch: Callable[[], bool] | None = None) -> int:
-    """Run harbor with inherited output; call ``watch`` every POLL_SEC and stop the job when it says so."""
-    proc = subprocess.Popen(cmd, env=env, cwd=cwd)
+    """Run harbor with inherited output; call ``watch`` every POLL_SEC and stop the job when it says so.
+    Its own process group: a terminal Ctrl-C reaches harbor once, from :func:`_stop` (a second
+    SIGINT makes asyncio abort harbor's container teardown)."""
+    proc = subprocess.Popen(cmd, env=env, cwd=cwd, process_group=0)
     try:
         while True:
             try:
