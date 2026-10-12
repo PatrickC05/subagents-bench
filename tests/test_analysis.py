@@ -19,6 +19,7 @@ import yaml
 from fakes import ORCH, SUB, FakeFactory, Reply, make_config, records, run_local, tc
 from subagents_bench.analysis.__main__ import main as analyze
 from subagents_bench.analysis.aggregate import condition_order
+from subagents_bench.analysis.load import load_trial
 from subagents_bench.analysis.stats import bootstrap_mean, wilson
 from subagents_bench.analysis.validity import invalid_reason
 from subagents_bench.environment import AgentStopped
@@ -207,8 +208,12 @@ def test_validity_of_timeout_and_provider_failure(analysis):
                                     "agent_execution": {"started_at": "2026-10-12T16:00:00Z"},
                                     "verifier": {"started_at": "2026-10-12T16:30:00Z"}}, None),
 ])
-def test_invalid_reason(episode, result, reason):
-    assert invalid_reason(episode, result) == reason
+def test_invalid_reason(tmp_path, episode, result, reason):
+    (tmp_path / "agent").mkdir()
+    for path, doc in ((tmp_path / "agent" / "episode.json", episode), (tmp_path / "result.json", result)):
+        if doc is not None:
+            path.write_text(json.dumps(doc))
+    assert invalid_reason(load_trial(tmp_path)) == reason
 
 
 def test_conditions_rates_and_intervals(analysis):

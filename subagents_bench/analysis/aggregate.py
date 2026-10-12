@@ -36,7 +36,7 @@ def episode_row(t: Trial, prices: dict) -> dict[str, Any]:
         tools = (ep["config"].get("tools") or {}).get("orchestrator_tools")
         row.update({k: ep.get(k) for k in ("topology", "strategy", "scope", "orchestrator_model", "subagent_model")},
                    orchestrator_tools="all" if tools is None else "+".join(tools))
-    row.update(exit_reason=(ep or {}).get("exit_reason"), **outcome(ep, t.result))
+    row.update(exit_reason=(ep or {}).get("exit_reason"), **outcome(t))
     if ep is None:
         return row
     row.update(t_start=ep["t_start"], wall_clock_sec=ep.get("wall_clock_sec"), steps=len(recs["steps"]),
