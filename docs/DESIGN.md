@@ -349,9 +349,14 @@ task has a `task.toml`); `platform`, below; `harbor.extra_args`, flags
 appended to every harbor run (the oracle's too, which never gets the agent
 timeout multiplier); and `overrides`, deep-merged onto the base config
 before every condition, so a sweep-wide setting such as the step budget or
-the command timeouts lives in one place. `configs/sweeps/swe_sweep.yaml`
-uses all four. SWE-sweep's tasks are a git clone; its tasks request 16 CPUs
-and 64 GB (`--override-cpus 3 --override-memory-mb 7000`, which harbor
+the command timeouts is set once for every condition that does not set its
+own. A condition's own setting wins: `single_matched` keeps the 40 steps
+(5 x 8 subagent steps) `pilot.yaml` gives it, so a larger step budget also
+needs its matched budget under the spec's `conditions:`, which `extends`
+deep-merges into the inherited conditions (`swe_sweep.yaml` shows both
+edits in comments). `configs/sweeps/swe_sweep.yaml` uses all four keys.
+SWE-sweep's tasks are a git clone; its tasks request 16 CPUs and 64 GB
+(`--override-cpus 3 --override-memory-mb 7000`, which harbor
 applies to the verifier container as well); and its test suites run for
 minutes under emulation (`command_timeout_sec` 600,
 `max_command_timeout_sec` 1800, agent timeout 43200 s x 0.0833 = 1 h). In

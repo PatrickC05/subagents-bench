@@ -158,6 +158,21 @@ def test_swe_sweep_spec(capsys):
     assert capsys.readouterr().out.count("$ SUBAGENTS_BENCH_CONFIG=jobs/swe_sweep/configs/") == 45
 
 
+def test_swe_sweep_larger_budget_hint(tmp_path, monkeypatch):
+    """swe_sweep.yaml's larger step budget, made as its comments say (orchestrator_steps and the
+    commented conditions block): every condition gets it, single_matched it x 8 subagent steps."""
+    text = (REPO / "configs/sweeps/swe_sweep.yaml").read_text()
+    assert text.count("\n    orchestrator_steps: 5 ") == 1
+    text = text.replace("\n    orchestrator_steps: 5 ", "\n    orchestrator_steps: 30 ")
+    text = text.replace("\n# conditions:", "\nconditions:").replace("\n#   single_matched:", "\n  single_matched:")
+    (tmp_path / "b30.yaml").write_text(text)
+    monkeypatch.chdir(REPO)  # no pyproject.toml above tmp_path: the spec's paths resolve against the cwd
+    s = sweep.load_spec(tmp_path / "b30.yaml")
+    steps = {c: cfg.budget.orchestrator_steps for c, cfg in s.configs.items()}
+    assert steps.pop("single_matched") == 30 * s.configs["gemma31b_parallel_hard"].subagent.max_steps
+    assert set(steps.values()) == {30} and len(steps) == 14
+
+
 DOCKERFILE = "FROM docker.io/library/alpine:3.20 AS src\nRUN true\nFROM --platform=$BUILDPLATFORM golang:1.20\n"
 
 

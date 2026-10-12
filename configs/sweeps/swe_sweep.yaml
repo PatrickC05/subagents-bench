@@ -34,10 +34,14 @@ tasks:                               # small repositories with fast test suites:
 overrides:
   budget:
     orchestrator_steps: 5            # the pilot's budget
-    # orchestrator_steps: 30         # the larger budget under discussion (20-40); then also set
-    #                                # single_matched: {topology: single, budget: {orchestrator_steps: 240}}
     command_timeout_sec: 600         # test suites run for minutes under amd64 emulation
     max_command_timeout_sec: 1800
+
+# A larger step budget (20-40 is under discussion) takes two edits: orchestrator_steps above, and
+# single_matched's own budget, which pilot.yaml sets to 40 and which beats the overrides. It goes
+# under `conditions:`, which `extends` deep-merges into pilot.yaml's 15 conditions. For 30 steps:
+# conditions:
+#   single_matched: {budget: {orchestrator_steps: 240}}   # 30 x 8 subagent steps
 
 harbor:
   n_concurrent: 4                    # 4 x (3 CPUs, 7 GB) fits a 12-CPU, 32 GB Docker VM
