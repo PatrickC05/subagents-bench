@@ -691,6 +691,31 @@ def _iter_sse_data(lines: Iterable[str]) -> Iterator[str]:
         yield value[1:] if value.startswith(" ") else value
 
 
+def _until_stalled(lines: Iterable[str], acc: "_Accumulator", stall_sec: float, status: int | None) -> Iterator[str]:
+    """``lines``, but fail the attempt once ``stall_sec`` passes without a
+    chunk that carries data (content, reasoning or tool-call deltas): the
+    first since the request was sent, or the next since the last.
+
+    httpx's read timeout counts any byte, so a server that keeps a stalled
+    request alive with SSE keep-alive comments (or empty chunks) never trips
+    it: in the 2026-10-12 smoke run single Sail attempts hung 468-2015 s,
+    with no data, until the connection was reset. Checked as each line
+    arrives; a connection with no bytes at all still hits the read timeout.
+    """
+    for line in lines:
+        last = acc.t_last_chunk if acc.t_last_chunk is not None else acc.t_sent
+        waited = time.time() - last
+        if stall_sec and waited > stall_sec:
+            what = "no data since the request was sent" if acc.t_last_chunk is None else "no new data"
+            raise _AttemptFailure(
+                status=status,
+                error_type="StreamStall",
+                message=f"{what} for {waited:.0f}s (limit {stall_sec:.0f}s; only keep-alive bytes arrived)",
+                exc_class=None,
+            )
+        yield line
+
+
 def _stream_error(chunk: dict[str, Any]) -> _AttemptFailure | None:
     """An in-stream error object (vLLM/gateways send these mid-stream)."""
     err = chunk.get("error")
@@ -859,7 +884,8 @@ class OpenAIClient(LLMClient):
                 # A server that ignores stream=true answers with a plain JSON body.
                 use_sse = streaming and not resp.headers.get("content-type", "").lower().startswith("application/json")
                 if use_sse:
-                    for data in _iter_sse_data(resp.iter_lines()):
+                    stall_sec = float(getattr(self.cfg, "request_timeout_sec", 180.0) or 0.0)
+                    for data in _iter_sse_data(_until_stalled(resp.iter_lines(), acc, stall_sec, status)):
                         if data.strip() == "[DONE]":
                             acc.done = True
                             break

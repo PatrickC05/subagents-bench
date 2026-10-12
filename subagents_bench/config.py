@@ -133,8 +133,9 @@ class ModelConfig:
     # about two minutes instead of many. Sail's failed attempts take ~30 s
     # ("chat completion failed"), so this allows 3-4 attempts.
     retry_budget_sec: float = 120.0
-    # Connect/read timeout per HTTP attempt (read = max gap between bytes;
-    # the longest gap seen on Sail was 73 s, a Gemma reply sent as one chunk).
+    # Per HTTP attempt: the connect/read timeout, and the longest wait for the
+    # first (or next) chunk that carries data -- keep-alive bytes do not count
+    # (the longest wait seen on Sail was 73 s, a Gemma reply sent as one chunk).
     request_timeout_sec: float = 180.0
     # Stream SSE (timings per chunk); False -> one plain POST per attempt.
     stream: bool = True

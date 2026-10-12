@@ -164,7 +164,7 @@ task_ids, difficulties, n_trials, seed, output_dir
 - `context_window: int | None` (enables the context guard)
 - `max_retries: int = 4`
 - `retry_budget_sec: float = 120` (no retry starts later than this after the call's first attempt)
-- `request_timeout_sec: float = 180` (connect/read timeout per attempt; read = the longest gap between bytes)
+- `request_timeout_sec: float = 180` (per attempt: the connect/read timeout, and the longest wait for the first or next chunk that carries data; keep-alive bytes do not count)
 - `stream: bool = True`
 - the descriptive `active_params_b: float | None` and `total_params_b: float | None`
 
@@ -217,10 +217,19 @@ thread-safe: one instance is shared by concurrent subagent threads.
   failed" stream errors); 4 of 314 calls needed a retry; the two calls that
   never recovered spent 407 s and 533 s on 9 attempts under the old limits
   (8 retries, 120 s backoff cap, 600 s read timeout); one call recovered
-  only after 380 s. The 180 s read timeout is 2.5x the longest gap between
-  bytes seen (73 s, a Gemma reply sent as one chunk; DeepSeek's longest was
-  11 s). Record every `Attempt`, with the backoff stored on the failed
-  attempt.
+  only after 380 s. The 180 s `request_timeout_sec` is 2.5x the longest
+  wait for data seen (73 s, a Gemma reply sent as one chunk; DeepSeek's
+  longest was 11 s). **Stalls are measured by data, not bytes**: an
+  attempt fails (`StreamStall`, retryable) once `request_timeout_sec`
+  passes without a chunk carrying content, reasoning or tool-call deltas
+  (the first since the request, or the next since the last). httpx's read
+  timeout counts any byte, and in the 2026-10-12 smoke run single Sail
+  attempts got HTTP 200 and then no data for 468 s, 600 s and 2015 s until
+  the connection was reset, while the host's network was failing (harbor's
+  registry lookups failed DNS at the same time). A worst-case call now
+  fails after about `request_timeout_sec` (one stalled attempt already
+  exceeds the retry budget). Record every `Attempt`, with the backoff
+  stored on the failed attempt.
 - **Billing errors.** HTTP 402, or a 4xx other than 429 whose body mentions
   balance/billing/credit/quota/payment, raises `BillingError` immediately.
   A 429 is billing only with an explicit billing marker

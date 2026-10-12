@@ -13,6 +13,7 @@ import json
 import math
 import random
 import threading
+import time
 from dataclasses import asdict
 from types import SimpleNamespace
 
@@ -1175,3 +1176,50 @@ def test_stream_repairs_are_counted_on_the_response_and_call_record(env):
     clean = client.complete("sys", USER, [])
     assert clean.stream_repairs == 0
     assert call_record_from_response(clean, ids=ids, cfg=client.cfg).stream_repairs == 0
+
+
+# ---------------------------------------------------------------------------
+# stalled streams: keep-alive bytes without data
+# ---------------------------------------------------------------------------
+
+
+class PacedStream(httpx.SyncByteStream):
+    """Body pieces delivered ``gap`` seconds apart (real time)."""
+
+    def __init__(self, pieces: list[bytes], gap: float):
+        self.pieces, self.gap = pieces, gap
+
+    def __iter__(self):
+        for p in self.pieces:
+            time.sleep(self.gap)
+            yield p
+
+
+def paced(pieces: list[bytes], gap: float) -> httpx.Response:
+    return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=PacedStream(pieces, gap))
+
+
+def test_keep_alive_bytes_without_data_fail_the_attempt(env):
+    keepalives = [b": keep-alive\n\n"] * 60  # 60 x 0.05 s = 3 s of keep-alives, never any data
+    server = Server(paced(keepalives, 0.05), simple_ok("fine"))
+    t0 = time.time()
+    r = make(server, request_timeout_sec=0.5).complete("s", USER, [])
+    assert r.text == "fine" and time.time() - t0 < 2.0  # the stalled attempt was cut at ~0.5 s, then retried
+    a0, a1 = r.attempts
+    assert (a0.status, a0.error_type) == (200, "StreamStall") and "no data since the request was sent" in a0.error
+    assert 0.5 <= a0.t_end - a0.t_start < 1.0 and a1.error_type is None
+
+
+def test_a_stall_after_some_data_also_fails_the_attempt(env):
+    first = sse_bytes(delta(role="assistant", content="partial"), done=False)
+    server = Server(paced([first] + [b": ping\n\n"] * 40, 0.05), simple_ok("fine"))
+    r = make(server, request_timeout_sec=0.5).complete("s", USER, [])
+    assert r.attempts[0].error_type == "StreamStall" and "no new data" in r.attempts[0].error
+
+
+def test_a_slow_stream_that_keeps_sending_data_is_not_cut(env):
+    events = [delta(role="assistant", content="")] + [delta(content=f"w{i} ") for i in range(12)] + [delta(finish="stop")]
+    pieces = [b"data: " + json.dumps(e).encode() + b"\n\n" for e in events] + [b"data: [DONE]\n\n"]
+    server = Server(paced(pieces, 0.1))  # ~1.5 s in total, each gap 0.1 s < the 0.5 s limit
+    r = make(server, request_timeout_sec=0.5).complete("s", USER, [])
+    assert r.text.startswith("w0 w1") and len(r.attempts) == 1 and r.finish_reason == "stop"
