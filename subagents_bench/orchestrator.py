@@ -22,13 +22,18 @@ and ``find -newer`` at the end.
 
 Exit reasons: ``finished``, ``max_steps``, ``no_tool_call``, ``token_budget``
 and ``timeout`` (safety caps, checked before each step), ``cancelled`` (the
-stop event), ``billing_error`` (recorded, then re-raised) and ``error``. A
-provider failure that survived every retry (:class:`LLMError`) ends the
-episode with ``error`` without raising, so the verifier still grades the
-container; any other exception is a harness bug: it is recorded with its
-traceback and re-raised (``raise_on_error=False`` suppresses that, for tests
-and callers that only need the record). The episode is finalized in every
-case before :meth:`Orchestrator.run` returns or raises.
+stop event), ``billing_error`` (recorded, then re-raised), ``provider_error``
+and ``error``. A provider failure that survived every retry (a plain
+:class:`LLMError`: retries exhausted, a non-retryable 4xx, a missing key)
+ends the episode with ``provider_error`` without raising; the exception is
+kept on :attr:`EpisodeResult.cause` so the harbor agent can raise
+:class:`~subagents_bench.types.ProviderUnavailableError` after finalizing.
+A :class:`ContextLengthError` of the orchestrator ends it with ``error`` (its
+context outgrew the model: an outcome of the condition, not an outage). Any
+other exception is a harness bug: it is recorded with its traceback and
+re-raised (``raise_on_error=False`` suppresses that, for tests and callers
+that only need the record). The episode is finalized in every case before
+:meth:`Orchestrator.run` returns or raises.
 """
 
 from __future__ import annotations
@@ -51,7 +56,7 @@ from .llm import make_client
 from .prompts import orchestrator_system_for, step_note
 from .schema import SpawnRecord, StepRecord
 from .subagent import DispatchResult, DispatchSpec, MeteredEnv, Runtime, Subagent, measure, text_output
-from .telemetry import AgentLog, EpisodeRecorder, ToolEvent
+from .telemetry import AgentLog, EpisodeRecorder, ToolEvent, is_provider_error
 from .tools import run_tool, specs_for, truncate_output
 from .types import (
     AgentStopped,
@@ -109,6 +114,15 @@ GROUP_FILES_CAP = 200
 MIN_REPORT_CHARS = 2000
 
 
+def llm_error_text(e: LLMError) -> str:
+    """``'<ExceptionType>: message'``, with the HTTP status appended when the
+    message does not already carry it."""
+    text = f"{type(e).__name__}: {e}"
+    if e.status is not None and f"HTTP {e.status}" not in text:
+        text += f" [HTTP {e.status}]"
+    return text
+
+
 @dataclass
 class EpisodeResult:
     exit_reason: str
@@ -118,6 +132,8 @@ class EpisodeResult:
     episode_dir: Path
     record: dict[str, Any]
     recorder: EpisodeRecorder | None = None
+    # The provider failure behind exit_reason "provider_error" (not raised).
+    cause: LLMError | None = None
 
 
 class Orchestrator:
@@ -211,6 +227,7 @@ class Orchestrator:
         error: str | None = None
         final_summary: str | None = None
         pending: BaseException | None = None
+        cause: LLMError | None = None
         last_text = ""
         try:
             self._make_clients()
@@ -239,9 +256,18 @@ class Orchestrator:
         except BillingError as e:
             exit_reason, error, pending = "billing_error", f"{type(e).__name__}: {e}", e
         except LLMError as e:
-            # A provider failure after every retry: end the episode, let the
-            # verifier grade what was done.
-            exit_reason, error = "error", f"{type(e).__name__}: {e}"
+            error = llm_error_text(e)
+            if is_provider_error(error):
+                # The provider could not serve the orchestrator after every
+                # retry: not an outcome of the condition. Not raised here (the
+                # record is complete either way); the harbor agent raises
+                # ProviderUnavailableError from `cause` after finalizing.
+                exit_reason, cause = "provider_error", e
+            else:
+                # ContextLengthError (the orchestrator's context outgrew the
+                # model: an outcome of the condition, graded like any other)
+                # or another LLMError subclass.
+                exit_reason = "error"
         except BaseException as e:  # noqa: BLE001 - recorded, then re-raised below
             exit_reason, error = "error", traceback.format_exc()
             if isinstance(e, KeyboardInterrupt):
@@ -254,7 +280,6 @@ class Orchestrator:
         if marker is not None and not self.stop_event.is_set():
             files = measure(workspace.files_modified_since, menv, marker, self.workdir, EPISODE_FILES_CAP)
             git_stat = measure(workspace.git_diff_stat, menv, self.workdir)
-        harness = self.rt.harness
         record = rec.finalize(
             exit_reason or "error",
             error=error,
@@ -262,8 +287,7 @@ class Orchestrator:
             files_modified=files[0] if files else None,
             n_files_modified=files[1] if files else None,
             git_diff_stat=git_stat,
-            harness_exec_n=harness.n if harness is not None else None,
-            harness_exec_sec=harness.sec if harness is not None else None,
+            **self.rt.harness_exec_fields(),
         )
         self._close_clients()
         if pending is not None:
@@ -276,6 +300,7 @@ class Orchestrator:
             episode_dir=rec.dir,
             record=record,
             recorder=rec,
+            cause=cause if record.get("exit_reason") == "provider_error" else None,
         )
 
     def _close_clients(self) -> None:

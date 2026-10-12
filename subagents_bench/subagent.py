@@ -10,7 +10,9 @@ with one of these statuses (written to ``dispatches.jsonl``):
 * ``max_steps`` -- it used every step (the last assistant text is the report);
 * ``context_overflow`` -- the provider rejected the prompt as too long even
   after an aggressive trim;
-* ``error`` -- a provider error after retries (or a harness bug);
+* ``error`` -- a provider error after retries (its failed call counts in
+  ``EpisodeRecord.n_provider_errors`` and the dispatch ``error`` starts with
+  ``LLMError:``), or a harness bug;
 * ``cancelled`` -- the episode's stop event fired;
 * ``token_budget`` / ``timeout`` -- the episode's token or wall-clock safety
   cap (or the per-subagent ``token_budget``) was reached before a step.
@@ -96,6 +98,11 @@ class MeteredEnv:
     applies); every other attribute is forwarded to the wrapped environment.
     ``also`` is another meter that every exec through this one is added to
     as well (e.g. the episode-wide measurement meter).
+
+    ``sec`` is the plain sum of the execs' durations; :meth:`union_sec` is the
+    wall-clock time covered by at least one of them, which is less when
+    execs from concurrent threads (parallel dispatches, arbiter candidates)
+    overlap.
     """
 
     def __init__(self, env: Any, also: "MeteredEnv | None" = None):
@@ -104,11 +111,32 @@ class MeteredEnv:
         self._lock = threading.Lock()
         self.n = 0
         self.sec = 0.0
+        # (start, end) time.monotonic() of every exec, for union_sec().
+        self._intervals: list[tuple[float, float]] = []
 
-    def add(self, n: int, sec: float) -> None:
+    def add(self, n: int, sec: float, interval: tuple[float, float] | None = None) -> None:
         with self._lock:
             self.n += n
             self.sec += sec
+            if interval is not None:
+                self._intervals.append(interval)
+
+    def union_sec(self) -> float:
+        """Seconds during which at least one exec ran (overlaps counted once)."""
+        with self._lock:
+            intervals = sorted(self._intervals)
+        total = 0.0
+        cur: list[float] | None = None
+        for t0, t1 in intervals:
+            if cur is None or t0 > cur[1]:
+                if cur is not None:
+                    total += cur[1] - cur[0]
+                cur = [t0, t1]
+            else:
+                cur[1] = max(cur[1], t1)
+        if cur is not None:
+            total += cur[1] - cur[0]
+        return total
 
     def exec(self, command: str, timeout_sec: float | None = None, cwd: str | None = None) -> Any:
         t0 = time.monotonic()
@@ -117,10 +145,10 @@ class MeteredEnv:
                 return self._env.exec(command, timeout_sec=timeout_sec)
             return self._env.exec(command, timeout_sec=timeout_sec, cwd=cwd)
         finally:
-            dt = time.monotonic() - t0
-            self.add(1, dt)
+            t1 = time.monotonic()
+            self.add(1, t1 - t0, (t0, t1))
             if self._also is not None:
-                self._also.add(1, dt)
+                self._also.add(1, t1 - t0, (t0, t1))
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._env, name)
@@ -156,8 +184,16 @@ class Runtime:
     subagent_client: Any = None
     arbiter_client: Any = None
     # Meter for the harness's own measurement commands (markers, modified-file
-    # scans, git diff --stat): EpisodeRecord.harness_exec_n/_sec.
+    # scans, git diff --stat): EpisodeRecord.harness_exec_n, harness_exec_sec
+    # (union_sec) and harness_exec_sum_sec (sec).
     harness: MeteredEnv | None = None
+
+    def harness_exec_fields(self) -> dict[str, Any]:
+        """The EpisodeRecord harness_exec_* values (None when not metered)."""
+        h = self.harness
+        if h is None:
+            return {"harness_exec_n": None, "harness_exec_sec": None, "harness_exec_sum_sec": None}
+        return {"harness_exec_n": h.n, "harness_exec_sec": h.union_sec(), "harness_exec_sum_sec": h.sec}
 
     @property
     def measure_env(self) -> Any:

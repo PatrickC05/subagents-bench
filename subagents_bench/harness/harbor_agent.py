@@ -14,13 +14,25 @@ Threading: harbor calls :meth:`OrchestratorAgent.run` on its event loop. The
 agent captures that loop, wraps harbor's environment in a
 :class:`~subagents_bench.environment.HarborEnvironment` bound to it, and runs
 the synchronous orchestrator with ``await asyncio.to_thread(...)``; worker
-threads submit each ``exec`` back to the loop. When harbor cancels the agent
-(its agent timeout), the agent sets the episode's stop event, waits (shielded)
-up to :attr:`OrchestratorAgent.CANCEL_GRACE_SEC` for the thread to unwind,
-finalizes the episode with ``exit_reason="cancelled"`` (a no-op if the thread
-already did) and re-raises. A :class:`~subagents_bench.types.BillingError` or
-a harness bug is recorded by the orchestrator and re-raised so harbor records
-the exception.
+threads submit each ``exec`` back to the loop.
+
+When harbor cancels the agent (its agent timeout), the agent sets the
+episode's stop event, waits (shielded) up to
+:attr:`OrchestratorAgent.CANCEL_GRACE_SEC` for the thread to unwind, kills
+every agent command still running in the container (cancelling a
+``docker exec`` client never stops the process inside, and harbor's
+shared-mode verifier grades the same container next; see
+:func:`kill_commands_script`), finalizes the episode with
+``exit_reason="cancelled"`` and the kill's outcome in ``cancel_kill`` (the
+exit reason stays the thread's if it finalized first) and re-raises.
+
+A :class:`~subagents_bench.types.BillingError` or a harness bug is recorded
+by the orchestrator and re-raised so harbor records the exception. An episode
+that ended with ``exit_reason="provider_error"`` (the provider could not serve
+the orchestrator) is finalized as usual and then
+:class:`~subagents_bench.types.ProviderUnavailableError` is raised, so harbor
+records an exception and skips the verifier instead of grading an
+unattempted task.
 
 ``AgentContext`` (tokens incl. cache, cache tokens, output tokens, cost,
 per-model usage, and the episode summary in ``metadata``) is updated after
@@ -36,18 +48,26 @@ import asyncio
 import json
 import logging
 import os
+import re
+import shlex
 import threading
 from pathlib import Path
 from typing import Any, Callable
 
-from .. import __version__
+from .. import __version__, workspace
 from ..config import ExperimentConfig
 from ..environment import HarborEnvironment
 from ..orchestrator import Orchestrator
 from ..runner import EnvFacts, probe_environment
-from ..telemetry import EpisodeRecorder
+from ..telemetry import EpisodeRecorder, provenance
+from ..types import ProviderUnavailableError
 
 log = logging.getLogger(__name__)
+
+# Fingerprint the source as harbor imports the agent (telemetry caches it per
+# process): this process's episodes run the modules loaded now, whatever is
+# on disk when the first episode starts.
+provenance()
 
 try:  # harbor is only installed in the benchmark environment.
     from harbor.agents.base import BaseAgent  # type: ignore
@@ -99,11 +119,89 @@ def _task_identity(logs_dir: Path) -> tuple[str, str | None]:
     return task or trial_name or "unknown", trial_name
 
 
+# Kills every agent command still running in the sandbox. Each shell-backed
+# tool call runs ``wrap_<nonce>.sh`` and the wrapper first writes its pid to
+# ``<state_root>/<agent_id>/pid_<nonce>`` (tools._WRAPPER); the outer script
+# removes the file when the command ends. For each pid file whose process is
+# still that wrapper (checked by its command line, or by its parent's, i.e.
+# ``timeout``'s or the outer script's, when the command ``exec``'d away from
+# the wrapper; so a stale file with a recycled pid is skipped), SIGKILL the
+# wrapper's process group (``timeout`` makes one per command) unless it is our
+# own or init's, and the wrapper's process tree. The process table is read
+# from /proc (Linux containers) or `ps` (other hosts). Prints
+# ``__SB_KILLED <commands killed>``.
+_KILL_SCRIPT = r"""
+__sb_root=@ROOT@
+__sb_tab=
+if [ -d /proc/self ]; then
+  for __sb_st in /proc/[0-9]*/stat; do
+    read -r __sb_l < "$__sb_st" 2>/dev/null || continue
+    set -- ${__sb_l##*) }
+    __sb_tab="$__sb_tab${__sb_l%% *} $2 $3
+"
+  done
+else
+  __sb_tab=$(ps -A -o pid= -o ppid= -o pgid= 2>/dev/null)
+fi
+__sb_pgid() {
+  local p pp g
+  while read -r p pp g; do [ "$p" = "$1" ] && { echo "$g"; return; }; done <<< "$__sb_tab"
+}
+__sb_ppid() {
+  local p pp g
+  while read -r p pp g; do [ "$p" = "$1" ] && { echo "$pp"; return; }; done <<< "$__sb_tab"
+}
+__sb_tree() {
+  local todo="$1" out= p c pp g
+  while [ -n "$todo" ]; do
+    set -- $todo; p=$1; shift; todo="$*"
+    out="$out $p"
+    while read -r c pp g; do [ "$pp" = "$p" ] && todo="$todo $c"; done <<< "$__sb_tab"
+  done
+  echo "$out"
+}
+__sb_args() {
+  if [ -r "/proc/$1/cmdline" ]; then tr '\000' ' ' < "/proc/$1/cmdline" 2>/dev/null
+  else ps -o args= -p "$1" 2>/dev/null; fi
+}
+__sb_self=$(__sb_pgid $$)
+__sb_init=$(__sb_pgid 1)
+__sb_n=0
+for __sb_f in "$__sb_root"/*/pid_*; do
+  [ -f "$__sb_f" ] || continue
+  __sb_nonce=${__sb_f##*/pid_}
+  read -r __sb_p < "$__sb_f" 2>/dev/null || continue
+  case "$__sb_p" in ''|*[!0-9]*) continue ;; esac
+  __sb_pp=$(__sb_ppid "$__sb_p")
+  case "$(__sb_args "$__sb_p") $([ -n "$__sb_pp" ] && __sb_args "$__sb_pp")" in
+    *"wrap_$__sb_nonce"*) ;;
+    *) continue ;;
+  esac
+  __sb_g=$(__sb_pgid "$__sb_p")
+  __sb_pids=$(__sb_tree "$__sb_p")
+  if [ -n "$__sb_g" ] && [ "$__sb_g" -gt 1 ] 2>/dev/null && [ "$__sb_g" != "$__sb_self" ] && [ "$__sb_g" != "$__sb_init" ]; then
+    kill -KILL -- "-$__sb_g" 2>/dev/null
+  fi
+  kill -KILL $__sb_pids 2>/dev/null
+  __sb_n=$((__sb_n + 1))
+done
+echo "__SB_KILLED $__sb_n"
+"""
+
+
+def kill_commands_script(state_root: str) -> str:
+    """bash script that SIGKILLs every agent command still running under
+    ``state_root`` (see ``_KILL_SCRIPT``); prints ``__SB_KILLED <n>``."""
+    return _KILL_SCRIPT.replace("@ROOT@", shlex.quote(state_root))
+
+
 class OrchestratorAgent(BaseAgent):
     """Large orchestrator + small subagents, as a harbor external agent."""
 
     # Seconds to wait for the orchestrator thread to unwind after a cancel.
     CANCEL_GRACE_SEC = 30.0
+    # Timeout of the cancel-time kill exec (we stop waiting 10 s later).
+    CANCEL_KILL_TIMEOUT_SEC = 20
 
     def __init__(self, logs_dir: Any, model_name: str | None = None, logger: Any = None, *args: Any, **kwargs: Any):
         super().__init__(logs_dir, model_name, logger, *args, **kwargs)
@@ -196,13 +294,16 @@ class OrchestratorAgent(BaseAgent):
                     pass
             if not fut.done():
                 log.warning("orchestrator thread did not unwind within %.0fs of the cancel", self.CANCEL_GRACE_SEC)
-            harness = orch.rt.harness
+            # Before the verifier sees the container: stop what the agent left running.
+            kill = await self._kill_agent_commands(environment, workspace.sb_root(env))
             recorder.finalize(
                 "cancelled",
                 error="cancelled by harbor (agent timeout or job cancellation)",
-                harness_exec_n=harness.n if harness is not None else None,
-                harness_exec_sec=harness.sec if harness is not None else None,
+                cancel_kill=kill,
+                **orch.rt.harness_exec_fields(),
             )
+            if recorder.record.get("cancel_kill") != kill:  # the thread finalized first
+                recorder.update_record(cancel_kill=kill)
             self._fill_context(context)
             raise
         except BaseException:
@@ -211,6 +312,64 @@ class OrchestratorAgent(BaseAgent):
             self._fill_context(context)
             raise
         self._fill_context(context)
+        result = fut.result()
+        if result.exit_reason == "provider_error":
+            # Not an outcome of the condition: make harbor record an exception
+            # (and skip the verifier) so the trial is invalid and is rerun.
+            cause = result.cause
+            raise ProviderUnavailableError(
+                f"episode {result.episode_id} ended with exit_reason=provider_error: {result.error}",
+                attempts=list(cause.attempts) if cause is not None else None,
+                status=cause.status if cause is not None else None,
+                request=cause.request if cause is not None else None,
+            ) from cause
+
+    async def _kill_agent_commands(self, environment: Any, state_root: str) -> dict[str, Any]:
+        """Best-effort SIGKILL of every agent command still running in the
+        container, through harbor's own environment (the HarborEnvironment
+        wrapper refuses execs once the stop event is set). Never raises;
+        returns ``EpisodeRecord.cancel_kill``."""
+        info: dict[str, Any] = {"attempted": False, "ok": False, "n_killed": None, "error": None}
+        exec_fn = getattr(environment, "exec", None)
+        if not callable(exec_fn):
+            info["error"] = "no harbor environment to exec in"
+            return info
+        try:
+            task = asyncio.ensure_future(
+                exec_fn(kill_commands_script(state_root), cwd="/", timeout_sec=self.CANCEL_KILL_TIMEOUT_SEC)
+            )
+        except Exception as e:  # noqa: BLE001 - best effort
+            info["error"] = f"{type(e).__name__}: {e}"[:500]
+            return info
+        info["attempted"] = True
+        try:
+            # A separate task: a second cancel stops our wait, not the kill.
+            done, _ = await asyncio.wait({task}, timeout=self.CANCEL_KILL_TIMEOUT_SEC + 10)
+        except asyncio.CancelledError:
+            info["error"] = "interrupted by another cancellation before the kill finished"
+            return info
+        if not done:
+            task.cancel()
+            info["error"] = f"no result within {self.CANCEL_KILL_TIMEOUT_SEC + 10}s"
+            return info
+        if task.cancelled():
+            info["error"] = "the kill exec was cancelled"
+            return info
+        exc = task.exception()
+        if exc is not None:
+            info["error"] = f"{type(exc).__name__}: {exc}"[:500]
+            return info
+        res = task.result()
+        out = getattr(res, "stdout", None) or ""
+        m = re.search(r"__SB_KILLED (\d+)", out)
+        if m is None:
+            detail = (out + (getattr(res, "stderr", None) or "")).strip()
+            info["error"] = f"unexpected kill output (exit {getattr(res, 'return_code', None)}): {detail}"[:500]
+            return info
+        info["ok"], info["n_killed"] = True, int(m.group(1))
+        if info["n_killed"]:
+            log.warning("killed %d agent command(s) still running after the cancel", info["n_killed"])
+        return info
 
     def _fill_context(self, context: Any) -> None:
         """Copy the recorded totals into harbor's AgentContext (never raises)."""

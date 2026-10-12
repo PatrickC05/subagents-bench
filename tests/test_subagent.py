@@ -166,6 +166,33 @@ def test_provider_error_and_crash_fail_only_the_dispatch(tmp_path):
     d1, d2 = r["dispatches"]
     assert d1["status"] == "error" and d1["error"].startswith("LLMError: server error")
     assert d2["status"] == "error" and "RuntimeError: bug in the client" in d2["error"] and "Traceback" in d2["error"]
+    # Only the provider failure counts (the client bug is a harness error); the episode carries on.
+    assert r["episode"]["n_provider_errors"] == 1 and r["episode"]["exit_reason"] == "finished"
+
+
+def test_metered_env_union_counts_overlapping_execs_once():
+    import threading
+    import time
+
+    from subagents_bench.subagent import MeteredEnv
+
+    class SlowEnv:
+        def exec(self, command, timeout_sec=None):
+            time.sleep(0.2)
+            return command
+
+    episode = MeteredEnv(SlowEnv())
+    group = MeteredEnv(SlowEnv(), also=episode)
+    threads = [threading.Thread(target=group.exec, args=("x",)) for _ in range(3)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    episode.exec("y")  # after the others: adds its own 0.2 s to both
+    assert (group.n, episode.n) == (3, 4)
+    assert group.sec >= 0.6 and 0.2 <= group.union_sec() < 0.35
+    assert episode.sec >= 0.8 and 0.4 <= episode.union_sec() < 0.55
+    assert MeteredEnv(SlowEnv()).union_sec() == 0.0
 
 
 def test_per_subagent_token_budget(tmp_path):

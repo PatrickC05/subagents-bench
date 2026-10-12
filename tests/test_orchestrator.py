@@ -146,12 +146,49 @@ def test_billing_error_in_subagent_aborts_episode(tmp_path):
     assert r["spawns"][0]["dispatch_ids"] == [d["dispatch_id"] for d in r["dispatches"]]
 
 
-def test_provider_failure_ends_with_error_without_raising(tmp_path):
+def test_provider_failure_ends_with_provider_error_without_raising(tmp_path):
     cfg = make_config(tmp_path, topology="single")
-    f = FakeFactory({ORCH: [LLMError("giving up after 9 attempts")]})
+    down = LLMError("giving up after 9 attempts", status=503)
+    f = FakeFactory({ORCH: [Reply("", [tc("list_dir")]), down]})
     res = run(cfg, f)
-    assert res.exit_reason == "error" and "giving up" in res.error
-    assert_valid(res.episode_dir)
+    # Its own outcome (not 'error'): the harbor agent raises ProviderUnavailableError from res.cause.
+    assert res.exit_reason == "provider_error" and res.cause is down
+    assert res.error == "LLMError: giving up after 9 attempts [HTTP 503]"  # class and status kept
+    ep = assert_valid(res.episode_dir)["episode"]
+    assert ep["exit_reason"] == "provider_error" and ep["error"] == res.error and ep["n_provider_errors"] == 1
+
+
+def test_orchestrator_context_overflow_is_an_error_not_a_provider_failure(tmp_path):
+    from subagents_bench.types import ContextLengthError
+
+    cfg = make_config(tmp_path, topology="single")
+    res = run(cfg, FakeFactory({ORCH: [ContextLengthError("prompt is too long", status=400)]}))
+    assert res.exit_reason == "error" and res.cause is None
+    assert res.error.startswith("ContextLengthError: prompt is too long")
+    assert assert_valid(res.episode_dir)["episode"]["n_provider_errors"] == 0
+
+
+def test_harness_exec_sec_is_the_union_of_concurrent_measurements(tmp_path, monkeypatch):
+    # Parallel dispatches take their markers and scans concurrently: the sum
+    # counts the overlap N times, the union (harness_exec_sec) once.
+    from subagents_bench import workspace
+
+    orig = workspace.make_marker
+
+    def slow_marker(env, name):
+        env.exec("sleep 0.3")  # through the same (metered) env as the marker itself
+        return orig(env, name)
+
+    monkeypatch.setattr(workspace, "make_marker", slow_marker)
+    cfg = make_config(tmp_path, subagent={"strategy": "parallel", "max_concurrent": 3})
+    f = FakeFactory({ORCH: [Reply("", [tc("spawn_subagents", instructions=["a", "b", "c"])]), Reply("", [tc("finish")])],
+                     SUB: [Reply("", [tc("submit", report="r")])] * 3})
+    res = run(cfg, f)
+    ep = assert_valid(res.episode_dir)["episode"]
+    # 5 slow markers (episode, group, 3 dispatches); the dispatches' three overlap.
+    assert ep["harness_exec_sum_sec"] >= 5 * 0.3
+    assert ep["harness_exec_sec"] < ep["harness_exec_sum_sec"] - 0.4
+    assert ep["harness_exec_sec"] >= 3 * 0.3
 
 
 def test_unexpected_exception_finalizes_then_raises(tmp_path):
