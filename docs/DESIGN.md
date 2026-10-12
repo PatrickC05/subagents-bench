@@ -389,7 +389,9 @@ commit and dirtiness, and per task a hash of the dir harbor runs and its bugs
 is `billing_error`, `provider_error`, `harbor_exception` (before the agent
 started, or a job cancel), `agent_crash`, `no_episode` or `no_result`. An
 agent timeout is valid and scored, and a valid trial without a reward
-counts as unsolved. A SWE-sweep trial whose grader reports `grader_failed`
+counts as reward 0, unsolved, with no bug fixed and its task's bugs in the
+denominator, so `resolve_rate`, `reward_mean` and `bug_fix_rate` all count it
+alike. A SWE-sweep trial whose grader reports `grader_failed`
 (the verifier's own setup failed, not the patch) is `grader_failed`: invalid
 and rerun, like a harbor exception. So is, as `verifier_failed`, any harbor
 exception without a reward from a verifier that runs in its own container

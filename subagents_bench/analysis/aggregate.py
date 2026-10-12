@@ -101,7 +101,7 @@ def condition_table(episodes: pd.DataFrame) -> pd.DataFrame:
                "n_bugs": bugs, "bugs_fixed": float(v["bugs_fixed"].sum()) if n else 0.0,
                "bug_fix_rate": float(v["bugs_fixed"].sum()) / bugs if bugs else math.nan,
                "n_regressed": int(v["regressed"].sum()) if n else 0,
-               "reward_mean": float(v["reward"].mean()) if n and v["reward"].notna().any() else math.nan}
+               "reward_mean": float(v["reward"].mean()) if n else math.nan}
         for m in MEAN_METRICS:
             row[f"{m}_mean"], row[f"{m}_ci_lo"], row[f"{m}_ci_hi"] = bootstrap_mean(v[m] if n else [])
         row["cost_per_solve"] = float(v["cost_total"].sum(skipna=False)) / k if k else math.nan

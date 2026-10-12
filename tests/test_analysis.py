@@ -251,7 +251,8 @@ def test_bugs_fixed_and_regressions_from_swe_sweep_rewards(tmp_path, capsys):
     """SWE-sweep's grader: reward = bugs fixed / bugs (rounded to 4 places), 0 on a regression; a
     grader failure is invalid. Bugs fixed are the grader's exact count, 0 on a regression. A task's
     bugs come from the sweep's tasks.json: a patch that breaks the build gets n_subtasks 0 from the
-    grader, yet its task's bugs stay in the denominator."""
+    grader, yet its task's bugs stay in the denominator. A valid trial without a reward (a verifier
+    in the agent's container failed after it started) is reward 0 with no bug fixed."""
     jobs, job = tmp_path / "jobs" / "ss", "ss__r1__single_5step"
     single, g = make_config(name="single_5step", topology="single"), {"n_subtasks": 14.0, "visible_ok": 1.0}
     trial(jobs, job, "swe-sweep__goawk", single, models(0), reward=0.3571, rewards={**g, "n_resolved": 5.0})
@@ -260,7 +261,12 @@ def test_bugs_fixed_and_regressions_from_swe_sweep_rewards(tmp_path, capsys):
     trial(jobs, job, "swe-sweep__gin", single, models(0), reward=0.0, rewards={**g, "n_subtasks": 11.0, "grader_failed": 1.0})
     trial(jobs, job, "swe-sweep__pendulum", single, models(0), reward=0.0,
           rewards={"n_subtasks": 0.0, "visible_ok": 0.0, "agent_build_ok": 0.0, "grader_failed": 0.0})
-    bugs = {"swe-sweep__goawk": 14, "swe-sweep__echo": 6, "swe-sweep__gin": 11, "swe-sweep__pendulum": 9}
+    unscored = trial(jobs, job, "swe-sweep__click", single, models(0), exception="RewardFileNotFoundError")
+    res = json.loads((unscored / "result.json").read_text())
+    res.update(verifier={"started_at": res["finished_at"]}, verifier_environment_mode="shared")
+    (unscored / "result.json").write_text(json.dumps(res))
+    bugs = {"swe-sweep__goawk": 14, "swe-sweep__echo": 6, "swe-sweep__gin": 11, "swe-sweep__pendulum": 9,
+            "swe-sweep__click": 13}
     (jobs / "tasks.json").write_text(json.dumps({"n_subtasks": bugs}))
     pricing = tmp_path / "pricing.yaml"
     pricing.write_text(yaml.safe_dump({"fake": PRICES}))
@@ -270,10 +276,12 @@ def test_bugs_fixed_and_regressions_from_swe_sweep_rewards(tmp_path, capsys):
     assert eps.loc["swe-sweep__goawk", ["n_subtasks", "bugs_fixed", "regressed", "resolved"]].tolist() == [14, 5, 0, 0]
     assert eps.loc["swe-sweep__echo", ["bugs_fixed", "regressed"]].tolist() == [0.0, 1]
     assert eps.loc["swe-sweep__pendulum", ["n_subtasks", "bugs_fixed", "regressed"]].tolist() == [9, 0.0, 1]
+    assert eps.loc["swe-sweep__click", ["valid", "reward", "resolved", "n_subtasks", "bugs_fixed"]].tolist() == [
+        True, 0, 0, 13, 0]
     assert (eps.loc["swe-sweep__gin", "valid"], eps.loc["swe-sweep__gin", "invalid_reason"]) == (False, "grader_failed")
     c = pd.read_csv(tmp_path / "out" / "conditions.csv").set_index("condition").loc["single_5step"]
-    assert c[["n_valid", "n_bugs", "bugs_fixed", "n_regressed"]].tolist() == [3, 29, 5, 2]
-    assert (c["bug_fix_rate"], c["reward_mean"]) == pytest.approx((5 / 29, 0.3571 / 3))
+    assert c[["n_valid", "n_resolved", "n_bugs", "bugs_fixed", "n_regressed"]].tolist() == [4, 0, 42, 5, 2]
+    assert (c["bug_fix_rate"], c["reward_mean"]) == pytest.approx((5 / 42, 0.3571 / 4))
 
 
 def test_stats():
