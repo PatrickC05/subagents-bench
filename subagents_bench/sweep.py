@@ -2345,6 +2345,14 @@ def _run_sweep_locked(
             final, code = "aborted_billing", EXIT_BILLING
             break
         n_total = st.n_total or len(tasks)
+        if rc != 0 and st.state == "absent":
+            # harbor exited before creating the job (it resolves the dataset online at start: in the
+            # 2026-10-12 smoke run a DNS failure did this). Unreachable providers mean no network.
+            out(f"{prefix}: harbor exited {rc} without starting the job (see its error above); probing the models ...")
+            failing = probe_models(full)
+            if failing:
+                watcher.abort_reason = (f"harbor could not start {j.job} and the providers do not answer either "
+                                        f"(no network?): {'; '.join(failing)}")
         if watcher.abort_reason is None and n_provider and (watcher.probed is None or not watcher.probed):
             # Probe again before the next job (the mid-job probe, if any, may be minutes old).
             failing = probe_models(full)
@@ -2462,9 +2470,13 @@ def ping_model(model_cfg: Any) -> dict[str, Any]:
     from .llm import make_client
     from .types import Message
 
-    changes = {"max_output_tokens": PING_MAX_TOKENS}
-    if hasattr(model_cfg, "max_retries"):
-        changes["max_retries"] = 2
+    changes: dict[str, Any] = {"max_output_tokens": PING_MAX_TOKENS}
+    # A health check answers in seconds: give up within about a minute and a
+    # half (in the 2026-10-12 smoke run a probe on the default limits hung
+    # 771 s on a stalled connection).
+    for name, value in (("max_retries", 1), ("retry_budget_sec", 30.0), ("request_timeout_sec", 60.0)):
+        if hasattr(model_cfg, name):
+            changes[name] = value
     cfg = dataclasses.replace(model_cfg, **changes)
     rec: dict[str, Any] = {
         "model": cfg.model,

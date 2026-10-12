@@ -214,10 +214,12 @@ class FakeHarbor:
         self.popen_kwargs.append(kw)
         job = _arg(cmd, "--job-name")
         tasks = [cmd[i + 1] for i, a in enumerate(cmd) if a == "-i"]
-        make_job(Path(cwd) / _arg(cmd, "-o") / job, tasks, mode=self.modes.get(job, "complete"))
+        mode = self.modes.get(job, "complete")
+        if mode != "absent":  # "absent": harbor fails before creating the job (e.g. no network)
+            make_job(Path(cwd) / _arg(cmd, "-o") / job, tasks, mode=mode)
         if self.on_job:
             self.on_job(job)
-        rc = self.rc
+        rc = 1 if mode == "absent" else self.rc
 
         class P:
             returncode = rc
@@ -1619,3 +1621,40 @@ def test_progress_lines_are_flushed_at_once(capsys, monkeypatch):
     import inspect
     for fn in (sweep.run_sweep, sweep.run_preflight, sweep.run_oracle, sweep.print_plan):
         assert inspect.signature(fn).parameters["out"].default is sweep.say
+
+
+def test_harbor_failing_to_start_with_no_network_aborts(tmp_path, fake_harbor, stub_config, probe):
+    spec = sweep.load_spec(make_project(tmp_path))
+    order = sweep.condition_order(["single", "par"], 2, 0)
+    first = f"t__r1__{order[1][0]}"
+    fake_harbor.modes[first] = "absent"
+    probe.failing = ["m @ sail: LLMError: [Errno 8] nodename nor servname provided"]
+    lines: list[str] = []
+    assert sweep.run_sweep(spec, out=lines.append) == sweep.EXIT_PROVIDER
+    assert len(fake_harbor.popen_calls) == 1 and probe.calls == 1
+    assert any("harbor exited 1 without starting the job" in s for s in lines)
+    assert any(s.startswith("ABORT: harbor could not start") and "no network?" in s for s in lines)
+
+
+def test_harbor_failing_to_start_with_the_network_up_goes_on(tmp_path, fake_harbor, stub_config, probe):
+    spec = sweep.load_spec(make_project(tmp_path))
+    order = sweep.condition_order(["single", "par"], 2, 0)
+    fake_harbor.modes[f"t__r1__{order[1][0]}"] = "absent"
+    assert sweep.run_sweep(spec, out=lambda s: None) == sweep.EXIT_FAIL  # failed job, the rest ran
+    assert len(fake_harbor.popen_calls) == 4 and probe.calls == 1
+
+
+def test_the_probe_request_gives_up_within_about_a_minute(monkeypatch):
+    from subagents_bench.config import ModelConfig
+
+    seen = {}
+
+    def fake_make_client(cfg):
+        seen["cfg"] = cfg
+        raise RuntimeError("offline")
+
+    monkeypatch.setattr("subagents_bench.llm.make_client", fake_make_client)
+    rec = sweep.ping_model(ModelConfig(model="m", provider="sail"))
+    c = seen["cfg"]
+    assert (c.max_retries, c.retry_budget_sec, c.request_timeout_sec, c.max_output_tokens) == (1, 30.0, 60.0, 256)
+    assert rec["ok"] is False and rec["error_type"] == "RuntimeError"

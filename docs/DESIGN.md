@@ -903,14 +903,19 @@ Commands:
     one line per trial as harbor finishes it (reward, exit reason, wall
     clock, provider errors, harbor exception). When a trial ended with a
     provider failure it probes every model of the sweep once
-    (`probe_models`: one tiny request each); if any still fails, it stops
+    (`probe_models`: one tiny request each, at most 1 retry, 60 s stall
+    limit, 30 s retry budget); if any still fails, it stops
     the job (SIGINT, as Ctrl-C) and the sweep aborts with exit 4
     (`aborted_provider`, manifest event `provider_abort` with the reason).
     After a job with provider failures the models are probed again before
     the next job: still failing aborts with exit 4; answering means a
     transient failure, so the sweep goes on and the job is rerun on the
-    next run. With the runtime's fail-fast (section 3 retries, section 4
-    exit reasons) an outage stops the sweep within a few minutes. A job
+    next run. A harbor job that exits non-zero before creating its job dir
+    (harbor resolves the dataset through its online registry at start, so
+    no network fails it at once) also triggers the probe; failing models
+    then abort with exit 4 ("no network?"). With the runtime's fail-fast
+    (section 3 retries, section 4 exit reasons) an outage stops the sweep
+    within a few minutes. A job
     that finished with trials to rerun counts as failed. It also aborts after 3 consecutive failed jobs; Ctrl-C gives
     harbor time to remove its containers.
   - It appends to `<jobs_dir>/sweep_manifest.jsonl`, one line per job
