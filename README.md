@@ -15,141 +15,246 @@ Pareto curves.
 
 ## The experiment
 
-Each episode runs for a fixed **5 orchestrator steps**:
+One episode is one Terminal-Bench 2.0 task, run by **harbor 0.24.0** in the
+task's official Docker image:
 
-1. A frontier orchestrator (Anthropic API) receives an issue and the repository
-   at its base commit inside the official benchmark Docker image, with `bash`,
-   `edit_file`, and `search` tools.
-2. It may spawn **subagents** — independent workers with the same tools in the
-   *same* container, running a (usually smaller) model served by **vLLM**. A
-   `subtask_type` prefix optionally steers *what* it delegates.
-3. The harness scores the patch and logs telemetry.
+1. A large **orchestrator** (`deepseek-ai/DeepSeek-V4.1-Flash` on Sail's
+   `balanced` tier) gets the task instruction and a fixed budget of **5
+   steps**. Each step is one LLM call followed by the tools it requested:
+   `bash`, `edit_file`, `read_file`, `list_dir`, `search`, `finish`.
+2. With `topology: subagents` it can also call `spawn_subagents(instructions)`.
+   Small **subagent** models (default `nvidia/Gemma-4-31B-IT-NVFP4` on Sail)
+   then work in the same container, with a tool set set by the delegation
+   **scope** and scheduled by the **strategy** (below).
+3. harbor's verifier grades the container's final state (reward 1 =
+   resolved). The harness logs every LLM call, tool call, step, dispatch and
+   arbitration with raw tokens and timestamps, so cost and latency are
+   recomputed offline under other price schemes and serving assumptions.
 
-### Axes (one `ExperimentConfig` per point)
+Budgets are steps and tokens; wall-clock limits are only loose safety caps,
+so provider latency never changes a trajectory. The full contract is
+[`docs/DESIGN.md`](docs/DESIGN.md).
 
-| Axis | Field | Values |
-|------|-------|--------|
-| Orchestrator model | `orchestrator.model` | any Anthropic / OpenAI-compatible model |
-| Subagent model | `subagent.model` | any model, incl. vLLM-served (**size axis**) |
-| # subagents | `subagent.max_concurrent`, `max_dispatches` | int |
-| Subtask type | `subtask_type` | `none`, `parallel_exploration`, `localize_then_fix`, `verify`, `decompose` |
-| Benchmark subset | `benchmark`, `task_ids`, `difficulties` | TB / EB; difficulty = **task-size axis** |
-| Timeout / budget | `budget.*` | steps, tokens, seconds |
-| Sandbox | `sandbox.kind` | `harbor`, `exploitbench`, `local_docker`, `local_shell` |
+### Axes
+
+| Axis | Values | Config field |
+|------|--------|--------------|
+| Topology | `single` (orchestrator alone) / `subagents` | `topology` |
+| Strategy | `parallel` (up to `max_concurrent` subagents at once) / `sequential` (one at a time) / `arbiter` (3 candidates per instruction, an LLM judge, one confidence-aware debate round) | `subagent.strategy` |
+| Scope (delegation difficulty) | `easy` = `read_file, list_dir, search` / `medium` = easy + `bash` / `hard` = medium + `edit_file` | `subagent.scope` |
+| Subagent model | Gemma-4-31B (default), the orchestrator itself (same-model control), Qwen3.5-{0.8,2,4,9}B on Prime (size sweep) | `subagent.model` |
+| Task difficulty | Terminal-Bench label, category, expert-time estimate (covariates) | `tasks_meta.json` |
+
+The pilot sweep ([`configs/sweeps/pilot.yaml`](configs/sweeps/pilot.yaml), on
+[`configs/sail/base.yaml`](configs/sail/base.yaml)) is 12 conditions × 10
+tasks × 3 rounds = 360 episodes. The smoke sweep
+([`configs/sweeps/smoke.yaml`](configs/sweeps/smoke.yaml)) is the same 12
+conditions on 2 tasks × 1 round; the size sweep is
+[`configs/sweeps/prime_size.yaml`](configs/sweeps/prime_size.yaml).
 
 ### Baselines
 
-- **Single agent** (`topology: single`) — orchestrator alone, same tools/budget.
-  Validate against the model's published SWE-bench Verified result.
-  → [`configs/baselines/single_agent.yaml`](configs/baselines/single_agent.yaml)
-- **Same-model subagents** (`subagent.model: null`) — isolates *having*
-  subagents from subagent *size*.
-  → [`configs/baselines/same_model_subagents.yaml`](configs/baselines/same_model_subagents.yaml)
+- `single_5step`: the orchestrator alone, same 5 steps.
+- `single_matched`: alone, 40 steps (compute-matched).
+- `samemodel_parallel_hard`: subagents running the orchestrator's own model,
+  which separates *having* subagents from subagent *size*.
+
+All three are conditions in [`configs/sweeps/pilot.yaml`](configs/sweeps/pilot.yaml).
+The earlier Anthropic-orchestrator configs
+([`configs/baselines/`](configs/baselines/), [`configs/unified.yaml`](configs/unified.yaml),
+[`configs/exploitbench.yaml`](configs/exploitbench.yaml)) still load but are
+not part of the Sail sweeps.
+
+Baselines:
+- no subagents
+
+Higher level strategies:
+- Adaptive parellization:
+-   maximizing parallel subagents with max of n concurrent agents
+-   verifiers
+-   debate/ensemble
+-   swarms
+
+Variables:
+- task difficulty
+-   defined by (summarization, + analysis, + implementation)
+- size of task
+
+
+┌────────────────────┬────────────────────────────────────────────────────┐
+│      Category      │               Example subagent task                │
+├────────────────────┼────────────────────────────────────────────────────┤
+│ Locate / retrieve  │ "Find where the budget is enforced"                │
+├────────────────────┼────────────────────────────────────────────────────┤
+│ Summarize          │ "Describe what orchestrator.py does"               │
+├────────────────────┼────────────────────────────────────────────────────┤
+│ Execute / observe  │ "Run the tests and report failures"                │
+├────────────────────┼────────────────────────────────────────────────────┤
+│ Analyze / diagnose │ "Why does test X fail?"                            │
+├────────────────────┼────────────────────────────────────────────────────┤
+│ Plan / decompose   │ "Propose the steps to fix this"                    │
+├────────────────────┼────────────────────────────────────────────────────┤
+│ Implement / edit   │ "Apply this patch to file Y"                       │
+├────────────────────┼────────────────────────────────────────────────────┤
+│ Verify / test      │ "Write a test that checks the fix"                 │
+├────────────────────┼────────────────────────────────────────────────────┤
+│ Judge / critique   │ "Which of these 3 patches is best?" (your arbiter) │
+└────────────────────┴────────────────────────────────────────────────────┘
+
+Task Difficuluties:
+- Easy: Locate/retrieve + Summarize
+- Medium: Easy + Execute / Observe + Analyze/Diagnose
+- Hard: Medium + plan/decompose+implement/edit + verify/test
+
+Research Question: What is the best user experience for agentic coding with subagents? (user experience being represented by wallclock time and subagent calls)
+
+Experiments:
+- To start, only 1 model
+- dsv4.1 no subagents
+- subagent strategies:
+-   [n parallel agents, no parallelization, arbiter] x [easy/medium/hard task difficulty]
+-     LLM arbiter{dsv4.1} looking over debates https://arxiv.org/pdf/2602.12276
+
+- Later on: give cost structure for spawning different model calls
+
+Subagent costs:
+- ~ to real costs/tokens
+- changing cost structures/allocation based on proxies for probability of success
+
+To keep track of:
+- final score on benchmark
+- number of subagents spawned & distribution of tokens used in each (and tool calls by each) & $ inference costs
+- orchestrator # of tokens & inference costs
+- wallclock time 
+- 
+
 
 ## Metrics
 
-Per trial ([`telemetry.py`](subagents_bench/telemetry.py)), written to
-`runs/<experiment>/<task>/telemetry.json`:
+Every episode writes eight record files into its harbor trial dir
+(`<trial>/agent/`, schema in
+[`subagents_bench/schema.py`](subagents_bench/schema.py)); `subagents-bench
+aggregate` turns them into tables. Every file, field and column is described
+in [`docs/DATA.md`](docs/DATA.md). The main measurements:
 
-- **resolve rate** (official SWE-bench / ExploitBench scoring, in a clean container);
-- **total tokens**, split orchestrator vs. subagent, in/out/cache;
-- **total generation cost** (USD, from per-model prices);
-- **subagent dispatches and re-dispatches**;
-- **wall-clock time**, plus every API call timestamped in `calls.jsonl` for
-  latency reconstruction;
-- **instruction-following**: granted-vs-requested subagents per spawn call.
+- **resolve rate**: harbor's verifier reward, with Wilson 95% intervals and
+  paired McNemar tests against the baselines;
+- **tokens** per role (orchestrator, subagent, judge, debate) and kind
+  (uncached input, cached input, reasoning, visible output), per call;
+- **dollars** under every price scheme of
+  [`configs/pricing.yaml`](configs/pricing.yaml) (Sail tiers, Prime, an
+  OpenRouter reference median), recomputed offline; a model without a price
+  is NaN, never 0;
+- **FLOPs** (2 × active parameters × tokens);
+- **wall-clock time**: measured, decomposed along the critical path
+  (orchestrator LLM, subagent LLM, judge LLM, tools, harness overhead), and
+  simulated under other serving profiles
+  ([`configs/serving.yaml`](configs/serving.yaml): replay, a fit to the
+  measured latencies, a theoretical H100 roofline);
+- **delegation behaviour**: subagents spawned, re-dispatches,
+  instruction-following (granted / requested), per-dispatch tokens, tool
+  calls, steps, status and files modified; arbiter agreement, confidence,
+  debate rounds and winners;
+- **provider behaviour**: TTFT, decode speed, retries and backoff, chunk
+  timings, cached-token counts.
 
 ## Layout
 
 ```
 subagents_bench/
-  config.py         Unified ExperimentConfig (YAML) for both benchmarks
-  llm.py            Anthropic + OpenAI-compatible (vLLM) clients, usage/cost
-  environment.py    Environment protocol; harbor / local_docker / shell backends
-  tools.py          bash / edit_file / search
-  prompts.py        Orchestrator & subagent prompts + subtask prefixes
-  subagent.py       Bounded tool-using worker
-  orchestrator.py   5-step loop, spawn_subagents / finish, budget enforcement
-  telemetry.py      The reported metrics
-  analysis.py       Per-config tables + Pareto points
-  cli.py            validate / run / aggregate
+  config.py           ExperimentConfig (YAML): topology, strategy, scope, budgets, models
+  types.py            messages, tool specs, LLMResponse, usage, timings, errors
+  schema.py           every on-disk record (field docs) + validate_record
+  llm.py              Sail / Prime / vLLM / OpenAI (httpx SSE) and Anthropic clients
+  credentials.py      .env loading, Prime CLI credentials (never printed)
+  environment.py      harbor / local Docker / local shell sandboxes
+  tools.py            bash, read_file, list_dir, search, edit_file (per-agent shell state)
+  workspace.py        markers, modified-file scans, copies, manifests, diffs, apply
+  prompts.py          orchestrator, subagent, judge and debate prompts
+  orchestrator.py     the step loop and spawn_subagents
+  subagent.py         bounded subagent loop, context guard
+  arbiter.py          candidates, judge, confidence-aware debate, apply
+  telemetry.py        EpisodeRecorder: writes the record files
+  runner.py           local runs + `validate` / `run`
+  sweep.py            sweep specs, preflight, harbor jobs, `tasks`
+  analysis/           check-run, completeness, aggregate, calibrate
+  plots/              the figures and index.md
   harness/
-    harbor_agent.py        BaseAgent wrapper for Terminal-Bench 4.0
+    harbor_agent.py        harbor BaseAgent (OrchestratorAgent)
     exploitbench_agent.py  ExploitBench adapter
-configs/            unified.yaml, exploitbench.yaml, baselines/
-tests/              scripted-LLM end-to-end tests (no network/Docker)
+configs/
+  sail/base.yaml      base config of the Sail sweeps
+  sweeps/             pilot, smoke, prime_size sweep specs
+  pricing.yaml, pricing_reference.yaml, models.yaml, serving.yaml, provider_models.json
+  baselines/, unified.yaml, exploitbench.yaml   earlier Anthropic configs
+scripts/
+  setup.sh, run_experiment.sh, analyze.sh       the three reproduction scripts
+  gen_data_docs.py    regenerates docs/DATA.md
+  bench_latency.py    standalone provider latency micro-benchmark (not part of the sweeps)
+docs/
+  REPRODUCE.md        runbook: setup, the three scripts, cost/runtime, outputs, resuming
+  DESIGN.md           implementation contract
+  DATA.md             data dictionary: every file, field and table column
+  PRICING_SOURCES.md  where every price and parameter count comes from
+tests/                offline unit tests, the offline pipeline test, opt-in live/docker tests
 ```
 
 ## Running
 
-Install:
+Three scripts reproduce the study from a fresh clone; the runbook, with
+prerequisites, credentials, expected cost and runtime, outputs, resuming and
+troubleshooting, is [`docs/REPRODUCE.md`](docs/REPRODUCE.md).
 
 ```bash
-pip install -e ".[all,dev]"      # anthropic + openai + pytest
+scripts/setup.sh                                        # install from uv.lock, check Docker + credentials, offline tests, dataset
+scripts/run_experiment.sh configs/sweeps/smoke.yaml     # preflight, then the smoke sweep (24 episodes)
+scripts/run_experiment.sh                               # the pilot sweep (360 episodes); resumable
+scripts/analyze.sh jobs/pilot                           # check-run, completeness, aggregate, plot
 ```
 
-Set keys. Subagents run on hosted OpenAI-compatible endpoints — **Prime
-Intellect** (`provider: prime`) and **Sail** (`provider: sail`) — which fill in
-their base URL and key env var automatically and report USD cost in the usage
-object (so `price_in/out: 0` still gives real cost). A local vLLM server works
-too (`provider: vllm`, `base_url: http://localhost:8000/v1`).
+`scripts/run_experiment.sh SPEC --dry-run` prints the plan, every `harbor
+run` command and a rough cost estimate without running anything.
+Credentials go in `.env` (created from [`.env.example`](.env.example)):
+`SAIL_API_KEY`, and for the size sweep `PRIME_API_KEY` + `PRIME_TEAM_ID` or a
+logged-in `prime` CLI.
+
+Other commands (`.venv/bin/subagents-bench --help`):
 
 ```bash
-export ANTHROPIC_API_KEY=...     # frontier orchestrator (Anthropic API)
-export PRIME_API_KEY=...         # Prime Intellect subagents (provider: prime)
-export SAIL_API_KEY=...          # Sail subagents           (provider: sail)
+subagents-bench validate configs/sweeps/pilot.yaml      # any config, sweep spec or pricing/models/serving YAML
+subagents-bench tasks terminal-bench@2.0                # task metadata
+subagents-bench run CONFIG --task-id demo --instruction "..."   # one local episode (sandbox local_docker / local_shell)
+.venv/bin/python -m pytest -q                           # offline tests (RUN_LIVE=1 / RUN_DOCKER=1 for opt-in ones)
 ```
 
-| provider | base URL | key env |
-|----------|----------|---------|
-| `prime` / `prime_intellect` | `https://api.pinference.ai/api/v1` | `PRIME_API_KEY` |
-| `sail` | `https://api.sailresearch.com/v1` | `SAIL_API_KEY` |
-| `vllm` / `openai` | from `base_url` | from `api_key_env` |
-
-Sail is also Anthropic-compatible, so the orchestrator can point at it too
-(`provider: anthropic`, `base_url: https://api.sailresearch.com/v1`).
-
-**Terminal-Bench 4.0** (via harbor): point harbor at the agent wrapper, and the
-config via env var so a sweep launches one job per config without code changes.
+A single harbor job by hand:
 
 ```bash
-SUBAGENTS_BENCH_CONFIG=configs/unified.yaml \
-  harbor run -d "terminal-bench@head" \
-  --agent-import-path subagents_bench.harness.harbor_agent:OrchestratorAgent \
-  --n-concurrent 3
+SUBAGENTS_BENCH_CONFIG=jobs/smoke/configs/single_5step.yaml \
+  .venv/bin/harbor run -d terminal-bench@2.0 -i fix-git \
+  -a subagents_bench.harness.harbor_agent:OrchestratorAgent -e docker -n 1 -k 1 -o jobs/manual --job-name demo -y
 ```
-
-Terminal-Bench 4.0 = 3 GPU jobs of 66 tasks; stratify by the task difficulty
-label (`difficulties:`), which is the task-size axis.
 
 **ExploitBench**: call
 `subagents_bench.harness.exploitbench_agent.run_exploitbench_trial(config,
-task_id, instruction, exec_fn, grade_fn)` from an ExploitBench runner once it has
-a live task handle. `exec_fn` runs a command in the task container; `grade_fn`
-returns the 16-flag capability bitmap.
-
-**Local smoke test** (no benchmark harness — your own container or host shell):
-
-```bash
-subagents-bench validate configs/unified.yaml
-subagents-bench run configs/unified.yaml --task-id demo --issue "Fix the failing test in app/"
-```
-(set `sandbox.kind: local_docker` + `sandbox.image`, or `local_shell` for offline).
-
-**Aggregate** into tables + Pareto points:
-
-```bash
-subagents-bench aggregate runs --csv summary.csv --pareto mean_total_tokens
-```
+task_id, instruction, exec_fn, grade_fn)` from an ExploitBench runner;
+`exec_fn` runs a command in the task container and `grade_fn` returns the
+capability bitmap.
 
 ## Notes
 
-- The orchestrator is Anthropic-native with prompt caching on the system block
-  so long repository context is cheap across the 5 steps.
-- Subagents share the orchestrator's container, so their file edits are visible
-  to the orchestrator and to each other — they are workers, not sandboxes.
-- vLLM subagents on fixed hardware have no API price; set `price_in/out: 0` to
-  report tokens only, or an amortised $/Mtok estimate for a cost comparison.
-- `subtask_type` currently only swaps the orchestrator prompt *prefix*
-  ([`prompts.py`](subagents_bench/prompts.py)); the wordings are intentionally
-  thin and meant to be iterated on.
+- Subagents share the orchestrator's container, so their edits are visible to
+  everyone. The exception is arbiter + hard scope: each candidate edits a
+  private copy, and only the judge's winner is applied to the workdir.
+- Provider prices do not track model size, so the study logs raw tokens and
+  timings and recomputes cost and latency offline; the run-time `cost_usd` is
+  only an estimate from the config's prices (null when a model has none).
+- The Terminal-Bench images are `linux/amd64`; on Apple Silicon they run
+  emulated, which slows tool calls but not LLM calls. Tool time is measured
+  separately and `container_arch` is recorded, so the latency analysis can
+  account for it.
+- `google/gemma-4-12B-it` is served by Sail with a 16384-token context; a
+  condition that uses it needs `context_window: 16384` (the commented
+  condition in `configs/sweeps/pilot.yaml` has it).
+- `subtask_type` only swaps a legacy orchestrator prompt prefix
+  ([`prompts.py`](subagents_bench/prompts.py)); the Sail sweeps use `none`.
