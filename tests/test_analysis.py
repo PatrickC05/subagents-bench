@@ -125,11 +125,12 @@ def jobs(tmp_path_factory):
     arb = cond("gemma31b_arbiter_hard", subagent={"strategy": "arbiter"})
     trial(smk, "smk__r1__gemma31b_arbiter_hard", "task-a", arb,
           models(1, judges=[judgement(0, 0.5, False), judgement(1, 0.9, True)]), reward=1.0)
-    trial(smk, "smk__r1__gemma31b_arbiter_hard", "task-b", arb, models(1, judges=[judgement(2, 0.95, True)]),
-          reward=0.0)
+    cut_off = Reply("", [], finish_reason="length", prompt_tokens=2000, completion_tokens=100)  # judge retry
+    trial(smk, "smk__r1__gemma31b_arbiter_hard", "task-b", arb,
+          models(1, judges=[cut_off, judgement(2, 0.95, True)]), reward=0.0)
     trial(smk, "_partial/smk__r1__single_5step.1", "task-a", single, models(0), reward=1.0)  # moved aside: skipped
     easy = cond("gemma31b_parallel_easy", subagent={"scope": "easy"})
-    trial(extra, "extra__r1__gemma31b_parallel_easy", "task-a", easy, models(0), reward=1.0)
+    trial(extra, "extra__r1__gemma31b_parallel_easy", "task-a", easy, models(0), reward=0.0)
     no_env = extra / "extra__r1__gemma31b_parallel_easy" / "task-b__env"
     no_env.mkdir()
     (no_env / "config.json").write_text(json.dumps({"task": {"path": "task-b"}, "trial_name": no_env.name}))
@@ -263,6 +264,11 @@ def test_critical_path_by_strategy(analysis):
     judge = sum(c["t_end"] - c["t_start"] for c in calls if c["role"] == "arbiter")
     debate = max(c["t_end"] - c["t_start"] for c in calls if c["role"] == "debate")
     assert row["cp_judge_llm_sec"] == pytest.approx(judge + debate)
+    r = records(Path(eps.loc[("gemma31b_arbiter_hard", "task-b"), "trial_dir"]) / "agent")  # cut-off judge, retried
+    judges = [c for c in r["calls"] if c["role"] == "arbiter"]
+    assert len(judges) == 2 and r["arbitrations"][0]["rounds"][0]["judge_call_ids"] == [c["call_id"] for c in judges]
+    assert eps.loc[("gemma31b_arbiter_hard", "task-b"), "cp_judge_llm_sec"] == pytest.approx(
+        sum(c["t_end"] - c["t_start"] for c in judges))
 
 
 def test_delegation_gate_fails_for_a_condition_that_never_delegated(jobs, tmp_path, capsys):
@@ -273,6 +279,9 @@ def test_delegation_gate_fails_for_a_condition_that_never_delegated(jobs, tmp_pa
     assert s["delegation_gate"] == {"ok": False, "never_delegated": ["gemma31b_parallel_easy"], "no_valid_episodes": []}
     assert s["invalid_reasons"] == {"provider_error": 1, "no_episode": 1} and (s["n_trials"], s["n_valid"]) == (10, 8)
     assert s["critical_path"]["n_over_wall_clock"] == 0 and s["critical_path"]["n_valid_episodes"] == 8
+    easy = pd.read_csv(tmp_path / "conditions.csv").set_index("condition").loc["gemma31b_parallel_easy"]
+    assert (easy["n_valid"], easy["n_resolved"]) == (1, 0) and easy["cost_total_mean"] > 0
+    assert math.isnan(easy["cost_per_solve"])  # no solve: no cost per solve
 
 
 def test_condition_order():
