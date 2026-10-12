@@ -225,7 +225,11 @@ def _trials(job_dir: Path) -> list[Path]:
 
 def retry_reason(trial: Path) -> str | None:
     """Why a finished trial does not measure its condition (so its job is rerun), or None.
-    An agent timeout is an outcome: harbor still runs the verifier after it."""
+    An agent timeout is an outcome: harbor still runs the verifier after it. So is an exception
+    after the verifier started in the agent's container (Terminal-Bench): the agent can leave it
+    broken. A verifier in its own fresh container (harbor's ``verifier_environment_mode``
+    ``separate``, SWE-sweep) the agent cannot break: an exception there without a reward (its
+    image failed to build or start, it timed out, or it wrote no reward file) is infrastructure."""
     res, ep = _json(trial / "result.json"), _json(trial / "agent" / "episode.json")
     exc = (res.get("exception_info") or {}).get("exception_type")
     if ep.get("exit_reason") == "billing_error" or exc == "BillingError":
@@ -236,6 +240,8 @@ def retry_reason(trial: Path) -> str | None:
         return f"harbor {exc}"  # environment/setup failure, or the agent crashed before the verifier
     if rewards(res).get("grader_failed"):
         return "grader"  # SWE-sweep's verifier could not grade (its own setup failed): not a 0
+    if exc and _reward(res) is None and res.get("verifier_environment_mode") == "separate":
+        return "verifier"  # SWE-sweep's separate verifier failed before it graded: not a 0
     return None
 
 

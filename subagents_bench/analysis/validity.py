@@ -1,7 +1,8 @@
 """Trial validity and outcome. A trial is invalid when the sweep would rerun it
 (:func:`subagents_bench.sweep.retry_reason`: billing error, provider failure, a harbor exception
-before the verifier, a grader failure) or when it has no episode or no result. An agent timeout
-is an outcome: harbor still runs the verifier, so the trial is scored.
+before the verifier, a grader failure, a separate verifier's failure) or when it has no episode
+or no result. An agent timeout is an outcome: harbor still runs the verifier, so the trial is
+scored.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ def _outside_agent(result: dict) -> bool:
 
 def invalid_reason(t: Trial) -> str | None:
     """None for a valid trial, else no_episode, no_result, billing_error, provider_error,
-    harbor_exception or agent_crash."""
+    grader_failed, verifier_failed, harbor_exception or agent_crash."""
     if t.episode is None:
         return "no_episode"
     if t.result is None:
@@ -45,8 +46,8 @@ def invalid_reason(t: Trial) -> str | None:
     why = retry_reason(t.dir)
     if why in ("billing", "provider"):
         return f"{why}_error"
-    if why == "grader":
-        return "grader_failed"
+    if why in ("grader", "verifier"):
+        return f"{why}_failed"
     if why:
         return "harbor_exception" if _outside_agent(t.result) else "agent_crash"
     return None

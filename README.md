@@ -95,9 +95,10 @@ and runs nothing. On macOS the sweep runs under `caffeinate -i` (turn off with
 The sweep is resumable: run the same command again after any stop. Complete
 jobs are skipped; an unfinished job, or one with a trial that did not measure
 its condition (provider failure, billing error, harbor or agent crash before
-the verifier), is moved to `jobs/<sweep>/_partial/` and rerun. An agent
-timeout is an outcome, not a retry. On a provider failure the sweep sends one
-tiny request to every model and stops with exit 4 if one still fails.
+the verifier, or on SWE-sweep a verifier that could not grade), is moved to
+`jobs/<sweep>/_partial/` and rerun. An agent timeout is an outcome, not a
+retry. On a provider failure the sweep sends one tiny request to every
+model and stops with exit 4 if one still fails.
 Ctrl-C gives harbor up to two minutes to remove its containers.
 
 `analyze.sh [JOBS_DIR...]` aggregates the jobs (several dirs are one data

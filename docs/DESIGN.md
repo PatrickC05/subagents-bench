@@ -304,8 +304,9 @@ and `--rounds`/`--only` never change an order.
 
 **Resume.** A job whose dir has harbor's finished `result.json` and no trial
 needing a rerun is skipped. An unfinished job, or one with a trial needing a
-rerun (provider failure, billing error, or a harbor exception before the
-verifier: environment setup, or an agent crash), is moved to
+rerun (provider failure, billing error, a harbor exception before the
+verifier: environment setup, or an agent crash; on SWE-sweep a grader or
+verifier container that could not grade, see Validity), is moved to
 `_partial/<job>.<k>` and rerun whole; nothing is deleted. Rerunning whole
 jobs keeps every trial of a job from one harbor run; the cost is that its
 valid trials run again (with a per-trial failure rate p, a 10-trial job
@@ -388,7 +389,18 @@ started, or a job cancel), `agent_crash`, `no_episode` or `no_result`. An
 agent timeout is valid and scored, and a valid trial without a reward
 counts as unsolved. A SWE-sweep trial whose grader reports `grader_failed`
 (the verifier's own setup failed, not the patch) is `grader_failed`: invalid
-and rerun, like a harbor exception.
+and rerun, like a harbor exception. So is, as `verifier_failed`, any harbor
+exception without a reward from a verifier that runs in its own container
+(`verifier_environment_mode` `separate` in harbor's `result.json`, every
+SWE-sweep task): harbor marks the verifier started before it builds and
+starts that container, so a failed image build or start, a verifier timeout
+(the task's limit covers the grader's own per-phase limits) or a missing
+reward file would otherwise count as an unsolved trial that is never rerun.
+The agent cannot break a fresh container, and the grader scores the patch's
+own failures (it does not apply, or does not build) itself. On
+Terminal-Bench the verifier shares the agent's container, which the agent
+can leave broken, so an exception after the verifier started stays an
+outcome there.
 
 **Partial rewards.** SWE-sweep's reward is the fraction of the task's bugs
 whose hidden tests pass, 0 when a visible test regressed, with the grader's

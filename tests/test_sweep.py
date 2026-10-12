@@ -242,7 +242,7 @@ def test_job_state_and_retry_reasons(tmp_path):
     assert sweep.job_state(job) == ("complete", "2 trials")
     expected = {"ok": None, "timeout": None, "unsolved": None, "provider": "provider", "billing": "billing",
                 "crash": "harbor RuntimeError", "infra": "harbor EnvironmentStartTimeoutError",
-                "partial": None, "regressed": None, "grader": "grader"}
+                "partial": None, "regressed": None, "grader": "grader", "verifier": "verifier", "shared_verifier": None}
     for i, (mode, reason) in enumerate(expected.items()):
         assert sweep.retry_reason(write_trial(tmp_path / "trials", "x", i, mode)) == reason, mode
     ep = job / "a__t0" / "agent" / "episode.json"

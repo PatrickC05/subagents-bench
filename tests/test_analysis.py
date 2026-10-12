@@ -210,6 +210,16 @@ def test_validity_of_timeout_and_provider_failure(analysis):
                                     "verifier": {"started_at": "2026-10-12T16:30:00Z"}}, None),
     ({"exit_reason": "finished"}, {"verifier_result": {"rewards": {"reward": 0.0, "grader_failed": 1.0}},
                                    "verifier": {"started_at": "2026-10-12T16:30:00Z"}}, "grader_failed"),
+    # after the verifier started: a separate verifier's failure is infrastructure, a shared one's an outcome
+    ({"exit_reason": "finished"}, {"exception_info": {"exception_type": "EnvironmentStartTimeoutError"},
+                                   "verifier_environment_mode": "separate",
+                                   "verifier": {"started_at": "2026-10-12T16:30:00Z"}}, "verifier_failed"),
+    ({"exit_reason": "finished"}, {"exception_info": {"exception_type": "RewardFileNotFoundError"},
+                                   "verifier_environment_mode": "shared",
+                                   "verifier": {"started_at": "2026-10-12T16:30:00Z"}}, None),
+    ({"exit_reason": "cancelled"}, {"exception_info": {"exception_type": "AgentTimeoutError"},
+                                    "verifier_environment_mode": "separate", "verifier_result": {"rewards": {"reward": 0}},
+                                    "verifier": {"started_at": "2026-10-12T16:30:00Z"}}, None),
 ])
 def test_invalid_reason(tmp_path, episode, result, reason):
     (tmp_path / "agent").mkdir()
