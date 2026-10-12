@@ -20,7 +20,9 @@ rounds: 3
 order_seed: 0                  # each round runs the conditions in its own shuffled order
 harbor:
   n_concurrent: 4              # trials of a job at once
-  agent_timeout_multiplier: 4.0  # x each task's agent timeout; the step budget is the real limit
+  # x each task's agent timeout: 30 min for 8 of the 10 tasks (900 s), 25 min for overfull-hbox,
+  # 40 min for constraints-scheduling. The step budget is the real limit; this caps a stuck trial.
+  agent_timeout_multiplier: 2.0
 # jobs_dir: jobs/<name> unless set
 
 conditions:

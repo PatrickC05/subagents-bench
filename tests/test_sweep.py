@@ -119,7 +119,7 @@ def test_pilot_and_smoke_specs(capsys):
     assert sweep.harbor_cmd(smoke, "smoke__r1__single_5step")[1:] == [
         "run", "-d", "terminal-bench@2.0", "-i", "fix-git", "-i", "prove-plus-comm", "-a", sweep.AGENT, "-e", "docker",
         "-n", "4", "-k", "1", "-o", "jobs/smoke", "--job-name", "smoke__r1__single_5step",
-        "--agent-timeout-multiplier", "4.0", "-y", "-q"]
+        "--agent-timeout-multiplier", "2.0", "-y", "-q"]
     for s in (pilot, smoke):
         assert sweep.run(s, sweep.plan(s), dry_run=True) == 0
         out = capsys.readouterr().out
