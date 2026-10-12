@@ -166,10 +166,12 @@ def run_arbitration(rt: Runtime, instruction: str, index: int, group_id: str, st
             _copy_files(env, f"{root}/cand{w}", rt.workdir, applied)
             record.update(applied=True, n_applied_files=len(applied))
     finally:
-        if copy and not rt.stopped:
-            env.exec(f"rm -rf -- {q(root)}", 300)
-        record["t_end"] = time.time()
-        rt.rec.write("arbitrations", record)
+        try:
+            if copy and not rt.stopped:
+                env.exec(f"rm -rf -- {q(root)}", 300)
+        finally:  # a stop during the cleanup must not lose the record: the spawn lists its id
+            record["t_end"] = time.time()
+            rt.rec.write("arbitrations", record)
     report = reports[w]
     if record["debate_rounds"] and revised[w].strip() != reports[w].strip():
         report = report_with_revision(reports[w], revised[w])

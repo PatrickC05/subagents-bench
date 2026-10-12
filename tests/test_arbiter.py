@@ -185,6 +185,25 @@ def test_a_failed_copy_ends_the_episode_before_any_candidate_runs(tmp_path):
     assert os.listdir(work) == ["app.py"] and (work / "app.py").read_text() == "v0\n"
 
 
+def test_a_stop_during_the_cleanup_still_records_the_arbitration(tmp_path, monkeypatch):
+    import fakes
+    from subagents_bench.environment import LocalShellEnvironment
+
+    class StopOnCleanup(LocalShellEnvironment):
+        def exec(self, command, timeout):
+            if command.startswith("rm -rf") and "/arb/" in command:
+                self.stop_event.set()  # harbor's agent timeout fires while the copies are removed
+            return super().exec(command, timeout)
+
+    monkeypatch.setattr(fakes, "LocalShellEnvironment", StopOnCleanup)
+    (tmp_path / "work").mkdir()
+    f = FakeFactory({ORCH: [Reply("", [tc("spawn_subagents", instructions=["x"])]), judgement(0)],
+                     SUB: lambda *_: Reply("", [tc("submit", report="ok")])})
+    exit_reason, _ = run_local(make_config(subagent={"strategy": "arbiter"}), f, tmp_path / "work", tmp_path / "ep")
+    r = assert_consistent(tmp_path / "ep")  # the spawn's arbitration id has its record
+    assert exit_reason == "cancelled" and r["arbitrations"][0]["final_winner"] == 0
+
+
 def test_parse_judgement_rules():
     def resp(text="", calls=()):
         return LLMResponse(text, list(calls), "stop")
