@@ -96,7 +96,7 @@ def main_grid(t: Tables, path: Path) -> tuple[str, str]:
     for yi, (_, r) in zip(y, c.iterrows()):
         a.text(1.02, yi, f"{r['n_resolved']}/{r['n_valid']}" if r["n_valid"] else "no valid trials",
                va="center", color=INK2, fontsize=7.5)
-        if r["topology"] != "subagents":
+        if r["topology"] == "single":
             b.text(0.02, yi, "n/a (single agent)", va="center", color=MUTED, fontsize=7.5)
         elif r["n_valid"]:
             b.barh(yi, r["delegated_frac"], color=colors[yi], height=0.62)
@@ -114,9 +114,9 @@ def main_grid(t: Tables, path: Path) -> tuple[str, str]:
     _save(fig, path)
     return ("Resolve rate and delegation per condition",
             "Share of valid trials the verifier solved (k/n, whiskers: Wilson 95% interval), with baselines on top, "
-            "the strategy x scope grid in the middle and the controls (manager, same model) below. The right panel "
-            "is the share of valid episodes in which the orchestrator spawned subagents at least once; a subagent "
-            "condition that never delegated measured only its orchestrator.")
+            "the strategy x scope grid in the middle and the controls (same model, then manager) below. The right "
+            "panel is the share of valid episodes in which the orchestrator spawned subagents at least once; a "
+            "subagent condition that never delegated measured only its orchestrator.")
 
 
 def _frontier(xs: np.ndarray, ys: np.ndarray) -> tuple[list[float], list[float]]:

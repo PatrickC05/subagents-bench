@@ -18,6 +18,7 @@ import yaml
 
 from fakes import ORCH, SUB, FakeFactory, Reply, make_config, records, run_local, tc
 from subagents_bench.analysis.__main__ import main as analyze
+from subagents_bench.analysis.aggregate import condition_order
 from subagents_bench.analysis.stats import bootstrap_mean, wilson
 from subagents_bench.analysis.validity import invalid_reason
 from subagents_bench.environment import AgentStopped
@@ -272,6 +273,19 @@ def test_delegation_gate_fails_for_a_condition_that_never_delegated(jobs, tmp_pa
     assert s["delegation_gate"] == {"ok": False, "never_delegated": ["gemma31b_parallel_easy"], "no_valid_episodes": []}
     assert s["invalid_reasons"] == {"provider_error": 1, "no_episode": 1} and (s["n_trials"], s["n_valid"]) == (10, 8)
     assert s["critical_path"]["n_over_wall_clock"] == 0 and s["critical_path"]["n_valid_episodes"] == 8
+
+
+def test_condition_order():
+    def row(cond, topology="subagents", strategy="parallel", scope="hard", tools="all", sub=SUB):
+        return pd.Series({"condition": cond, "topology": topology, "strategy": strategy, "scope": scope,
+                          "orchestrator_tools": tools, "orchestrator_model": ORCH, "subagent_model": sub})
+    rows = [row("pending", topology=None), row("manager_parallel_hard", tools="read_file"),
+            row("samemodel_parallel_hard", sub=ORCH), row("arbiter_easy", strategy="arbiter", scope="easy"),
+            row("parallel_hard"), row("manager_arbiter_hard", strategy="arbiter", tools="read_file"),
+            row("single_5step", topology="single", strategy=None, scope=None)]
+    assert [r["condition"] for r in sorted(rows, key=condition_order)] == [
+        "single_5step", "parallel_hard", "arbiter_easy", "samemodel_parallel_hard", "manager_parallel_hard",
+        "manager_arbiter_hard", "pending"]
 
 
 def test_pricing_config_matches_the_base_config():

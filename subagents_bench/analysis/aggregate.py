@@ -75,11 +75,13 @@ def record_rows(t: Trial, valid: bool, prices: dict) -> dict[str, list[dict]]:
 
 
 def condition_order(row: pd.Series) -> tuple:
-    """Single-agent baselines, then strategy x scope, then controls (manager, same model)."""
+    """Single-agent baselines, strategy x scope, the controls (same model, then managers), and
+    last the conditions without an episode yet (design unknown)."""
     if row["topology"] != "subagents":
-        return (0, 0, 0, row["condition"])
-    control = row["orchestrator_tools"] != "all" or row["subagent_model"] == row["orchestrator_model"]
-    return (1 + control, STRATEGIES.index(row["strategy"]), SCOPES.index(row["scope"]), row["condition"])
+        return (0 if row["topology"] == "single" else 3, 0, 0, 0, row["condition"])
+    manager = row["orchestrator_tools"] != "all"
+    control = manager or row["subagent_model"] == row["orchestrator_model"]
+    return (1 + control, manager, STRATEGIES.index(row["strategy"]), SCOPES.index(row["scope"]), row["condition"])
 
 
 def condition_table(episodes: pd.DataFrame) -> pd.DataFrame:
