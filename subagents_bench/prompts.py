@@ -63,30 +63,48 @@ result (for example by running the relevant program or tests) before your \
 last step.
 
 ## Tools
-- `bash`: run a shell command in the container and see its output and exit \
-code. Your working directory and exported environment variables persist \
-between your bash calls (shell functions, aliases and unexported variables do \
-not). Commands run non-interactively: there is no TTY and stdin is closed, so \
-interactive programs (editors, pagers, prompts) will not work; use \
-non-interactive flags such as `-y` or `--batch`. Each command has a timeout \
-(default {cmd_timeout}s; pass `timeout_sec` up to {max_cmd_timeout}s for long \
-builds or tests); on timeout the command and its children are killed. Start \
-long-running processes such as servers in the background with \
-`nohup CMD > /tmp/server.log 2>&1 &` and check them in a later call. Long \
-output is truncated in the middle, so filter it (grep, head, tail).
-- `read_file`: read a file with line numbers (use start_line/end_line for \
-large files).
-- `list_dir`: list a directory tree.
-- `search`: search file contents with a regular expression.
-- `edit_file`: replace an exact, unique snippet in a file, or create a file \
-(empty `old`).
-- `finish`: declare the task complete. It ends the episode immediately; tools \
-listed after it in the same response are not run. Call it only when the \
-container is in its final, working state.
-{subagent_tools}
+{tool_lines}{subagent_tools}{manager_note}
 Relative paths are resolved against your shell's current directory, which \
 starts in {workdir}.
 """
+
+# One line per orchestrator tool, in prompt order; only the configured
+# tools (``tools.orchestrator_tools``) are listed.
+ORCHESTRATOR_TOOL_LINES: dict[str, str] = {
+    "bash": (
+        "- `bash`: run a shell command in the container and see its output and exit "
+        "code. Your working directory and exported environment variables persist "
+        "between your bash calls (shell functions, aliases and unexported variables do "
+        "not). Commands run non-interactively: there is no TTY and stdin is closed, so "
+        "interactive programs (editors, pagers, prompts) will not work; use "
+        "non-interactive flags such as `-y` or `--batch`. Each command has a timeout "
+        "(default {cmd_timeout}s; pass `timeout_sec` up to {max_cmd_timeout}s for long "
+        "builds or tests); on timeout the command and its children are killed. Start "
+        "long-running processes such as servers in the background with "
+        "`nohup CMD > /tmp/server.log 2>&1 &` and check them in a later call. Long "
+        "output is truncated in the middle, so filter it (grep, head, tail)."
+    ),
+    "read_file": "- `read_file`: read a file with line numbers (use start_line/end_line for large files).",
+    "list_dir": "- `list_dir`: list a directory tree.",
+    "search": "- `search`: search file contents with a regular expression.",
+    "edit_file": (
+        "- `edit_file`: replace an exact, unique snippet in a file, or create a file "
+        "(empty `old`)."
+    ),
+}
+
+FINISH_TOOL_LINE = (
+    "- `finish`: declare the task complete. It ends the episode immediately; tools "
+    "listed after it in the same response are not run. Call it only when the "
+    "container is in its final, working state."
+)
+
+# Added when the orchestrator has neither bash nor edit_file of its own.
+MANAGER_NOTE = (
+    "\nYou cannot run commands or change files yourself. Everything that runs a "
+    "command or modifies the container (including building, testing and "
+    "verifying) must be delegated to subagents with `spawn_subagents`.\n"
+)
 
 SUBAGENT_TOOL_LINE = (
     "- `spawn_subagents`: delegate work to subagents (see \"Subagents\" below). "
@@ -185,15 +203,25 @@ def orchestrator_system(
     workdir: str = "the task's working directory",
     command_timeout_sec: int = 180,
     max_command_timeout_sec: int = 900,
+    tools: list[str] | None = None,
 ) -> str:
-    """The orchestrator's system prompt (legacy positional args still work)."""
+    """The orchestrator's system prompt (legacy positional args still work).
+
+    ``tools`` is the orchestrator's own tool list (None = all of them)."""
     strategy = Strategy(strategy)
     scope = Scope(scope)
+    names = [t for t in ORCHESTRATOR_TOOL_LINES if tools is None or t in tools]
+    lines = [
+        ORCHESTRATOR_TOOL_LINES[t].format(cmd_timeout=command_timeout_sec, max_cmd_timeout=max_command_timeout_sec)
+        for t in names
+    ]
+    lines.append(FINISH_TOOL_LINE)
+    manager = with_subagents and not {"bash", "edit_file"} & set(names)
     body = ORCHESTRATOR_BASE.format(
         steps=steps,
-        cmd_timeout=command_timeout_sec,
-        max_cmd_timeout=max_command_timeout_sec,
+        tool_lines="\n".join(lines) + "\n",
         subagent_tools=SUBAGENT_TOOL_LINE + "\n" if with_subagents else "",
+        manager_note=MANAGER_NOTE if manager else "",
         workdir=workdir,
     )
     if with_subagents:
@@ -215,7 +243,11 @@ def orchestrator_system(
         body += ORCHESTRATOR_SUBAGENT_NOTE.format(
             max_steps=subagent_max_steps,
             strategy_text=strategy_text,
-            scope_text=SCOPE_TEXT[scope],
+            scope_text=(
+                SCOPE_TEXT[scope].replace("the same tools as you except spawning and finishing", "these tools")
+                if manager
+                else SCOPE_TEXT[scope]
+            ),
             limits_text=_limits_text(strategy, max_concurrent, md, n_candidates),
         )
     return SUBTASK_PREFIXES.get(subtask, "") + body
@@ -239,6 +271,7 @@ def orchestrator_system_for(config: Any, workdir: str) -> str:
         workdir=workdir,
         command_timeout_sec=config.budget.command_timeout_sec,
         max_command_timeout_sec=config.budget.max_command_timeout_sec,
+        tools=config.resolved_orchestrator_tools(),
     )
 
 

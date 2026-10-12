@@ -46,8 +46,8 @@ so provider latency never changes a trajectory. The full contract is
 | Task difficulty | Terminal-Bench label, category, expert-time estimate (covariates) | `tasks_meta.json` |
 
 The pilot sweep ([`configs/sweeps/pilot.yaml`](configs/sweeps/pilot.yaml), on
-[`configs/sail/base.yaml`](configs/sail/base.yaml)) is 12 conditions × 10
-tasks × 3 rounds = 360 episodes. The smoke sweep
+[`configs/sail/base.yaml`](configs/sail/base.yaml)) is 15 conditions × 10
+tasks × 3 rounds = 450 episodes. The smoke sweep
 ([`configs/sweeps/smoke.yaml`](configs/sweeps/smoke.yaml)) is the same 12
 conditions on 2 tasks × 1 round; the size sweep is
 [`configs/sweeps/prime_size.yaml`](configs/sweeps/prime_size.yaml).
@@ -60,6 +60,15 @@ conditions on 2 tasks × 1 round; the size sweep is
   which separates *having* subagents from subagent *size*.
 
 All three are conditions in [`configs/sweeps/pilot.yaml`](configs/sweeps/pilot.yaml).
+
+### Manager orchestrator
+
+With every tool of its own, the orchestrator delegated in 0 of 18
+subagent-condition episodes of the first smoke sweep: it simply solved the
+task itself. The `manager_{parallel,sequential,arbiter}_hard` conditions set
+`tools.orchestrator_tools: [read_file, list_dir, search]`, so the
+orchestrator can read and plan but every command, edit and test must go
+through subagents.
 The earlier Anthropic-orchestrator configs
 ([`configs/baselines/`](configs/baselines/), [`configs/unified.yaml`](configs/unified.yaml),
 [`configs/exploitbench.yaml`](configs/exploitbench.yaml)) still load but are
@@ -207,8 +216,8 @@ troubleshooting, is [`docs/REPRODUCE.md`](docs/REPRODUCE.md).
 
 ```bash
 scripts/setup.sh                                        # install from uv.lock, check Docker + credentials, offline tests, dataset
-scripts/run_experiment.sh configs/sweeps/smoke.yaml     # preflight, then the smoke sweep (24 episodes)
-scripts/run_experiment.sh                               # the pilot sweep (360 episodes); resumable
+scripts/run_experiment.sh configs/sweeps/smoke.yaml     # preflight, then the smoke sweep (30 episodes)
+scripts/run_experiment.sh                               # the pilot sweep (450 episodes); resumable
 scripts/analyze.sh jobs/pilot                           # check-run, completeness, aggregate, plot
 ```
 

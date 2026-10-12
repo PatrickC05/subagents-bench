@@ -427,3 +427,34 @@ def test_unpriced_subagent_model_gives_unknown_cost_not_zero(tmp_path):
     totals = res.recorder.role_totals()
     assert totals["total"]["cost_usd"] is None and totals["models"][SUB]["cost_usd"] is None
     assert totals["models"][ORCH]["cost_usd"] == pytest.approx(ep["cost_usd"]["orchestrator"])
+
+
+def test_manager_orchestrator_has_only_its_configured_tools(tmp_path):
+    # tools.orchestrator_tools restricts the orchestrator's own tools; a call to
+    # a tool it was not given is an error, and the work goes through subagents.
+    cfg = make_config(tmp_path, tools={"orchestrator_tools": ["read_file", "list_dir", "search"]})
+    f = FakeFactory({
+        ORCH: [
+            Reply("", [tc("bash", command="echo hacked > a.txt")]),
+            Reply("", [tc("spawn_subagents", instructions=["create a.txt containing ok"])]),
+            Reply("", [tc("read_file", path="a.txt"), tc("finish", summary="done")]),
+        ],
+        SUB: [Reply("", [tc("bash", command="echo ok > a.txt")]), submit("wrote a.txt")],
+    })
+    res = run(cfg, f)
+    work = tmp_path / "work"
+    assert (work / "a.txt").read_text() == "ok\n"
+    assert res.exit_reason == "finished"
+    r = assert_valid(res.episode_dir)
+    req = f[ORCH].requests
+    assert req[0]["tools"] == ["read_file", "list_dir", "search", "spawn_subagents", "finish"]
+    bash_rec = r["tools"][0]
+    assert bash_rec["name"] == "bash" and bash_rec["is_error"] and "unknown tool 'bash'" in bash_rec["error"]
+    orch_sys = req[0]["system"]
+    assert "You cannot run commands or change files yourself" in orch_sys
+    assert "- `bash`" not in orch_sys and "- `edit_file`" not in orch_sys
+    assert "Subagents have these tools:" in orch_sys and "same tools as you" not in orch_sys
+    # The subagent keeps the full hard-scope tool set.
+    assert f[SUB].requests[0]["tools"] == ["read_file", "list_dir", "search", "bash", "edit_file", "submit"]
+    assert r["episode"]["config"]["tools"]["orchestrator_tools"] == ["read_file", "list_dir", "search"]
+    assert r["episode"]["dispatches"] == 1

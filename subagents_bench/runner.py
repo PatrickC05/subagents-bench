@@ -156,6 +156,8 @@ def _describe(cfg: ExperimentConfig) -> str:
         f"  budget: {b.orchestrator_steps} steps, {b.total_token_budget} tokens, {b.timeout_sec}s safety cap, "
         f"commands {b.command_timeout_sec}s (max {b.max_command_timeout_sec}s)",
         f"  sandbox: {cfg.sandbox.kind}, workdir {cfg.sandbox.workdir}",
+        f"  orchestrator tools: {', '.join(cfg.resolved_orchestrator_tools())}"
+        + (" (all)" if cfg.tools.orchestrator_tools is None else " (restricted)"),
     ]
     if cfg.topology.value == "subagents":
         sub = cfg.resolved_subagent_model()

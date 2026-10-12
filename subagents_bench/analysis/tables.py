@@ -40,7 +40,7 @@ EPS = 1e-9
 KEY_COLS = ["sweep", "job_name", "round", "condition", "trial_name", "task_name", "episode_id"]
 DESIGN_COLS = [
     "topology", "strategy", "scope", "orchestrator_model", "subagent_model", "arbiter_model",
-    "max_concurrent", "n_candidates", "orchestrator_steps_budget",
+    "max_concurrent", "n_candidates", "orchestrator_steps_budget", "orchestrator_tools",
 ]
 TASK_COLS = ["difficulty", "category", "expert_time_min", "junior_time_min"]
 OUTCOME_COLS = ["reward", "resolved", "harbor_exception", "exit_reason", "valid", "invalid_reason", "episode_status"]
@@ -134,7 +134,17 @@ def design_fields(ep: dict | None, cfg: dict | None) -> dict[str, Any]:
         "max_concurrent": sub.get("max_concurrent") if is_sub else None,
         "n_candidates": arb.get("n_candidates") if strategy == "arbiter" else None,
         "orchestrator_steps_budget": (cfg.get("budget") or {}).get("orchestrator_steps"),
+        "orchestrator_tools": orchestrator_tools_label(cfg),
     }
+
+
+def orchestrator_tools_label(cfg: dict | None) -> str | None:
+    """``all`` for the default tool set, else the orchestrator's own tools
+    joined by ``+`` (``tools.orchestrator_tools``); None without a config."""
+    if not cfg:
+        return None
+    tools = (cfg.get("tools") or {}).get("orchestrator_tools")
+    return "all" if tools is None else "+".join(tools)
 
 
 def harbor_reward(result: dict | None) -> float | None:

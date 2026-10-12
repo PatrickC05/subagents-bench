@@ -189,3 +189,22 @@ def test_cli_validate(tmp_path, capsys):
     assert main(["validate", str(bad)]) == 1
     out = capsys.readouterr().out
     assert out.count(str(bad)) == 1 and "subagent.strategy: 'paralel'" in out
+
+
+def test_orchestrator_tools_validation_and_resolution():
+    from subagents_bench.config import ConfigError, ExperimentConfig
+
+    base = {"name": "x", "orchestrator": {"model": "m", "provider": "sail"}}
+    cfg = ExperimentConfig.from_dict(base)
+    assert cfg.tools.orchestrator_tools is None
+    assert cfg.resolved_orchestrator_tools() == ["bash", "edit_file", "read_file", "list_dir", "search"]
+    assert cfg.validate() == []
+    mgr = ExperimentConfig.from_dict({**base, "tools": {"orchestrator_tools": ["search", "read_file"]}})
+    assert mgr.resolved_orchestrator_tools() == ["read_file", "search"]  # canonical order
+    assert mgr.validate() == []
+    assert ExperimentConfig.from_dict(mgr.to_dict()).tools.orchestrator_tools == ["search", "read_file"]
+    assert mgr.config_hash() != cfg.config_hash()
+    with pytest.raises(ConfigError, match=r"unknown tool\(s\) \['spawn_subagents'\]"):
+        ExperimentConfig.from_dict({**base, "tools": {"orchestrator_tools": ["bash", "spawn_subagents"]}})
+    with pytest.raises(ConfigError, match="cannot change the container"):
+        ExperimentConfig.from_dict({**base, "topology": "single", "tools": {"orchestrator_tools": ["read_file"]}})

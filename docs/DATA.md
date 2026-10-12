@@ -549,6 +549,7 @@ One row per trial (harbor trial, or bare local episode): design, task covariates
 | `max_concurrent` | Max subagents live at once. |
 | `n_candidates` | Candidates per arbitrated instruction (arbiter only). |
 | `orchestrator_steps_budget` | Orchestrator step budget. |
+| `orchestrator_tools` | The orchestrator's own tools: `all` (default) or the `tools.orchestrator_tools` list joined by `+` (e.g. `read_file+list_dir+search` for a manager orchestrator that must delegate commands and edits). |
 | `difficulty` | Terminal-Bench difficulty label (tasks_meta.json). |
 | `category` | Task category (tasks_meta.json). |
 | `expert_time_min` | Expert time estimate, minutes (tasks_meta.json). |
@@ -962,6 +963,7 @@ One row per condition over its valid episodes: Wilson CI on the resolve rate, me
 | `max_concurrent` | Max subagents live at once. |
 | `n_candidates` | Candidates per arbitrated instruction (arbiter only). |
 | `orchestrator_steps_budget` | Orchestrator step budget. |
+| `orchestrator_tools` | The orchestrator's own tools: `all` (default) or the `tools.orchestrator_tools` list joined by `+` (e.g. `read_file+list_dir+search` for a manager orchestrator that must delegate commands and edits). |
 | `n` | Trials. |
 | `n_valid` | Valid trials. |
 | `n_resolved` | Resolved valid trials. |
@@ -1155,6 +1157,7 @@ conditions.csv split by Terminal-Bench difficulty (`unknown` when the task has n
 | `max_concurrent` | Max subagents live at once. |
 | `n_candidates` | Candidates per arbitrated instruction (arbiter only). |
 | `orchestrator_steps_budget` | Orchestrator step budget. |
+| `orchestrator_tools` | The orchestrator's own tools: `all` (default) or the `tools.orchestrator_tools` list joined by `+` (e.g. `read_file+list_dir+search` for a manager orchestrator that must delegate commands and edits). |
 | `n` | Trials. |
 | `n_valid` | Valid trials. |
 | `n_resolved` | Resolved valid trials. |

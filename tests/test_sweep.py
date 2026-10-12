@@ -28,6 +28,7 @@ PILOT_CONDITIONS = [
     "single_matched",
     *(f"gemma31b_{s}_{sc}" for s in ("parallel", "sequential", "arbiter") for sc in ("easy", "medium", "hard")),
     "samemodel_parallel_hard",
+    *(f"manager_{s}_hard" for s in ("parallel", "sequential", "arbiter")),
 ]
 PILOT_TASKS = [
     "fix-git", "prove-plus-comm", "cobol-modernization", "overfull-hbox",
@@ -852,7 +853,7 @@ def test_real_pilot_dry_run_counts(fake_harbor, stub_config, monkeypatch):
     monkeypatch.setattr(spec, "jobs_dir", Path("/nonexistent/jobs/pilot"))
     lines: list[str] = []
     sweep.run_sweep(spec, dry_run=True, out=lines.append)
-    assert "Plan: 36 jobs (36 to run, 0 complete -> skip, 0 partial -> move aside and rerun); 360 episodes to run" in "\n".join(lines)
+    assert "Plan: 45 jobs (45 to run, 0 complete -> skip, 0 partial -> move aside and rerun); 450 episodes to run" in "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

@@ -46,7 +46,7 @@ def test_validate_reports_each_sweep_condition(monkeypatch, capsys):
     monkeypatch.chdir(REPO)
     assert cli.main(["validate", "configs/sweeps/pilot.yaml"]) == 0
     out = capsys.readouterr().out
-    assert out.count("[OK]   condition ") == 12
+    assert out.count("[OK]   condition ") == 15
     assert "condition gemma31b_arbiter_hard" in out and "arbiter: 3 candidates" in out
 
 

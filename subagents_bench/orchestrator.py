@@ -52,7 +52,7 @@ from .prompts import orchestrator_system_for, step_note
 from .schema import SpawnRecord, StepRecord
 from .subagent import DispatchResult, DispatchSpec, MeteredEnv, Runtime, Subagent, measure, text_output
 from .telemetry import AgentLog, EpisodeRecorder, ToolEvent
-from .tools import ORCHESTRATOR_TOOLS, run_tool, specs_for, truncate_output
+from .tools import run_tool, specs_for, truncate_output
 from .types import (
     AgentStopped,
     BillingError,
@@ -171,8 +171,9 @@ class Orchestrator:
             command_timeout_sec=config.budget.command_timeout_sec,
             max_command_timeout_sec=config.budget.max_command_timeout_sec,
         )
+        self.own_tools = config.resolved_orchestrator_tools()
         self.specs = specs_for(
-            ORCHESTRATOR_TOOLS,
+            self.own_tools,
             command_timeout_sec=config.budget.command_timeout_sec,
             max_command_timeout_sec=config.budget.max_command_timeout_sec,
         )
@@ -328,7 +329,7 @@ class Orchestrator:
                     finally:
                         if ev.group_id:
                             groups.append(ev.group_id)
-                elif tc.name in ORCHESTRATOR_TOOLS:
+                elif tc.name in self.own_tools:
                     out = self.log.tool(
                         tc, lambda e, tc=tc: run_tool(self.ctx, tc.name, tc.arguments), step=step, call_id=call_id, event=ev
                     )

@@ -1,11 +1,11 @@
-# Smoke sweep (docs/DESIGN.md section 1): the pilot's 12 conditions on 2 easy
-# tasks x 1 round = 24 episodes, 12 harbor jobs. Run it first to check the
+# Smoke sweep (docs/DESIGN.md section 1): the pilot's 15 conditions on 2 easy
+# tasks x 1 round = 30 episodes, 15 harbor jobs. Run it first to check the
 # whole pipeline end to end (harbor + Docker + providers + analysis).
 #
 #   scripts/run_experiment.sh configs/sweeps/smoke.yaml
 #   scripts/analyze.sh jobs/smoke
 #
-# `extends` deep-merges this file over the pilot spec, so `base` and the 12
+# `extends` deep-merges this file over the pilot spec, so `base` and the 15
 # `conditions` are inherited unchanged; everything set here wins.
 
 extends: configs/sweeps/pilot.yaml

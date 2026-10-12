@@ -221,6 +221,7 @@ EPISODE_DOCS = {
     "max_concurrent": "Max subagents live at once.",
     "n_candidates": "Candidates per arbitrated instruction (arbiter only).",
     "orchestrator_steps_budget": "Orchestrator step budget.",
+    "orchestrator_tools": "The orchestrator's own tools: `all` (default) or the `tools.orchestrator_tools` list joined by `+` (e.g. `read_file+list_dir+search` for a manager orchestrator that must delegate commands and edits).",
     "difficulty": "Terminal-Bench difficulty label (tasks_meta.json).",
     "category": "Task category (tasks_meta.json).",
     "expert_time_min": "Expert time estimate, minutes (tasks_meta.json).",

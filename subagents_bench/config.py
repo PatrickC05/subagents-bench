@@ -195,6 +195,11 @@ class BudgetConfig:
 class ToolsConfig:
     # Orchestrator tool-output truncation (chars).
     max_output_chars: int = 12000
+    # The orchestrator's own tools, a subset of tools.ORCHESTRATOR_TOOLS
+    # (finish and spawn_subagents are always added). None = all of them. A
+    # read-only list (read_file, list_dir, search) makes a "manager"
+    # orchestrator that must delegate running commands and editing files.
+    orchestrator_tools: list[str] | None = None
 
 
 @dataclass
@@ -266,6 +271,15 @@ class ExperimentConfig:
             return cap
         return self.subagent.max_concurrent * self.budget.orchestrator_steps
 
+    def resolved_orchestrator_tools(self) -> list[str]:
+        """The orchestrator's own tools, in the canonical order."""
+        from .tools import ORCHESTRATOR_TOOLS  # local: tools imports heavier modules
+
+        allowed = self.tools.orchestrator_tools
+        if allowed is None:
+            return list(ORCHESTRATOR_TOOLS)
+        return [t for t in ORCHESTRATOR_TOOLS if t in allowed]
+
     def is_same_model_baseline(self) -> bool:
         return (
             self.topology is Topology.SUBAGENTS
@@ -290,6 +304,22 @@ class ExperimentConfig:
             if b.command_timeout_sec > b.max_command_timeout_sec:
                 p.append("budget.command_timeout_sec must be <= budget.max_command_timeout_sec")
         at_least("tools.max_output_chars", self.tools.max_output_chars, 100)
+        ot = self.tools.orchestrator_tools
+        if ot is not None:
+            from .tools import ORCHESTRATOR_TOOLS  # noqa: PLC0415
+
+            if not isinstance(ot, list) or not all(isinstance(t, str) for t in ot):
+                p.append(f"tools.orchestrator_tools must be a list of tool names or null, got {ot!r}")
+            else:
+                bad = [t for t in ot if t not in ORCHESTRATOR_TOOLS]
+                if bad:
+                    p.append(
+                        f"tools.orchestrator_tools: unknown tool(s) {bad}; choose from {ORCHESTRATOR_TOOLS}"
+                    )
+                if len(set(ot)) != len(ot):
+                    p.append("tools.orchestrator_tools has duplicates")
+                if self.topology is Topology.SINGLE and not {"bash", "edit_file"} & set(ot):
+                    p.append("tools.orchestrator_tools: a single-agent orchestrator without bash or edit_file cannot change the container")
         at_least("subagent.max_concurrent", s.max_concurrent, 1)
         if s.max_dispatches is not None:
             at_least("subagent.max_dispatches", s.max_dispatches, 0)

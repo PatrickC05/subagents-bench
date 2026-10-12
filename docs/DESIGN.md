@@ -52,6 +52,13 @@ tier. Every Sail model in a sweep uses the same tier.
    Arbiter: `n_candidates=3`, `debate_rounds=1`, `confidence_threshold=0.8`,
    arbiter model = orchestrator model.
 4. `samemodel_parallel_hard`: subagent model = orchestrator (same-model control).
+5. Three **manager** conditions `manager_{parallel,sequential,arbiter}_hard`:
+   like `gemma31b_*_hard`, but `tools.orchestrator_tools: [read_file,
+   list_dir, search]`, so the orchestrator can read and plan but must delegate
+   every command, edit and test to subagents. Added after the 2026-10-11
+   smoke sweep, where the orchestrator (with all tools) delegated in 0 of 18
+   subagent-condition episodes. Only hard scope is meaningful here: with easy
+   or medium scope nobody could edit files.
 
 Tasks:
 - 4 TB-2.0 easy tasks: `fix-git`, `prove-plus-comm`, `cobol-modernization`,
@@ -61,7 +68,7 @@ Tasks:
   `openssl-selfsigned-cert`, `polyglot-c-py`.
 
 That is 3 rounds. The smoke sweep (`configs/sweeps/smoke.yaml`) is `fix-git`
-and `prove-plus-comm` × 1 round × all 12 conditions.
+and `prove-plus-comm` × 1 round × all 15 conditions.
 
 Sampling temperature is 0.7 for every model, so repeated trials are
 independent samples. Reasoning is left at the provider default (DeepSeek
@@ -100,6 +107,11 @@ budget:
   max_command_timeout_sec: 900      # cap on a model-requested timeout
 tools:
   max_output_chars: 12000           # orchestrator tool-output truncation
+  orchestrator_tools: null          # the orchestrator's own tools (subset of
+                                    # bash, edit_file, read_file, list_dir, search;
+                                    # finish/spawn_subagents always added); null = all.
+                                    # Without bash and edit_file the prompt says
+                                    # all commands and edits must be delegated.
 sandbox: {kind: harbor|local_docker|local_shell|exploitbench, image, workdir: auto|<path>, network}
 task_ids, difficulties, n_trials, seed, output_dir
 ```

@@ -156,6 +156,8 @@ class CondInfo:
     subagent_model: str | None
     orchestrator_model: str | None
     steps_budget: float | None
+    # tools.orchestrator_tools label ("all" = default); restricted = control.
+    orchestrator_tools: str | None = None
     baseline: bool = False
     # Not part of the strategy x scope grid of the primary subagent model
     # (e.g. the same-model control, a size sweep, or unknown strategy/scope).
@@ -302,7 +304,8 @@ class AnalysisData:
     def _build_meta(self) -> dict[str, CondInfo]:
         names = self.all_conditions
         src = {c: self._attr_source(c) for c in
-               ("topology", "strategy", "scope", "subagent_model", "orchestrator_model", "orchestrator_steps_budget")}
+               ("topology", "strategy", "scope", "subagent_model", "orchestrator_model", "orchestrator_steps_budget",
+                "orchestrator_tools")}
         infos: list[CondInfo] = []
         for n in names:
             parsed = _parse_name(n)
@@ -315,7 +318,7 @@ class AnalysisData:
             except ValueError:
                 budget = None
             info = CondInfo(n, topo, strat, scope, src["subagent_model"].get(n),
-                            src["orchestrator_model"].get(n), budget)
+                            src["orchestrator_model"].get(n), budget, src["orchestrator_tools"].get(n))
             info.baseline = topo == "single" or (topo is None and strat is None and n.lower().startswith("single"))
             infos.append(info)
         models = [i.subagent_model for i in infos if not i.baseline and i.subagent_model]
@@ -325,7 +328,8 @@ class AnalysisData:
         for i in sorted((i for i in infos if not i.baseline), key=lambda i: i.name):
             cell = (i.strategy, i.scope)
             if (i.strategy not in STRATEGIES or i.scope not in SCOPES or cell in taken
-                    or (primary is not None and i.subagent_model not in (None, primary))):
+                    or (primary is not None and i.subagent_model not in (None, primary))
+                    or i.orchestrator_tools not in (None, "all")):
                 i.control = True
             else:
                 taken.add(cell)  # type: ignore[arg-type]

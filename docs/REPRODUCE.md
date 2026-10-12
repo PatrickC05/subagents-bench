@@ -10,8 +10,8 @@ From a fresh clone it takes three scripts:
 
 ```bash
 scripts/setup.sh                                        # 1. install + verify (idempotent)
-scripts/run_experiment.sh configs/sweeps/smoke.yaml     # 2a. small end-to-end check (24 episodes)
-scripts/run_experiment.sh                               # 2b. the pilot sweep (360 episodes)
+scripts/run_experiment.sh configs/sweeps/smoke.yaml     # 2a. small end-to-end check (30 episodes)
+scripts/run_experiment.sh                               # 2b. the pilot sweep (450 episodes)
 scripts/analyze.sh jobs/pilot                           # 3. tables + figures
 ```
 
@@ -260,6 +260,7 @@ tier, 5 orchestrator steps unless noted) and the tasks. See
 | `gemma31b_sequential_{easy,medium,hard}` | The same grants, but subagents run **one at a time**. |
 | `gemma31b_arbiter_{easy,medium,hard}` | Each instruction goes to 3 candidate subagents; an LLM judge (the orchestrator model) picks a winner, with one confidence-aware debate round when the judge is not confident (≥ 0.8) or the candidates disagree. |
 | `samemodel_parallel_hard` | Same-model control: parallel/hard, but the subagents run the orchestrator's own model. |
+| `manager_{parallel,sequential,arbiter}_hard` | Manager orchestrator: it keeps only `read_file`, `list_dir`, `search` (`tools.orchestrator_tools`), so every command, edit and test must be delegated to Gemma-4-31B subagents (hard scope). Added because the orchestrator with all tools did not delegate in the smoke sweep. |
 | `qwen{0.8,2,4,9}b_parallel_hard` (`prime_size.yaml`) | Size sweep: Qwen3.5 subagents of 0.8B to 9B parameters on Prime, parallel/hard, with the same orchestrator. |
 
 Scope is the delegation difficulty, and it sets the subagent's tools:

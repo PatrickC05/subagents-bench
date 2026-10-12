@@ -1,5 +1,5 @@
-# Pilot sweep (docs/DESIGN.md section 1): 12 conditions x 10 Terminal-Bench 2.0
-# tasks x 3 rounds = 360 episodes, 36 harbor jobs (one per round x condition).
+# Pilot sweep (docs/DESIGN.md section 1): 15 conditions x 10 Terminal-Bench 2.0
+# tasks x 3 rounds = 450 episodes, 45 harbor jobs (one per round x condition).
 #
 #   subagents-bench preflight configs/sweeps/pilot.yaml --oracle
 #   subagents-bench sweep configs/sweeps/pilot.yaml [--dry-run]
@@ -59,6 +59,26 @@ conditions:
   samemodel_parallel_hard:
     topology: subagents
     subagent: {model: null, strategy: parallel, scope: hard}
+
+  # --- manager orchestrator: must delegate running and editing ---------------
+  # In the 2026-10-11 smoke sweep the orchestrator, which has every tool of
+  # its own, delegated in 0 of 18 subagent-condition episodes: it solved the
+  # tasks itself. Here it keeps only read-only tools (it can read the task's
+  # files and plan), so every command, edit and test goes through Gemma-4-31B
+  # subagents under each strategy. Only hard scope is meaningful: with easy or
+  # medium scope nobody could edit files.
+  manager_parallel_hard:
+    topology: subagents
+    subagent: {strategy: parallel, scope: hard}
+    tools: {orchestrator_tools: [read_file, list_dir, search]}
+  manager_sequential_hard:
+    topology: subagents
+    subagent: {strategy: sequential, scope: hard}
+    tools: {orchestrator_tools: [read_file, list_dir, search]}
+  manager_arbiter_hard:
+    topology: subagents
+    subagent: {strategy: arbiter, scope: hard}
+    tools: {orchestrator_tools: [read_file, list_dir, search]}
 
   # --- optional: Gemma-4-12B subagents (16K context; exercises the guard) ---
   # Uncomment to add. Sail serves this model with a 16K window (input +
