@@ -7,9 +7,16 @@ extends: configs/sweeps/pilot.yaml   # the 15 conditions; everything set here wi
 name: swe_sweep
 dataset: null                        # not on the harbor registry: a local clone instead
 # `tasks/` of a clone of https://github.com/facebookresearch/swe-sweep (100 harbor task dirs),
-# relative to this repository's root; passed to harbor as `-p`. Clone it there, or point this
-# at your clone.
+# relative to this repository's root. Clone it there, or point this at your clone.
 dataset_path: ../class-6-swe-sweep/swe-sweep/tasks
+# The images are built from the tasks' Dockerfiles, and the verifier image bundles an x86-64
+# Python: build both as linux/amd64 (emulated on Apple Silicon, like Terminal-Bench's images).
+# The sweep copies the 10 tasks to jobs/swe_sweep/tasks/ with every Dockerfile FROM pinned to
+# this platform and passes that copy to harbor as `-p` (jobs/swe_sweep/tasks.json records the
+# clone's commit and a hash per task). Pinning the Dockerfiles is the one way that reaches
+# harbor's separate verifier image; a global DOCKER_DEFAULT_PLATFORM breaks harbor's
+# egress-control probe (docs/DESIGN.md).
+platform: linux/amd64
 tasks:                               # small repositories with fast test suites: language, bugs
   - swe-sweep__goawk                 # Go, 14
   - swe-sweep__echo                  # Go, 6
@@ -37,10 +44,6 @@ harbor:
   # x the tasks' 43200 s agent timeout: 1 h. The step budget is the real limit; a timeout is an
   # outcome (the verifier still grades the container).
   agent_timeout_multiplier: 0.0833
-  env:
-    # The task images are built from Dockerfiles, and the verifier image bundles an x86-64
-    # Python: build both as linux/amd64 (emulated on Apple Silicon, like Terminal-Bench's images).
-    DOCKER_DEFAULT_PLATFORM: linux/amd64
   extra_args:
     # The tasks ask for 16 CPUs and 64 GB; harbor applies these to the verifier container too.
     - --override-cpus
