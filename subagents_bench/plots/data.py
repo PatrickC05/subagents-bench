@@ -13,6 +13,10 @@ them for :mod:`subagents_bench.plots` and never assumes more than it checks:
   (bootstrap 95% CI, 2000 resamples, seed 0; Wilson 95% for rates);
 * condition metadata (topology, strategy, scope, subagent model) comes from
   ``conditions.csv``, else ``episodes.csv``, else the condition name;
+* ``episodes.csv`` rows flagged ``duplicate`` (a re-run of a trial already
+  counted) are dropped, as the aggregator drops them from its tables, and
+  per-event rows (dispatches, spawns, arbitrations) of invalid or duplicate
+  episodes are dropped with them (:meth:`AnalysisData.event_rows`);
 * "unknown" stays NaN; nothing is filled with 0.
 """
 
@@ -89,8 +93,16 @@ def bootstrap_mean(values: Iterable[float], *, strict_nan: bool = False,
 
 def bootstrap_ratio(num: Iterable[float], den: Iterable[float], *,
                     n_boot: int = N_BOOT, seed: int = BOOT_SEED) -> tuple[float, float, float]:
-    """sum(num)/sum(den) with a paired bootstrap 95% CI (resamples with a zero
-    denominator are dropped). NaN in ``num`` makes everything NaN."""
+    """sum(num)/sum(den) with a paired bootstrap 95% CI. NaN in either input
+    makes everything NaN; a zero total denominator has no point estimate.
+
+    A resample with a zero denominator (no solve drawn) has an infinite ratio
+    and is kept, not dropped: dropping it would give the interval conditional
+    on at least one solve, which is tightest exactly when solves are rare.
+    When more than 2.5% of the resamples draw no solve the upper bound is
+    therefore +inf ("unbounded"). The bounds are the outward order statistics
+    (``lower``/``higher``), so an infinite tail gives inf, never NaN.
+    """
     a = np.asarray(list(num), dtype=float)
     b = np.asarray(list(den), dtype=float)
     if len(a) == 0 or np.isnan(a).any() or np.isnan(b).any() or b.sum() == 0:
@@ -101,11 +113,9 @@ def bootstrap_ratio(num: Iterable[float], den: Iterable[float], *,
     rng = np.random.default_rng(seed)
     idx = rng.integers(0, len(a), size=(n_boot, len(a)))
     sb = b[idx].sum(axis=1)
-    ok = sb > 0
-    if ok.sum() < 10:
-        return point, math.nan, math.nan
-    ratios = a[idx].sum(axis=1)[ok] / sb[ok]
-    return point, float(np.percentile(ratios, 2.5)), float(np.percentile(ratios, 97.5))
+    ratios = np.where(sb > 0, a[idx].sum(axis=1) / np.where(sb > 0, sb, 1.0), math.inf)
+    return (point, float(np.quantile(ratios, 0.025, method="lower")),
+            float(np.quantile(ratios, 0.975, method="higher")))
 
 
 def as_bool(s: pd.Series) -> pd.Series:
@@ -164,6 +174,21 @@ class CondInfo:
     control: bool = False
     order: int = 0
     baseline_index: int = -1
+
+    @property
+    def manager(self) -> bool:
+        """The orchestrator's own tools are restricted (a manager control that must delegate)."""
+        return self.orchestrator_tools not in (None, "all")
+
+    @property
+    def label(self) -> str:
+        """Display name: the condition, tagged ``[manager]`` for a manager control."""
+        return f"{self.name} [manager]" if self.manager else self.name
+
+    @property
+    def kind(self) -> str:
+        """Legend wording for an off-grid condition."""
+        return f"manager control, orchestrator tools {self.orchestrator_tools}" if self.manager else "control"
 
 
 def _parse_name(name: str) -> dict[str, str | None]:
@@ -252,11 +277,37 @@ class AnalysisData:
             eps["resolved"] = np.where(r.isna(), np.nan, (r >= 1.0).astype(float))
         else:
             eps["resolved"] = np.nan
+        if "duplicate" in eps.columns:
+            eps = eps[as_bool(eps["duplicate"]) != 1.0]
         if valid_only and "valid" in eps.columns:
             eps = eps[as_bool(eps["valid"]) == 1.0]
-            if eps.empty:
-                raise Skip("episodes.csv has no valid episodes for the selected conditions")
+        if eps.empty:
+            raise Skip(f"episodes.csv has no {'valid ' if valid_only else ''}episodes for the selected conditions")
         return eps
+
+    def event_rows(self, name: str, cols: Iterable[str] = ()) -> pd.DataFrame:
+        """Rows of a per-event table (``dispatches``, ``spawns``,
+        ``arbitrations``) whose episode counts in the per-episode figures:
+        valid and not a duplicate in episodes.csv. An invalid trial's events
+        are real, but an outage or harness failure shaped them (a provider
+        retrying for minutes inflates a dispatch's LLM seconds), so they are
+        left out like the trial. ``.attrs['n_dropped']`` counts the rows left
+        out; every row is kept when episodes.csv cannot tell."""
+        df = self.require(name, cols)
+        eps = self.raw("episodes")
+        if eps is None or "episode_id" not in df.columns or not {"episode_id", "valid"} <= set(eps.columns):
+            df = df.copy()
+            df.attrs["n_dropped"] = 0
+            return df
+        keep = as_bool(eps["valid"]) == 1.0
+        if "duplicate" in eps.columns:
+            keep &= as_bool(eps["duplicate"]) != 1.0
+        mask = df["episode_id"].astype(str).isin(set(eps.loc[keep, "episode_id"].astype(str)))
+        out = df[mask].copy()
+        out.attrs["n_dropped"] = int((~mask).sum())
+        if out.empty:
+            raise Skip(f"{name}.csv has no rows from valid episodes")
+        return out
 
     # -- conditions -------------------------------------------------------------
 
@@ -422,10 +473,49 @@ class AnalysisData:
         out.attrs["source"] = f"`episodes.csv` ({metric}; bootstrap 95% CI recomputed here)"
         return out
 
+    def _episode_uptake(self, keys: list[str]) -> tuple[pd.DataFrame, str]:
+        """Treatment uptake per group of the valid episodes.csv rows with a
+        known outcome, indexed by ``keys`` (as strings): n_delegated,
+        delegated_frac, rate_delegated (from ``delegated``, else
+        ``spawn_calls > 0``; NaN when episodes.csv has neither) and
+        n_tasks_valid; plus the data-source note."""
+        eps = self.episodes(keys[1:])
+        eps = eps[eps["resolved"].notna()]
+        col = next((c for c in ("delegated", "spawn_calls") if c in eps.columns), None)
+        if col == "delegated":
+            deleg = num(eps[col])
+        elif col == "spawn_calls":
+            deleg = (num(eps[col]) > 0).astype(float).where(num(eps[col]).notna())
+        else:
+            deleg = pd.Series(np.nan, eps.index)
+        eps = eps.assign(_deleg=deleg)
+        rows = []
+        for key, g in eps.groupby(keys, sort=False):
+            key = key if isinstance(key, tuple) else (key,)
+            took = g[g["_deleg"] == 1.0]
+            known = int(g["_deleg"].notna().sum())
+            rows.append({**dict(zip(keys, map(str, key))),
+                         "n_delegated": float(len(took)) if known else np.nan,
+                         "delegated_frac": len(took) / known if known else np.nan,
+                         "rate_delegated": float(took["resolved"].mean()) if len(took) else np.nan,
+                         "n_tasks_valid": float(g["task_name"].nunique()) if "task_name" in g.columns else np.nan})
+        frame = pd.DataFrame(rows, columns=[*keys, "n_delegated", "delegated_frac", "rate_delegated",
+                                            "n_tasks_valid"]).set_index(keys)
+        used = [c for c in (col, "task_name" if "task_name" in eps.columns else None) if c]
+        return frame, f"`episodes.csv` ({', '.join(used) or 'no uptake columns'})"
+
     def resolve_stats(self, by_difficulty: bool = False) -> pd.DataFrame:
         """Resolve rate + Wilson CI per condition (or per condition x difficulty).
 
-        Columns: condition, [difficulty,] n_valid, n_resolved, rate, lo, hi.
+        Columns: condition, [difficulty,] n_valid, n_resolved, rate, lo, hi,
+        plus the treatment uptake n_delegated, delegated_frac (valid episodes
+        whose orchestrator spawned subagents), rate_delegated (the
+        per-protocol resolve rate among them) and n_tasks_valid (tasks with a
+        valid trial); these are NaN when the inputs lack them.
+
+        Rows without a rate (no valid trial) are dropped from the frame; their
+        keys are listed in ``.attrs['no_valid']`` (condition names, or
+        (condition, difficulty) pairs) so figures can say what is missing.
         """
         tname = "conditions_by_difficulty" if by_difficulty else "conditions"
         keys = ["condition", "difficulty"] if by_difficulty else ["condition"]
@@ -433,11 +523,26 @@ class AnalysisData:
         df = self.table(tname)
         if df is not None and all(c in df.columns for c in keys + need):
             out = pd.DataFrame({k: df[k].astype(str) for k in keys})
-            out["n_valid"] = num(df["n_valid"]) if "n_valid" in df.columns else np.nan
-            out["n_resolved"] = num(df["n_resolved"]) if "n_resolved" in df.columns else np.nan
-            out["rate"], out["lo"], out["hi"] = num(df["resolve_rate"]), num(df["resolve_ci_lo"]), num(df["resolve_ci_hi"])
+            for col, src in (("n_valid", "n_valid"), ("n_resolved", "n_resolved"), ("rate", "resolve_rate"),
+                             ("lo", "resolve_ci_lo"), ("hi", "resolve_ci_hi"), ("n_delegated", "n_delegated"),
+                             ("delegated_frac", "delegated_frac"), ("rate_delegated", "resolve_rate_delegated"),
+                             ("n_tasks_valid", "n_tasks_valid")):
+                out[col] = num(df[src]) if src in df.columns else np.nan
             source = f"`{tname}.csv` (resolve_rate, resolve_ci_lo, resolve_ci_hi, n_valid, n_resolved)"
+            uptake = f"`{tname}.csv` (n_delegated, resolve_rate_delegated, n_tasks_valid)"
+            if "n_delegated" not in df.columns:
+                # Written before the uptake columns existed: count them from episodes.csv.
+                try:
+                    filled, src = self._episode_uptake(keys)
+                except Skip:
+                    filled = None
+                if filled is not None and filled["n_delegated"].notna().any():
+                    cols = ["n_delegated", "delegated_frac", "rate_delegated"]
+                    cols += [] if "n_tasks_valid" in df.columns else ["n_tasks_valid"]
+                    out = out.drop(columns=cols).join(filled[cols], on=keys)
+                    uptake = src
         else:
+            every = self.episodes(keys[1:], valid_only=False)
             eps = self.episodes(keys[1:])
             eps = eps[eps["resolved"].notna()]
             rows = []
@@ -445,17 +550,34 @@ class AnalysisData:
                 key = key if isinstance(key, tuple) else (key,)
                 k, n = float(g["resolved"].sum()), float(len(g))
                 p, lo, hi = wilson(k, n)
-                rows.append({**dict(zip(keys, map(str, key))), "n_valid": n, "n_resolved": k, "rate": p, "lo": lo, "hi": hi})
-            if not rows:
-                raise Skip("no valid episodes with a known outcome")
-            out = pd.DataFrame(rows)
+                rows.append({**dict(zip(keys, map(str, key))), "n_valid": n, "n_resolved": k, "rate": p, "lo": lo,
+                             "hi": hi})
+            # Groups with trials but none valid with a known outcome: listed, never silently lost.
+            have = {tuple(r[k] for k in keys) for r in rows}
+            for key, _g in every.groupby(keys, sort=False):
+                key = tuple(map(str, key if isinstance(key, tuple) else (key,)))
+                if key not in have:
+                    rows.append({**dict(zip(keys, key)), "n_valid": 0.0, "n_resolved": 0.0, "rate": np.nan,
+                                 "lo": np.nan, "hi": np.nan})
+            out = pd.DataFrame(rows).reindex(columns=keys + ["n_valid", "n_resolved", "rate", "lo", "hi"])
             source = "`episodes.csv` (resolved, valid; Wilson 95% CI recomputed here)"
+            filled, uptake = self._episode_uptake(keys)
+            out = out.join(filled, on=keys)
         out = out[out["condition"].isin(set(self.selected))]
+        empty = out[out["rate"].isna()]
+        no_valid = list(empty["condition"]) if not by_difficulty else list(zip(empty["condition"], empty["difficulty"]))
         out = out[out["rate"].notna()]
         if out.empty:
-            raise Skip(f"no resolve rates in {tname}.csv / episodes.csv")
+            raise Skip(f"no resolve rates in {tname}.csv / episodes.csv"
+                       + (f" (no valid trials: {', '.join(map(str, no_valid))})" if no_valid else ""))
         order = {n: self.meta[n].order for n in out["condition"] if n in self.meta}
         out = out.assign(_o=out["condition"].map(order)).sort_values(["_o"] + keys[1:]).drop(columns="_o")
         out = out.reset_index(drop=True)
         out.attrs["source"] = source
+        out.attrs["uptake_source"] = uptake
+
+        def rank(k: Any) -> tuple:
+            c = k if isinstance(k, str) else k[0]
+            return (self.meta[c].order if c in self.meta else math.inf, str(k))
+        out.attrs["no_valid"] = sorted(no_valid, key=rank)
         return out

@@ -19,14 +19,21 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from matplotlib import rc_context
+from matplotlib.container import ErrorbarContainer
+from matplotlib.text import Annotation
+from matplotlib.ticker import NullFormatter
+
 from subagents_bench import plots
-from subagents_bench.plots.data import AnalysisData, bootstrap_mean, bootstrap_ratio, wilson
+from subagents_bench.plots import figures
+from subagents_bench.plots.data import AnalysisData, bootstrap_mean, bootstrap_ratio, num, wilson
 from subagents_bench.plots.figures import pareto_frontier
+from subagents_bench.plots.style import RC, errs
 from subagents_bench.plots.timelines import select_episodes
 
 # The fixture module lives next to this file; make it importable under any pytest import mode.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from synth_tables import default_conditions, write_synthetic_analysis  # noqa: E402
+from synth_tables import TASKS, default_conditions, write_synthetic_analysis  # noqa: E402
 
 SINGLE_FIGURES = [n for n in plots.FIGURE_NAMES if n != "timelines"]
 
@@ -56,6 +63,30 @@ def _copy(src: Path, dst: Path, tables: list[str]) -> Path:
     for t in tables:
         shutil.copy(src / f"{t}.csv", dst / f"{t}.csv")
     return dst
+
+
+def _render(fn, data: AnalysisData) -> list:
+    """Run one figure function without saving (figures stay inspectable)."""
+    with rc_context(RC):
+        return list(fn(data))
+
+
+def _zero_length_whiskers(fig) -> list[tuple[str, np.ndarray]]:
+    """Every error-bar segment of zero length in a figure (a capped whisker that looks exact)."""
+    bad = []
+    for ax in fig.axes:
+        for c in ax.containers:
+            if not isinstance(c, ErrorbarContainer):
+                continue
+            for coll in c.lines[2]:
+                for seg in coll.get_segments():
+                    if len(seg) == 2 and np.all(np.isfinite(seg)) and np.allclose(seg[0], seg[1]):
+                        bad.append((ax.get_title(), seg))
+    return bad
+
+
+def _legend_texts(fig) -> list[str]:
+    return [t.get_text() for lg in fig.legends for t in lg.get_texts()]
 
 
 # ---------------------------------------------------------------------------
@@ -327,3 +358,339 @@ def test_plots_from_real_aggregator_output(tmp_path):
     errors = [(n, why) for n, why in report.skipped if why.startswith("error")]
     assert not errors, errors
     assert set(report.figures_written) == set(plots.FIGURE_NAMES), report.skipped
+
+
+# ---------------------------------------------------------------------------
+# intervals: unbounded, unknown, degenerate
+# ---------------------------------------------------------------------------
+
+
+def test_bootstrap_ratio_keeps_resamples_without_a_solve():
+    rng = np.random.default_rng(1)
+    cost = rng.uniform(0.003, 0.006, 30)
+    for k in (1, 2, 3):
+        solved = np.zeros(30)
+        solved[:k] = 1.0
+        p, lo, hi = bootstrap_ratio(cost, solved)
+        # More than 2.5% of resamples draw no solve: the ratio is unbounded above, never a tight
+        # interval conditional on a solve (which gave hi ~ 1.06 x the point for one solve).
+        assert p == pytest.approx(cost.sum() / k)
+        assert math.isinf(hi) and hi > 0, (k, hi)
+        assert np.isfinite(lo) and lo <= p, (k, lo)
+    solved = (np.arange(30) < 15).astype(float)
+    p, lo, hi = bootstrap_ratio(cost, solved)
+    assert np.isfinite(hi) and lo < p < hi
+    # Same resamples as a direct computation (no resample dropped when every one has a solve).
+    idx = np.random.default_rng(0).integers(0, 30, size=(2000, 30))
+    ratios = cost[idx].sum(axis=1) / solved[idx].sum(axis=1)
+    assert lo == pytest.approx(np.quantile(ratios, 0.025, method="lower"))
+    assert hi == pytest.approx(np.quantile(ratios, 0.975, method="higher"))
+
+
+def test_errs_draw_no_whisker_for_unknown_unbounded_or_zero_width_intervals():
+    e = errs([1.0, 2.0, 3.0, 4.0, 5.0], [np.nan, 1.5, 3.0, 4.0, 4.0], [1.5, 2.5, np.inf, 4.0, np.nan])
+    assert np.isnan(e[:, 0]).all()  # unknown lower bound
+    assert e[:, 1].tolist() == [0.5, 0.5]
+    assert np.isnan(e[:, 2]).all()  # unbounded: the caller draws the arrow
+    assert np.isnan(e[:, 3]).all()  # zero width: degenerate, not exact
+    assert np.isnan(e[:, 4]).all()
+
+
+@pytest.fixture(scope="module")
+def sparse(tmp_path_factory) -> Path:
+    """A sweep where gemma31b_parallel_easy has one valid episode and gemma31b_sequential_medium
+    one solve in nine (so its cost and time per solve are unbounded above)."""
+    keep = ("raman-fitting", 3)
+    invalid = [("gemma31b_parallel_easy", t["name"], r) for t in TASKS for r in (1, 2, 3) if (t["name"], r) != keep]
+    return write_synthetic_analysis(tmp_path_factory.mktemp("sparse") / "analysis", invalid=invalid)
+
+
+def test_unknown_intervals_are_noted_never_drawn_as_zero_length_whiskers(synth, sparse):
+    for d in (synth, sparse):
+        data = AnalysisData(d)
+        for name, fn in plots.FIGURES:
+            if name == "timelines":
+                continue
+            for r in _render(fn, data):
+                assert not _zero_length_whiskers(r.fig), (d.name, r.name, _zero_length_whiskers(r.fig))
+    data = AnalysisData(sparse)
+    (tb,) = _render(figures.fig_time_breakdown, data)
+    assert any(n.startswith("CI unavailable for the wall-clock") and "gemma31b_parallel_easy" in n for n in tb.notes)
+    (pt,) = _render(figures.fig_pareto_time, data)
+    assert any(n.startswith("CI unavailable for x in ") and "gemma31b_parallel_easy" in n for n in pt.notes), pt.notes
+
+
+def test_arbiter_confidence_mean_of_one_episode_is_noted(synth, tmp_path):
+    d = _copy(synth, tmp_path / "one_arb", ["episodes", "arbitrations"])
+    arb = pd.read_csv(d / "arbitrations.csv")
+    keep = arb.loc[(arb["condition"] == "gemma31b_arbiter_easy") & arb["final_confidence"].notna(), "episode_id"].iloc[0]
+    eps = pd.read_csv(d / "episodes.csv")
+    eps.loc[(eps["condition"] == "gemma31b_arbiter_easy") & (eps["episode_id"] != keep), "valid"] = False
+    eps.to_csv(d / "episodes.csv", index=False)
+    (r,) = _render(figures.fig_arbiter, AnalysisData(d))
+    assert not _zero_length_whiskers(r.fig)
+    note = next(n for n in r.notes if n.startswith("CI unavailable for the mean confidence"))
+    # Every (condition, outcome) group whose mean has no interval is listed, and only those.
+    conf = arb.groupby("episode_id")["final_confidence"].mean().rename("conf")
+    j = eps[eps["valid"].astype(bool)].set_index("episode_id")[["condition", "resolved"]].join(conf, how="inner")
+    j = j[j["conf"].notna()]
+    want = sorted(f"{c} ({'resolved' if o else 'not resolved'})" for (c, o), g in j.groupby(["condition", "resolved"])
+                  if len(g) < 2 or g["conf"].nunique() < 2)
+    assert f"gemma31b_arbiter_easy ({'resolved' if eps.set_index('episode_id').loc[keep, 'resolved'] else 'not resolved'})" in want
+    assert sorted(note.split(": ", 1)[1].split(", ")) == want
+
+
+def test_cost_per_solve_with_rare_solves_is_unbounded_and_noted(sparse):
+    data = AnalysisData(sparse)
+    eps = data.episodes()
+    solves = eps.groupby("condition")["resolved"].agg(["sum", "count"])
+    # P(a resample draws no solve) = (1 - k/n)^n, well above 2.5% for these (time per solve has no unpriced model).
+    rare = [c for c, r in solves.iterrows() if 0 < r["sum"] and (1 - r["sum"] / r["count"]) ** r["count"] > 0.06]
+    common = [c for c, r in solves.iterrows() if (1 - r["sum"] / r["count"]) ** r["count"] < 0.001]
+    assert rare and common, solves
+    (ce,) = _render(figures.fig_cost_effectiveness, data)
+    notes = [n for n in ce.notes if n.startswith("95% interval unbounded above in")]
+    time_note = " ".join(n for n in notes if "every panel" in n or "'time per solve'" in n)
+    for c in rare:
+        assert c in time_note, (c, notes)
+    for c in common:
+        assert c not in " ".join(notes), (c, notes)
+    assert figures.UNBOUNDED_HANDLE_LABEL in _legend_texts(ce.fig)
+    # Each unbounded whisker is an arrow ending on the right edge of its panel.
+    ax = next(a for a in ce.fig.axes if a.get_title() == "time per solve")
+    arrows = [t for t in ax.texts if getattr(t, "arrow_patch", None) is not None]
+    assert arrows and all(t.xy[0] == 1.0 for t in arrows)
+    assert "resample that draws no solved episode" in ce.caption
+
+
+def test_time_per_solve_ci_uses_the_episodes_of_its_point(synth, tmp_path):
+    d = _copy(synth, tmp_path / "nowall", ["episodes", "conditions"])
+    eps = pd.read_csv(d / "episodes.csv")
+    row = eps.index[(eps["condition"] == "single_matched") & eps["valid"].astype(bool)][0]
+    eps.loc[row, "wall_clock_sec"] = np.nan  # e.g. a still-running episode
+    eps.to_csv(d / "episodes.csv", index=False)
+    (ce,) = _render(figures.fig_cost_effectiveness, AnalysisData(d))
+    ax = next(a for a in ce.fig.axes if a.get_title() == "time per solve")
+    k = [t.get_text() for t in ce.fig.axes[0].get_yticklabels()].index("single_matched")
+    segs = [s for c in ax.containers if isinstance(c, ErrorbarContainer) for coll in c.lines[2]
+            for s in coll.get_segments() if len(s) and np.isclose(s[0][1], k)]
+    arrows = [t for t in ax.texts if getattr(t, "arrow_patch", None) is not None and np.isclose(t.xy[1], k)]
+    # The CSV point skips the unknown wall-clock; the bootstrap must too, or its CI is NaN (no whisker at all).
+    assert segs or arrows, "the time-per-solve whisker of single_matched must still be drawn"
+    assert not any("CI unavailable" in n and "single_matched" in n for n in ce.notes), ce.notes
+
+
+# ---------------------------------------------------------------------------
+# time_breakdown: hidden work measured from the spawn groups' start
+# ---------------------------------------------------------------------------
+
+
+def test_time_breakdown_marks_hidden_work_from_the_group_start(synth):
+    data = AnalysisData(synth)
+    (r,) = _render(figures.fig_time_breakdown, data)
+    ax = r.fig.axes[0]
+    eps = data.episodes()
+    m = eps.groupby("condition")[["cp_orch_llm_sec", "sub_busy_sec", "cp_group_sec"]].mean()
+    names = data.order(m.index)
+    labels = [t.get_text() for t in ax.get_yticklabels()]
+    diamonds = [ln for ln in ax.lines if ln.get_marker() == "D"]
+    assert len(diamonds) == 1
+    dx, dy = (np.asarray(v, float) for v in diamonds[0].get_data())
+    busy = [n for n in names if m.loc[n, "sub_busy_sec"] > 0]
+    assert "gemma31b_sequential_easy" not in busy and "single_5step" not in busy
+    for n in busy:
+        k = labels.index(data.meta[n].label)
+        x = dx[np.isclose(dy, k - 0.37)]
+        assert x == pytest.approx(m.loc[n, "cp_orch_llm_sec"] + m.loc[n, "sub_busy_sec"]), n
+    brackets = [ln for ln in ax.lines if len(ln.get_xdata()) == 4]
+    assert len(brackets) == len(busy)
+    ends = sorted(float(ln.get_xdata()[2]) for ln in brackets)
+    assert ends == pytest.approx(sorted(m.loc[n, "cp_orch_llm_sec"] + m.loc[n, "cp_group_sec"] for n in busy))
+    # Parallel groups hide work (diamond right of the bracket); sequential ones do not.
+    hidden = m["sub_busy_sec"] - m["cp_group_sec"]
+    assert hidden["gemma31b_parallel_hard"] > 1.0 and abs(hidden["gemma31b_sequential_hard"]) < 1.0
+    assert "sub_busy_sec - cp_group_sec" in r.caption and "far right of the subagent segment" not in r.caption
+    hidden_label = "work hidden by parallelism (sub_busy_sec - cp_group_sec)"
+    assert hidden_label in _legend_texts(r.fig)
+
+
+def test_time_breakdown_legend_has_no_hidden_work_entry_when_none_is_drawn(synth, tmp_path):
+    # Judging dominates everywhere (as in the real manager_arbiter_hard smoke episode): no dotted gap.
+    d = _copy(synth, tmp_path / "judging", ["episodes", "conditions"])
+    eps = pd.read_csv(d / "episodes.csv")
+    eps["sub_busy_sec"] = eps["cp_group_sec"] * 0.5
+    eps.to_csv(d / "episodes.csv", index=False)
+    (r,) = _render(figures.fig_time_breakdown, AnalysisData(d))
+    ax = r.fig.axes[0]
+    assert not [ln for ln in ax.lines if ln.get_linestyle() == ":"]
+    texts = _legend_texts(r.fig)
+    assert "critical-path time inside spawn groups (cp_group_sec)" in texts
+    assert not any(t.startswith("work hidden by parallelism") for t in texts), texts
+
+
+# ---------------------------------------------------------------------------
+# treatment uptake, estimand, manager controls, zero-valid conditions, duplicates
+# ---------------------------------------------------------------------------
+
+
+def test_main_grid_shows_uptake_estimand_and_manager_tag(synth):
+    data = AnalysisData(synth)
+    (r,) = _render(figures.fig_main_grid, data)
+    ax = r.fig.axes[0]
+    conds = pd.read_csv(synth / "conditions.csv").set_index("condition")
+    subs = conds[conds["topology"] == "subagents"]
+    # One delegated k/n under each subagent bar, red when the condition never delegated.
+    counts = [t for t in ax.texts if t.get_text() in {f"{a}/{b}" for a, b in zip(subs["n_delegated"], subs["n_valid"])}
+              and isinstance(t, Annotation) and t.xy[1] == 0]
+    assert len(counts) == len(subs)
+    never = [t for t in counts if t.get_text() == "0/9"]
+    assert len(never) == 1 and never[0].get_color() == figures.ROLE_COLORS["arb"]
+    assert any(n.startswith("never delegated") and "gemma31b_sequential_easy" in n for n in r.notes)
+    # A hollow per-protocol marker for every condition with delegated episodes.
+    hollow = [ln for ln in ax.lines if ln.get_marker() == "o" and ln.get_markerfacecolor() == figures.SURFACE]
+    rates = sorted(float(ln.get_ydata()[0]) for ln in hollow)
+    assert rates == pytest.approx(sorted(subs.loc[subs["n_delegated"] > 0, "resolve_rate_delegated"]))
+    assert "resolve rate of the episodes that delegated (per protocol)" in _legend_texts(r.fig)
+    assert "these tasks" in r.caption and "paired.csv" in r.caption and "beats that baseline" not in r.caption
+    assert any("[manager]" in t.get_text() for t in ax.get_xticklabels())
+    assert any("manager_arbiter_hard (manager control, orchestrator tools read_file+list_dir+search" in t
+               for t in _legend_texts(r.fig))
+
+
+def test_main_grid_caption_describes_the_delegated_row_only_when_drawn(synth, tmp_path):
+    # An analysis dir written before the uptake columns existed: the row is counted from episodes.csv ...
+    d = _copy(synth, tmp_path / "old", ["episodes", "conditions", "conditions_by_difficulty"])
+    uptake = ["n_delegated", "delegated_frac", "resolve_rate_delegated", "resolve_delegated_ci_lo",
+              "resolve_delegated_ci_hi"]
+    for t in ("conditions", "conditions_by_difficulty"):
+        pd.read_csv(d / f"{t}.csv").drop(columns=uptake).to_csv(d / f"{t}.csv", index=False)
+    for by_difficulty in (False, True):
+        cols = ["condition", *(["difficulty"] if by_difficulty else []), "n_delegated", "delegated_frac",
+                "rate_delegated"]
+        got = AnalysisData(d).resolve_stats(by_difficulty)
+        want = AnalysisData(synth).resolve_stats(by_difficulty)
+        pd.testing.assert_frame_equal(got[cols], want[cols], check_dtype=False)
+        assert got.attrs["uptake_source"].startswith("`episodes.csv` (delegated")
+    (counted,) = _render(figures.fig_main_grid, AnalysisData(d))
+    assert "row 'delegated'" in counted.caption
+    assert any(t.get_text() == "delegated" for t in counted.fig.axes[0].texts)
+    # ... and with no uptake anywhere there is no row, so the caption must not describe one.
+    eps = pd.read_csv(d / "episodes.csv")
+    eps.drop(columns=[c for c in ("delegated", "spawn_calls") if c in eps.columns]).to_csv(d / "episodes.csv",
+                                                                                      index=False)
+    (old,) = _render(figures.fig_main_grid, AnalysisData(d))
+    assert "row 'delegated'" not in old.caption
+    assert not any(t.get_text() == "delegated" for t in old.fig.axes[0].texts)
+    assert any(n.startswith("no 'delegated' row") for n in old.notes), old.notes
+    (new,) = _render(figures.fig_main_grid, AnalysisData(synth))
+    assert "row 'delegated'" in new.caption and not any(n.startswith("no 'delegated' row") for n in new.notes)
+
+
+def test_spawn_counts_shows_uptake_and_the_computed_definition(synth):
+    data = AnalysisData(synth)
+    (r,) = _render(figures.fig_spawn_counts, data)
+    titles = [a.get_title() for a in r.fig.axes]
+    assert titles[0] == "episodes that delegated"
+    assert any(n.startswith("never delegated") and "gemma31b_sequential_easy" in n for n in r.notes)
+    assert "mean over episodes of each episode's mean granted / requested" in r.caption
+    assert "mean over spawn calls" not in r.caption
+    assert "manager_arbiter_hard [manager]" in [t.get_text() for t in r.fig.axes[0].get_yticklabels()]
+    (p,) = _render(figures.fig_pareto_cost, data)
+    assert any(t.startswith("manager_arbiter_hard (manager control") for t in _legend_texts(p.fig))
+
+
+@pytest.mark.parametrize("with_conditions_csv", [True, False])
+def test_zero_valid_conditions_are_listed_not_dropped(tmp_path, with_conditions_csv):
+    invalid = [("gemma31b_arbiter_easy", None, None), ("single_matched", None, None),
+               ("gemma31b_parallel_medium", "crack-7z-hash", None)]
+    d = write_synthetic_analysis(tmp_path / "analysis", invalid=invalid)
+    if not with_conditions_csv:
+        for t in ("conditions", "conditions_by_difficulty"):
+            (d / f"{t}.csv").unlink()
+    data = AnalysisData(d)
+    assert data.resolve_stats().attrs["no_valid"] == ["single_matched", "gemma31b_arbiter_easy"]
+    (mg,) = _render(figures.fig_main_grid, data)
+    note = next(n for n in mg.notes if n.startswith("no valid trials, slot labelled"))
+    assert note.endswith("single_matched, gemma31b_arbiter_easy")
+    assert any(t.get_text() == "no valid trials" for t in mg.fig.axes[0].texts)
+    assert "single_matched (baseline; no valid trials, not drawn)" in _legend_texts(mg.fig)
+    mix = next(n for n in mg.notes if n.startswith("valid trials cover fewer tasks"))
+    assert "gemma31b_parallel_medium (2 of 3)" in mix
+    (pc,) = _render(figures.fig_pareto_cost, data)
+    assert "no valid trials (no resolve rate, not drawn): single_matched, gemma31b_arbiter_easy" in pc.notes
+    (ce,) = _render(figures.fig_cost_effectiveness, data)
+    assert "gemma31b_arbiter_easy" in [t.get_text() for t in ce.fig.axes[0].get_yticklabels()]
+    assert any(n.startswith("no valid trials") and "gemma31b_arbiter_easy" in n for n in ce.notes)
+    report = plots.make_plots(d, tmp_path / "out", formats=["png"], only=["main_grid"])
+    assert report.figures_written == ["main_grid"]
+    assert "Conditions with no valid trial" in (tmp_path / "out" / "index.md").read_text()
+
+
+def test_events_of_invalid_trials_are_left_out(synth, tmp_path):
+    """Dispatches, spawn calls and arbitrations of an invalid trial (e.g. a
+    provider outage that kept harbor's trial alive) are dropped with it."""
+    d = _copy(synth, tmp_path / "invalid_events", ["episodes", "dispatches", "spawns", "arbitrations", "conditions"])
+    eps = pd.read_csv(d / "episodes.csv")
+    arb = pd.read_csv(d / "arbitrations.csv")
+    gone = arb.loc[arb["condition"] == "gemma31b_arbiter_hard", "episode_id"].drop_duplicates().iloc[:2].tolist()
+    eps.loc[eps["episode_id"].isin(gone), ["valid", "invalid_reason"]] = [False, "provider_error"]
+    eps.to_csv(d / "episodes.csv", index=False)
+    disp, sp = pd.read_csv(d / "dispatches.csv"), pd.read_csv(d / "spawns.csv")
+    n_disp, n_sp, n_arb = (int(t["episode_id"].isin(gone).sum()) for t in (disp, sp, arb))
+    assert min(n_disp, n_sp, n_arb) > 0
+    data = AnalysisData(d)
+    rows = data.event_rows("dispatches")
+    assert rows.attrs["n_dropped"] == n_disp and not rows["episode_id"].isin(gone).any()
+    assert len(rows) == len(disp) - n_disp
+
+    (ps,) = _render(figures.fig_per_subagent, data)
+    assert f"{n_disp} dispatch(es) of invalid or duplicate trials left out" in ps.notes
+    assert "of a valid trial" in ps.caption
+    (sc,) = _render(figures.fig_spawn_counts, data)
+    assert f"{n_sp} spawn call(s) of invalid or duplicate trials left out" in sc.notes
+    (ar,) = _render(figures.fig_arbiter, data)
+    assert f"{n_arb} arbitration(s) of invalid or duplicate trials left out" in ar.notes
+    # Nothing is dropped from an analysis dir whose episodes are all valid.
+    assert AnalysisData(synth).event_rows("arbitrations").attrs["n_dropped"] == 0
+
+
+def test_duplicate_trials_are_left_out(synth):
+    eps = pd.read_csv(synth / "episodes.csv")
+    dup = eps[eps["duplicate"].astype(bool)]
+    assert len(dup) == 1 and dup["valid"].astype(bool).all()
+    data = AnalysisData(synth)
+    assert dup["trial_name"].iloc[0] not in set(data.episodes(valid_only=False)["trial_name"])
+    cond = dup["condition"].iloc[0]
+    csv = pd.read_csv(synth / "conditions.csv").set_index("condition")
+    (d := synth.parent / "dups_only_episodes").mkdir(exist_ok=True)
+    shutil.copy(synth / "episodes.csv", d / "episodes.csv")
+    st = AnalysisData(d).resolve_stats().set_index("condition")
+    assert st.loc[cond, "n_valid"] == csv.loc[cond, "n_valid"] == 9
+    assert st.loc[cond, "n_resolved"] == csv.loc[cond, "n_resolved"]
+
+
+# ---------------------------------------------------------------------------
+# axes
+# ---------------------------------------------------------------------------
+
+
+def test_log_axes_label_only_major_ticks(synth):
+    (p,) = _render(figures.fig_pareto_cost, AnalysisData(synth))
+    logs = [a for a in p.fig.axes if a.get_xscale() == "log"]
+    assert logs
+    for a in logs:
+        assert isinstance(a.xaxis.get_minor_formatter(), NullFormatter)
+
+
+def test_calibration_shows_every_ttft_point_of_a_small_sample(synth, tmp_path):
+    d = tmp_path / "cal"
+    d.mkdir()
+    calls = pd.read_csv(synth / "calls.csv")
+    calls = calls[calls["role"] == "orchestrator"].head(40).copy()
+    calls.loc[calls.index[0], "ttft_sec"] = 70.0  # one slow call among 40
+    calls.to_csv(d / "calls.csv", index=False)
+    shutil.copy(synth / "episodes.csv", d / "episodes.csv")
+    (r,) = _render(figures.fig_calibration, AnalysisData(d))
+    ax = r.fig.axes[0]
+    assert ax.get_ylabel() == "TTFT (s)" and ax.get_ylim()[1] >= 70.0
+    assert not any("above the y range" in n for n in r.notes)

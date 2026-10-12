@@ -205,15 +205,27 @@ def write_index(report: PlotReport, analysis_dir: Path, data: AnalysisData, fmts
         + f". Each figure is saved as {', '.join(f.upper() for f in fmts)}"
         + (f" (PNG at {dpi} dpi)" if "png" in fmts else "")
         + ". Error bars are 95% intervals: Wilson for resolve rates and bootstrap (2000 resamples, seed 0) for "
-        "means, taken from the `*_ci_lo`/`*_ci_hi` columns unless a caption says otherwise. Colour encodes the "
+        "means, taken from the `*_ci_lo`/`*_ci_hi` columns unless a caption says otherwise. An interval that "
+        "cannot be computed (e.g. fewer than 2 valid values) gets no whisker rather than a zero-length one, and "
+        "the figure's notes name those conditions. Colour encodes the "
         "strategy (blue parallel, orange sequential, aqua arbiter), lightness or marker shape the delegation scope "
         "(lighter / o = easy, s = medium, ^ = hard), grey the single-agent baselines; hatched bars and hollow "
-        "markers are controls off the main strategy x scope grid.",
+        "markers are controls off the main strategy x scope grid, and `[manager]` tags a manager control (the "
+        "orchestrator lacks the editing tools, so it must delegate). Invalid trials and trials flagged "
+        "`duplicate` in `episodes.csv` are left out everywhere, with their dispatches, spawn calls and "
+        "arbitrations; only the provider calibration uses every call.",
         "",
     ]
     sel = data.order(data.selected)
     if sel:
         lines += ["Conditions: " + ", ".join(f"`{c}`" for c in sel) + ".", ""]
+    try:
+        no_valid = data.resolve_stats().attrs.get("no_valid", [])
+    except Skip:
+        no_valid = []
+    if no_valid:
+        lines += ["Conditions with no valid trial (no resolve rate; left out of the per-episode figures, labelled in "
+                  "main_grid and cost_effectiveness): " + ", ".join(f"`{c}`" for c in no_valid) + ".", ""]
     by_fig: dict[str, list[WrittenFigure]] = {}
     for w in report.written:
         by_fig.setdefault(w.figure, []).append(w)

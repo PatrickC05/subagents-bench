@@ -12,7 +12,9 @@ One encoding everywhere, so a reader learns it once:
   elsewhere;
 * **controls** (conditions off the primary strategy x scope grid, e.g. the
   same-model control) use their strategy/scope style but hollow markers or a
-  hatched fill, and are always named;
+  hatched fill, and are always named; a manager control (orchestrator tools
+  restricted, so it must delegate) is also tagged ``[manager]`` in labels
+  and legends;
 * **roles** have their own hues (orchestrator violet, arbiter red, subagent
   yellow, debate magenta, tools green), stacked in an order that keeps
   adjacent segments distinguishable.
@@ -31,6 +33,7 @@ from matplotlib.colors import LinearSegmentedColormap, to_rgb
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
+from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
 
 from .data import SCOPES, STRATEGIES, CondInfo
 
@@ -169,14 +172,34 @@ def wrap(text: str, width: int = 18) -> str:
     return "\n".join(lines)
 
 
+def ci_known(lo: Sequence[float], hi: Sequence[float]) -> np.ndarray:
+    """Boolean mask: both CI bounds are finite and the interval has a width.
+
+    A zero-width interval (e.g. a bootstrap over identical values) is
+    degenerate, not exact, and counts as unknown.
+    """
+    lo_, hi_ = np.asarray(lo, float), np.asarray(hi, float)
+    with np.errstate(invalid="ignore"):
+        return np.isfinite(lo_) & np.isfinite(hi_) & (hi_ > lo_)
+
+
 def errs(mean: Sequence[float], lo: Sequence[float], hi: Sequence[float]) -> np.ndarray:
-    """2xN error-bar array from CI bounds; unknown bounds -> no bar (0)."""
+    """2xN error-bar array from CI bounds.
+
+    An interval with a non-finite bound (unknown, or unbounded above) or no
+    width gives NaN on both sides, for which matplotlib draws neither whisker
+    nor caps: a zero-length capped whisker would look like an exact estimate.
+    Callers say so in the figure notes (and draw unbounded intervals
+    themselves).
+    """
     m = np.asarray(mean, float)
     lo_ = np.asarray(lo, float)
     hi_ = np.asarray(hi, float)
-    down = np.where(np.isfinite(lo_), np.clip(m - lo_, 0, None), 0.0)
-    up = np.where(np.isfinite(hi_), np.clip(hi_ - m, 0, None), 0.0)
-    return np.nan_to_num(np.vstack([down, up]))
+    ok = ci_known(lo_, hi_) & np.isfinite(m)
+    with np.errstate(invalid="ignore"):
+        down = np.where(ok, np.clip(m - lo_, 0, None), np.nan)
+        up = np.where(ok, np.clip(hi_ - m, 0, None), np.nan)
+    return np.vstack([down, up])
 
 
 def new_figure(width: float, height: float) -> Figure:
@@ -206,9 +229,19 @@ def panel_axes(fig: Figure, n: int, *, max_cols: int = 3, sharex: bool = False, 
 
 
 def log_scale_if_wide(ax, values: Iterable[float], axis: str = "x", ratio: float = 20.0) -> bool:
+    """Log-scale the axis when the positive values span ``ratio`` or more.
+
+    Ticks go at 1, 2 and 5 per decade with plain labels (callers may set
+    their own major formatter); minor ticks stay unlabelled, so a range of
+    less than a decade still gets labels that never collide.
+    """
     v = np.asarray([x for x in values if x is not None and np.isfinite(x) and x > 0], float)
     if len(v) >= 2 and v.max() / v.min() >= ratio:
         (ax.set_xscale if axis == "x" else ax.set_yscale)("log")
+        a = ax.xaxis if axis == "x" else ax.yaxis
+        a.set_major_locator(LogLocator(base=10, subs=(1.0, 2.0, 5.0)))
+        a.set_major_formatter(FuncFormatter(lambda t, _p: f"{t:g}"))
+        a.set_minor_formatter(NullFormatter())
         return True
     return False
 
@@ -259,14 +292,14 @@ def condition_legend(infos: Iterable[CondInfo], *, kind: str = "marker", scope_l
     for i in infos:
         if i.control and not i.baseline:
             if kind == "marker":
-                handles.append(Line2D([], [], **{**point_style(i), "label": f"{i.name} (control, hollow)"}))
+                handles.append(Line2D([], [], **{**point_style(i), "label": f"{i.name} ({i.kind}; hollow)"}))
             elif kind == "line":
                 handles.append(Line2D([], [], color=base_color(i), linestyle=SCOPE_LINESTYLES.get(i.scope or "", "-"),
-                                      linewidth=1.0, marker=".", label=f"{i.name} (control)"))
+                                      linewidth=1.0, marker=".", label=f"{i.name} ({i.kind})"))
             else:
                 st = bar_style(i)
                 handles.append(Patch(facecolor=st["color"], edgecolor=st["edgecolor"], hatch=st["hatch"],
-                                     hatchcolor=st["hatchcolor"], label=f"{i.name} (control, hatched)"))
+                                     hatchcolor=st["hatchcolor"], label=f"{i.name} ({i.kind}; hatched)"))
     return handles
 
 

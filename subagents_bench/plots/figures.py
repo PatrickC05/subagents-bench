@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
-from typing import Callable, Iterator
+from typing import Any, Callable, Iterator
 
 import numpy as np
 import pandas as pd
@@ -55,6 +55,7 @@ from .style import (
     TOOL_COLOR,
     bar_style,
     base_color,
+    ci_known,
     condition_legend,
     errs,
     fill_color,
@@ -129,13 +130,15 @@ def _infos(data: AnalysisData, names) -> list[CondInfo]:
     return [data.meta[n] for n in names if n in data.meta]
 
 
-def _baseline_handles(infos: list[CondInfo], *, band: bool = True) -> list:
+def _baseline_handles(infos: list[CondInfo], *, band: bool = True, empty: frozenset[str] = frozenset()) -> list:
+    """Legend lines for the baselines; one in ``empty`` (no valid trials) is labelled so, not drawn."""
     out = []
     for i in infos:
         if i.baseline:
             c, ls, _ = BASELINE_STYLES[i.baseline_index % len(BASELINE_STYLES)]
-            out.append(Line2D([], [], color=c, linestyle=ls, linewidth=1.4,
-                              label=f"{i.name} (baseline{'; band = 95% CI' if band else ''})"))
+            what = "; no valid trials, not drawn" if i.name in empty else ("; band = 95% CI" if band else "")
+            out.append(Line2D([], [], color=c, linestyle=ls, linewidth=1.4, alpha=0.4 if i.name in empty else 1.0,
+                              label=f"{i.name} (baseline{what})"))
     return out
 
 
@@ -169,8 +172,53 @@ def _block_separators(ax, data: AnalysisData, names: list[str], orient: str = "h
             (ax.axhline if orient == "h" else ax.axvline)(k - 0.5, color=AXIS, linewidth=0.7, zorder=0)
 
 
-def _hbars(ax, data: AnalysisData, names: list[str], mean, lo, hi, *, missing: dict[str, str] | None = None) -> None:
-    """Horizontal bars per condition with CI whiskers; missing values get a text note."""
+def _labels(data: AnalysisData, names) -> list[str]:
+    """Tick labels: condition names, with manager controls tagged."""
+    return [data.meta[n].label if n in data.meta else n for n in names]
+
+
+def _ci_gaps(names, mean, lo, hi) -> tuple[list[str], list[str]]:
+    """(unknown, unbounded): conditions with a value whose 95% interval is
+    unknown (a NaN bound, or zero width), or known below but unbounded above
+    (hi = +inf)."""
+    mean, lo, hi = (np.asarray(v, float) for v in (mean, lo, hi))
+    has = np.isfinite(mean)
+    unbounded = has & np.isfinite(lo) & np.isposinf(hi)
+    unknown = has & ~ci_known(lo, hi) & ~unbounded
+    return [n for n, u in zip(names, unknown) if u], [n for n, u in zip(names, unbounded) if u]
+
+
+def _ci_note(unknown: list[str], where: str = "") -> list[str]:
+    """Notes line for conditions drawn without a whisker because their interval is unknown.
+
+    ``where`` completes "CI unavailable ...", e.g. "for the wall-clock" or "in every panel".
+    """
+    if not unknown:
+        return []
+    return [f"CI unavailable{f' {where}' if where else ''} (fewer than 2 valid values, an unknown one, or all "
+            f"equal; no whisker drawn): {', '.join(unknown)}"]
+
+
+def _panels_phrase(titles: list[str], n_panels: int) -> str:
+    """'in every panel' or "in 'a', 'b'" for a note shared by several panels."""
+    return "in every panel" if len(titles) == n_panels > 1 else "in " + ", ".join(titles)
+
+
+UNBOUNDED_HANDLE_LABEL = "95% interval unbounded above (arrow to the panel edge)"
+
+
+def _unbounded_handle() -> Line2D:
+    return Line2D([], [], color=INK, linewidth=0.9, marker=">", markersize=4, label=UNBOUNDED_HANDLE_LABEL)
+
+
+def _hbars(ax, data: AnalysisData, names: list[str], mean, lo, hi, *,
+           missing: dict[str, str] | None = None) -> tuple[list[str], list[str]]:
+    """Horizontal bars per condition with CI whiskers; missing values get a text note.
+
+    Whiskers are drawn only for known intervals. One unbounded above runs from
+    its lower bound to the right edge of the axes, with an arrow head.
+    Returns (conditions without a CI, conditions with an unbounded CI).
+    """
     mean = np.asarray(mean, float)
     lo = np.asarray(lo, float)
     hi = np.asarray(hi, float)
@@ -184,10 +232,19 @@ def _hbars(ax, data: AnalysisData, names: list[str], mean, lo, hi, *, missing: d
     if ok.any():
         ax.errorbar(mean[ok], y[ok], xerr=errs(mean[ok], lo[ok], hi[ok]), fmt="none", ecolor=INK,
                     elinewidth=0.9, capsize=2, zorder=3)
-    ax.set_yticks(y, names)
+    unknown, unbounded = _ci_gaps(names, mean, lo, hi)
+    for n in unbounded:
+        k = names.index(n)
+        # Lower cap as a marker (it also extends the data limits), then an arrow to the axes edge.
+        ax.plot([lo[k]], [k], marker="|", markersize=4, markeredgewidth=0.9, color=INK, zorder=3)
+        ax.annotate("", xy=(1.0, k), xycoords=ax.get_yaxis_transform(), xytext=(lo[k], k), textcoords="data",
+                    arrowprops={"arrowstyle": "-|>", "color": INK, "linewidth": 0.9, "shrinkA": 0, "shrinkB": 0,
+                                "mutation_scale": 7}, zorder=3)
+    ax.set_yticks(y, _labels(data, names))
     ax.set_ylim(len(names) - 0.5, -0.5)
     hgrid(ax)
     _block_separators(ax, data, names)
+    return unknown, unbounded
 
 
 def _src(df: pd.DataFrame, default: str) -> str:
@@ -203,10 +260,22 @@ def _cols(table: str, cols: list[str]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _rate_bars(ax, data: AnalysisData, st: pd.DataFrame) -> list[str]:
+DELEGATED_PAD = 13  # points between the axis and the x tick labels, room for the delegated counts
+
+
+def _rate_bars(ax, data: AnalysisData, st: pd.DataFrame, empty: list[str] = ()) -> dict[str, Any]:
+    """Resolve-rate bars of one main_grid panel.
+
+    ``empty`` are conditions without a valid trial in this panel: their slot
+    is kept and labelled instead of silently closing up. Under each subagent
+    bar, the delegated count (valid episodes that spawned subagents / valid
+    episodes); a hollow circle marks the per-protocol rate among them.
+    Returns the names shown plus what the notes need.
+    """
     st = st.set_index("condition")
     meta = data.meta
-    names = data.order(st.index)
+    empty = [n for n in empty if n in meta and n not in st.index]
+    names = data.order(list(st.index) + empty)
     grid = [n for n in names if not meta[n].baseline and not meta[n].control]
     controls = [n for n in names if meta[n].control and not meta[n].baseline]
     bases = [n for n in names if meta[n].baseline]
@@ -236,67 +305,139 @@ def _rate_bars(ax, data: AnalysisData, st: pd.DataFrame) -> list[str]:
         rows.append(n)
         widths.append(0.55)
         ticks.append(x)
-        labels.append(wrap(n, 14))
+        labels.append(wrap(meta[n].label, 14))
+    out: dict[str, Any] = {"names": names, "no_ci": [], "never_delegated": [], "per_protocol": []}
+    deleg_drawn = False
     for x, n, bw in zip(xs, rows, widths):
+        if n not in st.index:
+            ax.text(x, 0.03, "no valid trials", rotation=90, ha="center", va="bottom", fontsize=6.3, color=MUTED,
+                    zorder=4)
+            continue
         r = st.loc[n]
         ax.bar(x, r["rate"], width=bw, **bar_style(meta[n]), zorder=2)
         ax.errorbar(x, r["rate"], yerr=errs([r["rate"]], [r["lo"]], [r["hi"]]), fmt="none", ecolor=INK,
                     elinewidth=1.0, capsize=2.5, zorder=3)
+        out["no_ci"] += _ci_gaps([n], [r["rate"]], [r["lo"]], [r["hi"]])[0]
         top = r["hi"] if np.isfinite(r["hi"]) else r["rate"]
         if np.isfinite(r.get("n_valid", np.nan)) and np.isfinite(r.get("n_resolved", np.nan)):
             ax.text(x, top + 0.015, f"{int(r['n_resolved'])}/{int(r['n_valid'])}", ha="center", va="bottom",
                     fontsize=6.3, color=INK2, zorder=4)
+        nd, nv = r.get("n_delegated", np.nan), r.get("n_valid", np.nan)
+        if meta[n].baseline or not (np.isfinite(nd) and np.isfinite(nv)):
+            continue
+        ax.annotate(f"{int(nd)}/{int(nv)}", xy=(x, 0), xycoords=("data", "axes fraction"), xytext=(0, -4),
+                    textcoords="offset points", ha="center", va="top", fontsize=6.0,
+                    color=ROLE_COLORS["arb"] if nd == 0 else INK2)
+        deleg_drawn = True
+        if nd == 0:
+            out["never_delegated"].append(n)
+        rd = r.get("rate_delegated", np.nan)
+        if nd > 0 and np.isfinite(rd):
+            ax.plot(x, rd, marker="o", markersize=4.4, markerfacecolor=SURFACE, markeredgecolor=INK,
+                    markeredgewidth=1.0, linestyle="none", zorder=5)
+            out["per_protocol"].append(n)
     if not as_bars:
-        _bands(ax, data, st.loc[bases])
+        _bands(ax, data, st.loc[[b for b in bases if b in st.index]])
     ax.set_xticks(ticks, labels)
-    ax.tick_params(axis="x", length=0)
+    ax.tick_params(axis="x", length=0, pad=DELEGATED_PAD if deleg_drawn else 3.5)
+    out["delegated_row"] = deleg_drawn
     if xs:
         ax.set_xlim(min(xs) - 0.5, max(xs) + 0.5)
     ax.set_ylim(0, 1.13)
     ax.set_yticks([0, 0.25, 0.5, 0.75, 1.0])
     vgrid(ax)
-    return names
+    return out
+
+
+def _task_mix_note(st: pd.DataFrame) -> list[str]:
+    """Note the conditions whose valid trials cover fewer tasks than the others'."""
+    if "n_tasks_valid" not in st.columns:
+        return []
+    nt = num(st.set_index("condition")["n_tasks_valid"]).dropna()
+    if nt.empty or nt.nunique() < 2:
+        return []
+    full = int(nt.max())
+    short = [f"{n} ({int(v)} of {full})" for n, v in nt.items() if v < full]
+    return [f"valid trials cover fewer tasks for {', '.join(short)}: their pooled rate also reflects which tasks "
+            "are missing (conditions.csv resolve_rate_task_balanced weights tasks equally; paired.csv compares "
+            "matched trials only)"]
 
 
 def fig_main_grid(data: AnalysisData) -> Iterator[Rendered]:
     overall = data.resolve_stats()
     source = _src(overall, "conditions.csv")
-    panels = [("all tasks", overall)]
+    panels = [("all tasks", overall, list(overall.attrs.get("no_valid", [])))]
     notes: list[str] = []
     uses = [source]
+    if np.isfinite(overall["n_delegated"]).any():
+        uses.append(overall.attrs["uptake_source"])
     try:
         byd = data.resolve_stats(by_difficulty=True)
+        byd_empty = list(byd.attrs.get("no_valid", []))
         diffs = [d for d in DIFFICULTIES if d in set(byd["difficulty"])] + \
             sorted(set(byd["difficulty"]) - set(DIFFICULTIES))
         if len(diffs) > 1 or (diffs and len(byd) != len(overall)):
             for d in diffs:
-                panels.append((f"{d} tasks (Terminal-Bench label)", byd[byd["difficulty"] == d]))
+                panels.append((f"{d} tasks (Terminal-Bench label)", byd[byd["difficulty"] == d],
+                               [c for c, dd in byd_empty if dd == d]))
             uses.append(_src(byd, "conditions_by_difficulty.csv"))
     except Skip as e:
         notes.append(f"per-difficulty panels not drawn ({e})")
         log.info("main_grid: per-difficulty panels skipped: %s", e)
     n_units = max(len(SCOPES) + 0.8 * sum(1 for i in data.meta.values() if i.control), 2.0)
-    fig = new_figure(max(4.2, 0.6 + 1.25 * n_units) * len(panels) * 0.92, 4.4)
+    fig = new_figure(max(4.2, 0.6 + 1.25 * n_units) * len(panels) * 0.92, 4.6)
     axes = fig.subplots(1, len(panels), sharey=True, squeeze=False)[0]
     shown: set[str] = set()
-    for ax, (title, st) in zip(axes, panels):
-        shown |= set(_rate_bars(ax, data, st))
+    per_protocol = deleg_row = False
+    for k, (ax, (title, st, empty)) in enumerate(zip(axes, panels)):
+        res = _rate_bars(ax, data, st, empty)
+        shown |= set(res["names"])
+        per_protocol |= bool(res["per_protocol"])
+        deleg_row |= bool(res["delegated_row"])
         ax.set_title(title)
+        if empty:
+            notes.append(f"no valid trials{'' if k == 0 else f' ({title})'}, slot labelled, nothing drawn: "
+                         + ", ".join(empty))
+        notes += _ci_note(res["no_ci"], f"in '{title}'")
+        if k == 0:
+            if res["never_delegated"]:
+                notes.append("never delegated (no valid episode spawned subagents, so the bar measures the "
+                             "orchestrator alone): " + ", ".join(data.order(res["never_delegated"])))
+            notes += _task_mix_note(st)
+            if res["delegated_row"]:
+                ax.annotate("delegated", xy=(0, 0), xycoords="axes fraction", xytext=(-4, -4),
+                            textcoords="offset points", ha="right", va="top", fontsize=6.0, color=INK2)
     axes[0].set_ylabel("resolve rate (share of valid trials, Wilson 95% CI)")
     infos = _infos(data, data.order(shown))
     handles = condition_legend([i for i in infos if not i.baseline], kind="patch", scope_legend=True)
-    handles += _baseline_handles(infos)
+    handles += _baseline_handles(infos, empty=frozenset(panels[0][2]))
+    if per_protocol:
+        handles.append(Line2D([], [], marker="o", markersize=4.4, markerfacecolor=SURFACE, markeredgecolor=INK,
+                              markeredgewidth=1.0, linestyle="none",
+                              label="resolve rate of the episodes that delegated (per protocol)"))
     outside_legend(fig, handles, ncols=min(len(handles), 4))
     fig.suptitle("Resolve rate by subagent strategy and delegation scope")
     per_diff = len(panels) > 1
+    if not deleg_row and any(not data.meta[n].baseline for n in shown if n in data.meta):
+        notes.append("no 'delegated' row: neither the resolve-rate table (n_delegated) nor episodes.csv "
+                     "(delegated, spawn_calls) has the treatment uptake (re-run aggregate to add it)")
     caption = (
         "Headline result. Each bar is the share of valid trials whose verifier reward was 1, for one subagent "
         "condition; bars are grouped by delegation scope on the x axis and coloured by strategy (blue parallel, "
         "orange sequential, aqua arbiter), with a lighter fill for easier scopes. Whiskers are Wilson 95% "
         "intervals and the k/n label above each bar is solved/valid trials. Grey horizontal lines are the "
-        "single-agent baselines (topology single) and the shaded band around each is its Wilson 95% interval: a "
-        "bar whose whole interval sits above a band beats that baseline. Conditions off the strategy x scope grid "
-        "of the main subagent model (for example the same-model control) are hatched bars on the right"
+        "single-agent baselines (topology single) and the shaded band around each is its Wilson 95% interval. "
+        "The intervals pool every valid trial of a condition, so they describe these tasks and their "
+        "trial-to-trial randomness, not Terminal-Bench as a whole; to compare a condition with a baseline use "
+        "paired.csv (McNemar test on matched task and round pairs), not whether the intervals overlap. "
+        + ("The small k/n under each subagent bar (row 'delegated') counts the valid episodes whose orchestrator "
+           "spawned subagents at least once, out of all valid episodes (red when none did: that condition never "
+           "received its treatment), and the hollow circle is the resolve rate among those episodes only (per "
+           "protocol; the bar is the intention-to-treat rate over all of them). " if deleg_row else "")
+        + "Conditions off the strategy x scope grid of "
+        "the main subagent model (for example the same-model control, or a manager control whose orchestrator "
+        "lacks the editing tools, tagged [manager]) are hatched bars on the right. A condition with no valid "
+        "trial keeps its slot, labelled 'no valid trials', and is listed in the notes"
         + (". The other panels repeat the comparison per Terminal-Bench difficulty label." if per_diff else ".")
     )
     yield Rendered("main_grid", fig, "Resolve rate: strategy x scope vs baselines", caption, uses, notes)
@@ -309,11 +450,15 @@ def fig_main_grid(data: AnalysisData) -> Iterator[Rendered]:
 
 def _pareto(data: AnalysisData, name: str, suptitle: str, specs: list[tuple[str, str, str, bool, object]],
             heading: str, caption: str, extra_notes: list[str] | None = None) -> Iterator[Rendered]:
-    rs = data.resolve_stats().set_index("condition")[["rate", "lo", "hi"]]
+    stats = data.resolve_stats()
+    rs = stats.set_index("condition")[["rate", "lo", "hi"]]
     rs.columns = ["y", "ylo", "yhi"]
     panels = []
     notes: list[str] = list(extra_notes or [])
-    uses = [_src(data.resolve_stats(), "conditions.csv")]
+    x_gaps: dict[tuple[str, ...], list[str]] = {}  # conditions without an x interval -> panels
+    if stats.attrs.get("no_valid"):
+        notes.append("no valid trials (no resolve rate, not drawn): " + ", ".join(stats.attrs["no_valid"]))
+    uses = [_src(stats, "conditions.csv")]
     for title, metric, xlabel, strict, fmt in specs:
         try:
             m = data.cond_metric(metric, strict_nan=strict)
@@ -330,10 +475,16 @@ def _pareto(data: AnalysisData, name: str, suptitle: str, specs: list[tuple[str,
             continue
         if dropped:
             notes.append(f"'{title}': no value (NaN) for {', '.join(dropped)}")
+        no_ci = _ci_gaps(list(ok.index), ok["mean"], ok["lo"], ok["hi"])[0]
+        if no_ci:
+            x_gaps.setdefault(tuple(no_ci), []).append(f"'{title}'")
         panels.append((title, xlabel, ok, dropped, fmt))
         uses.append(_src(m, metric))
     if not panels:
         raise Skip("; ".join(notes) or "no metrics available")
+    for which, titles in x_gaps.items():
+        notes += _ci_note(list(which), "for x " + _panels_phrase(titles, len(panels)))
+    notes += _ci_note(_ci_gaps(list(rs.index), rs["y"], rs["ylo"], rs["yhi"])[0], "for the resolve rate")
     ncols = min(len(panels), 3)
     nrows = math.ceil(len(panels) / ncols)
     fig = new_figure(4.1 * ncols + 0.4, 3.5 * nrows + 1.0)
@@ -351,9 +502,11 @@ def _pareto(data: AnalysisData, name: str, suptitle: str, specs: list[tuple[str,
         if len(front):
             ax.step(front["mean"], front["y"], where="post", color=INK, linewidth=1.0, alpha=0.75, zorder=3)
             for k, (n, r) in enumerate(front.iterrows()):
-                ax.annotate(wrap(n, 20), (r["mean"], r["y"]), xytext=(6, 7 if k % 2 == 0 else -8),
+                # Alternate above/below, but never above a point at the top (it would hit the panel title).
+                above = r["y"] < 0.1 or (r["y"] <= 0.9 and k % 2 == 0)
+                ax.annotate(wrap(data.meta[n].label, 20), (r["mean"], r["y"]), xytext=(6, 7 if above else -8),
                             textcoords="offset points", fontsize=6.3, color=INK2,
-                            va="bottom" if k % 2 == 0 else "top", zorder=2.5)  # under the markers: data stays visible
+                            va="bottom" if above else "top", zorder=2.5)  # under the markers: data stays visible
         if not log_scale_if_wide(ax, list(df["mean"]) + list(df["lo"]) + list(df["hi"]), "x", 15):
             ax.xaxis.set_major_locator(MaxNLocator(5))
         if fmt is not None:
@@ -400,11 +553,13 @@ def fig_pareto_cost(data: AnalysisData) -> Iterator[Rendered]:
         "mean cost of one episode (bootstrap 95% interval) under one pricing scheme, recomputed offline from the "
         "logged tokens; the last panel uses FLOPs (2 x active parameters x tokens) instead of dollars. Colour is "
         "strategy, marker shape is scope (o easy, s medium, ^ hard, lighter fill = easier), grey stars/crosses "
-        "are the single-agent baselines and hollow markers are controls. The black staircase is the Pareto frontier: "
+        "are the single-agent baselines and hollow markers are controls (a manager control, whose orchestrator "
+        "lacks the editing tools, says so in the legend). The black staircase is the Pareto frontier: "
         "conditions that no other condition beats on both axes at once (cheaper and at least as accurate); points "
         "up and to the left are better, and only frontier points are labelled. A condition with no price for one "
         "of its models in a scheme has an unknown (NaN) cost and is left out of that panel, never drawn at 0. "
-        "x is log-scaled when values span more than 15x."
+        "An interval that cannot be computed (fewer than 2 valid episodes) gets no whisker, and a condition with "
+        "no valid trial has no point; the notes list both. x is log-scaled when values span more than 15x."
     )
     yield from _pareto(data, "pareto_cost", "Resolve rate vs cost per episode", specs,
                        "Pareto: resolve rate vs cost (per pricing scheme) and FLOPs", caption, extra)
@@ -449,55 +604,95 @@ def fig_time_breakdown(data: AnalysisData) -> Iterator[Rendered]:
     cols = [c[0] for c in comps]
     means = eps[["condition"]].join(eps[cols].apply(num)).groupby("condition").mean()
     names = data.order(means.index)
-    fig = new_figure(9.0, 1.6 + 0.34 * len(names))
+    fig = new_figure(9.0, 1.6 + 0.40 * len(names))
     ax = fig.subplots()
     y = np.arange(len(names))
     left = np.zeros(len(names))
+    # Spawn groups' segments start after the orchestrator's: the arbiter's judge and debate calls run inside them.
+    group_left = np.zeros(len(names))
     neg = []
     for col, label, color in comps:
         v = means.loc[names, col].to_numpy(float)
         if col == "overhead_sec" and (v < 0).any():
             neg = [n for n, x in zip(names, v) if x < 0]
         v = np.nan_to_num(np.clip(v, 0, None))
-        ax.barh(y, v, left=left, height=0.62, color=color, edgecolor=SURFACE, linewidth=1.0, label=label, zorder=2)
+        ax.barh(y, v, left=left, height=0.56, color=color, edgecolor=SURFACE, linewidth=1.0, label=label, zorder=2)
         left += v
+        if col == "cp_orch_llm_sec":
+            group_left = left.copy()
     if neg:
         notes.append(f"negative mean overhead clipped to 0 for {', '.join(neg)}")
     uses = [_cols("episodes", cols + ["valid"])]
     handles = [Patch(facecolor=c, edgecolor=c, label=l) for _, l, c in comps]
     try:
         wc = data.cond_metric("wall_clock_sec").reindex(names)
-        ok = np.isfinite(wc["mean"].to_numpy(float))
-        ax.errorbar(wc["mean"].to_numpy(float)[ok], y[ok], xerr=errs(wc["mean"][ok], wc["lo"][ok], wc["hi"][ok]),
+        m = wc["mean"].to_numpy(float)
+        ok = np.isfinite(m)
+        # The mean always gets its tick; the whisker only where the interval is known.
+        ax.errorbar(m[ok], y[ok], xerr=errs(m[ok], wc["lo"][ok], wc["hi"][ok]),
                     fmt="|", color=INK, markersize=8, elinewidth=1.0, capsize=2.5, zorder=4)
         handles.append(Line2D([], [], color=INK, marker="|", markersize=8, label="mean wall-clock, 95% CI"))
         uses.append(_src(wc, "wall_clock_sec"))
+        notes += _ci_note(_ci_gaps(names, m, wc["lo"], wc["hi"])[0], "for the wall-clock")
     except Skip as e:
         notes.append(f"no wall-clock CI ({e})")
     if "sub_busy_sec" in eps.columns:
         busy = eps[["condition"]].join(num(eps["sub_busy_sec"])).groupby("condition").mean().reindex(names)["sub_busy_sec"]
         b = busy.to_numpy(float)
         ok = np.isfinite(b) & (b > 0)
-        ax.plot(b[ok], y[ok], linestyle="none", marker="D", markersize=5, markerfacecolor=SURFACE,
-                markeredgecolor=INK, markeredgewidth=1.1, zorder=5)
-        handles.append(Line2D([], [], linestyle="none", marker="D", markersize=5, markerfacecolor=SURFACE,
-                              markeredgecolor=INK, label="mean total subagent work (sub_busy_sec)"))
+        yb = y - 0.37  # just above each bar
+        if "cp_group_sec" in eps.columns:
+            grp = eps[["condition"]].join(num(eps["cp_group_sec"])).groupby("condition").mean()
+            g = grp.reindex(names)["cp_group_sec"].to_numpy(float)
+            okg = ok & np.isfinite(g)
+            hidden_drawn = False
+            for k in np.flatnonzero(okg):
+                x0, x1, xb = group_left[k], group_left[k] + g[k], group_left[k] + b[k]
+                ax.plot([x0, x0, x1, x1], [y[k] - 0.29, yb[k], yb[k], y[k] - 0.29], color=INK, linewidth=0.9,
+                        solid_joinstyle="miter", zorder=5)
+                if xb > x1:
+                    ax.plot([x1, xb], [yb[k], yb[k]], color=INK, linestyle=":", linewidth=1.0, zorder=5)
+                    hidden_drawn = True
+            if okg.any():
+                handles.append(Line2D([], [], color=INK, linewidth=0.9, marker="|", markersize=5,
+                                      label="critical-path time inside spawn groups (cp_group_sec)"))
+            if hidden_drawn:  # legend only for what is drawn
+                handles.append(Line2D([], [], color=INK, linewidth=1.0, linestyle=":",
+                                      label="work hidden by parallelism (sub_busy_sec - cp_group_sec)"))
+            uses.append(_cols("episodes", ["cp_group_sec"]))
+        else:
+            notes.append("no spawn-group bracket: episodes.csv lacks cp_group_sec")
+        if ok.any():
+            ax.plot((group_left + b)[ok], yb[ok], linestyle="none", marker="D", markersize=5, markerfacecolor=SURFACE,
+                    markeredgecolor=INK, markeredgewidth=1.1, zorder=6)
+            handles.append(Line2D([], [], linestyle="none", marker="D", markersize=5, markerfacecolor=SURFACE,
+                                  markeredgecolor=INK, label="total subagent work (sub_busy_sec), from the same start"))
+        else:
+            notes.append("no condition has subagent work (sub_busy_sec is 0 or unknown everywhere): no bracket "
+                         "or diamond drawn")
         uses.append(_cols("episodes", ["sub_busy_sec"]))
-    ax.set_yticks(y, names)
+    ax.set_yticks(y, _labels(data, names))
     ax.set_ylim(len(names) - 0.5, -0.5)
     _block_separators(ax, data, names)
     hgrid(ax)
     ax.set_xlabel("seconds per episode (mean over valid trials)")
     ax.set_title("Where the wall-clock goes: mean critical-path composition per condition")
-    outside_legend(fig, handles, ncols=4)
+    outside_legend(fig, handles, ncols=3)
     caption = (
         "Each bar decomposes the mean wall-clock of one condition into the measured critical path: orchestrator LLM "
         "calls, arbiter judge/debate calls, subagent LLM calls and tool execution on the longest chain (for a "
         "parallel spawn group only the slowest subagent counts; for a sequential group all of them), plus overhead "
         "= wall-clock minus critical path (harness and scheduling time not attributed to any event). The bar's "
-        "length is the mean wall-clock, with its bootstrap 95% interval as the black whisker. The white diamond is "
-        "the mean total subagent work (sum of all dispatch durations): a diamond far right of the subagent "
-        "segment means parallelism hid that work from the critical path."
+        "length is the mean wall-clock, with its bootstrap 95% interval as the black whisker (no whisker when the "
+        "interval is unknown; the notes say for which). Above each bar of a condition that spawned subagents, a "
+        "bracket starts where the spawn groups' segments start (the end of the orchestrator LLM segment; the "
+        "arbiter's judge and debate calls run inside the groups) and spans the mean critical-path time inside "
+        "spawn groups (cp_group_sec). The white diamond, measured from the same start, is the mean total subagent "
+        "work (sub_busy_sec, the sum of all dispatch durations). The dotted gap from the bracket's end to the "
+        "diamond is work that parallelism took off the critical path (sub_busy_sec - cp_group_sec; their ratio is "
+        "the parallel speedup). A diamond at or inside the bracket's end means nothing was hidden: the groups "
+        "cost at least as much critical time as the subagents worked, as in sequential groups or when judging "
+        "dominates."
     )
     yield Rendered("time_breakdown", fig, "Critical-path time breakdown", caption, uses, notes)
 
@@ -623,7 +818,7 @@ def fig_token_composition(data: AnalysisData) -> Iterator[Rendered]:
         ax.set_xlabel("share of episode cost")
         hgrid(ax)
         uses.append(_cols("episodes", [f"cost_{share_scheme}_{{role}}", f"cost_{share_scheme}_total"]))
-    axes[0].set_yticks(y, names_all)
+    axes[0].set_yticks(y, _labels(data, names_all))
     axes[0].set_ylim(len(names_all) - 0.5, -0.5)
     for ax in axes:
         _block_separators(ax, data, names_all)
@@ -663,7 +858,7 @@ def _box_strip(ax, data: AnalysisData, names: list[str], values: dict[str, np.nd
                        capprops={"color": c, "linewidth": 0.9}, manage_ticks=False)
         ax.plot(v, k + rng.uniform(-0.17, 0.17, len(v)), alpha=0.9, zorder=3,
                 **{**point_style(info, 3.6 / (1.5 if info.baseline else 1.0)), "markeredgewidth": 0.6})
-    ax.set_yticks(y, names)
+    ax.set_yticks(y, _labels(data, names))
     ax.set_ylim(len(names) - 0.5, -0.5)
     hgrid(ax)
     _block_separators(ax, data, names)
@@ -760,9 +955,14 @@ def _violins(ax, groups: list[tuple[float, str, str, np.ndarray]], logy: bool, r
         ax.yaxis.set_major_formatter(FuncFormatter(lambda t, _p: human(10 ** t)))
 
 
+def _dropped_note(df: pd.DataFrame, what: str) -> list[str]:
+    n = df.attrs.get("n_dropped", 0)
+    return [f"{n} {what} of invalid or duplicate trials left out"] if n else []
+
+
 def fig_per_subagent(data: AnalysisData) -> Iterator[Rendered]:
-    d = data.require("dispatches", ["strategy", "scope"]).copy()
-    notes: list[str] = []
+    d = data.event_rows("dispatches", ["strategy", "scope"])
+    notes: list[str] = _dropped_note(d, "dispatch(es)")
     primary = data.primary_subagent_model
     if primary and "model" in d.columns:
         other = sorted(set(d.loc[d["model"].astype(str) != primary, "condition"].astype(str))) \
@@ -834,8 +1034,9 @@ def fig_per_subagent(data: AnalysisData) -> Iterator[Rendered]:
     outside_legend(fig, handles, ncols=len(handles))
     fig.suptitle(f"Per-subagent behaviour by scope and strategy{f' ({primary})' if primary else ''}")
     caption = (
-        "One observation per subagent dispatch (arbiter candidates count individually). Panels show, by delegation "
-        "scope (x groups) and strategy (colour), the distribution of tokens, tool calls (excluding submit), LLM steps, "
+        "One observation per subagent dispatch of a valid trial (arbiter candidates count individually). Panels "
+        "show, by delegation scope (x groups) and strategy (colour), the distribution of tokens, tool calls "
+        "(excluding submit), LLM steps, "
         "LLM seconds and wall-clock per dispatch as violins with every dispatch as a dot and the median as a black "
         "tick (fewer than 3 distinct values: dots only). Metrics spanning more than 30x use a log axis. The last "
         "panel is the share of dispatches that ended by calling submit (status 'submitted') with a Wilson 95% "
@@ -853,6 +1054,28 @@ def fig_per_subagent(data: AnalysisData) -> Iterator[Rendered]:
 CAP_COLORS = {"not capped": "#e1e0d9", "max_concurrent": "#898781", "max_dispatches": "#3d3c3a", "other": "#b5b3ac"}
 
 
+def _uptake(data: AnalysisData, eps: pd.DataFrame, names: list[str]) -> tuple[dict, dict, str] | None:
+    """Per condition: (valid episodes that delegated, valid episodes, source).
+
+    From ``conditions.csv`` (n_delegated, n_valid; delegated_frac is their
+    ratio), else from the valid ``episodes.csv`` rows (delegated, or
+    spawn_calls > 0). None when neither table has it.
+    """
+    conds = data.table("conditions")
+    if conds is not None and {"n_delegated", "n_valid"} <= set(conds.columns):
+        c = conds.drop_duplicates("condition")
+        c = c.set_index(c["condition"].astype(str))
+        k, n = num(c["n_delegated"]), num(c["n_valid"])
+        if k.reindex(names).notna().any():
+            return k.to_dict(), n.to_dict(), _cols("conditions", ["n_delegated", "n_valid", "delegated_frac"])
+    col = next((c for c in ("delegated", "spawn_calls") if c in eps.columns), None)
+    if col is None:
+        return None
+    d = num(eps[col])
+    g = (d > 0).astype(float).where(d.notna()).groupby(eps["condition"].astype(str))
+    return g.sum().to_dict(), g.count().to_dict(), _cols("episodes", [col, "valid"])
+
+
 def fig_spawn_counts(data: AnalysisData) -> Iterator[Rendered]:
     eps = data.episodes()
     notes: list[str] = []
@@ -861,6 +1084,12 @@ def fig_spawn_counts(data: AnalysisData) -> Iterator[Rendered]:
     subs = [n for n in data.order(eps["condition"].unique()) if not data.meta[n].baseline]
     if not subs:
         raise Skip("no subagent condition selected (baselines spawn nothing)")
+    uptake = _uptake(data, eps, subs)
+    if uptake is not None:
+        panels.append("deleg")
+    else:
+        notes.append("delegation panel not drawn: neither conditions.csv delegated_frac nor episodes.csv "
+                     "delegated/spawn_calls")
     if "dispatches" in eps.columns:
         panels.append("hist")
     else:
@@ -869,19 +1098,45 @@ def fig_spawn_counts(data: AnalysisData) -> Iterator[Rendered]:
         panels.append("follow")
     else:
         notes.append("instruction-following panel not drawn: episodes.csv lacks instruction_following")
-    sp = data.table("spawns")
-    if sp is not None and {"cap_reason", "condition"} <= set(sp.columns):
+    try:
+        sp = data.event_rows("spawns", ["cap_reason", "condition"])
         panels.append("caps")
-    else:
-        notes.append(f"cap-reason panel not drawn: {data.why('spawns') if sp is None else 'spawns.csv lacks cap_reason'}")
+        notes += _dropped_note(sp, "spawn call(s)")
+    except Skip as e:
+        sp = None
+        notes.append(f"cap-reason panel not drawn: {e}")
     if not panels:
         raise Skip("; ".join(notes))
-    fig = new_figure(2.0 + 3.5 * len(panels), max(3.4, 1.7 + 0.34 * len(subs)))
+    widths = {"deleg": 0.75, "hist": 1.3}
+    fig = new_figure(2.0 + 3.2 * sum(widths.get(p, 1.0) for p in panels), max(3.4, 1.7 + 0.34 * len(subs)))
     axes = fig.subplots(1, len(panels), sharey=True, squeeze=False,
-                        width_ratios=[1.3 if p == "hist" else 1.0 for p in panels])[0]
+                        width_ratios=[widths.get(p, 1.0) for p in panels])[0]
     ax_by = dict(zip(panels, axes))
     y = np.arange(len(subs))
     handles: list = []
+    if "deleg" in ax_by:
+        ax = ax_by["deleg"]
+        k_del, n_val, src = uptake
+        never: list[str] = []
+        for k, n in enumerate(subs):
+            kd, nv = k_del.get(n, np.nan), n_val.get(n, np.nan)
+            if not (np.isfinite(kd) and np.isfinite(nv) and nv > 0):
+                ax.text(0.02, k, "unknown", va="center", fontsize=7, color=MUTED)
+                continue
+            p, lo, hi = wilson(kd, nv)
+            ax.barh(k, p, height=0.62, **bar_style(data.meta[n]), zorder=2)
+            ax.errorbar(p, k, xerr=errs([p], [lo], [hi]), fmt="none", ecolor=INK, elinewidth=0.9, capsize=2, zorder=3)
+            ax.text(1.03, k, f"{int(kd)}/{int(nv)}", va="center", fontsize=6.5,
+                    color=ROLE_COLORS["arb"] if kd == 0 else INK2, transform=ax.get_yaxis_transform())
+            never += [n] if kd == 0 else []
+        if never:
+            notes.append("never delegated (no valid episode spawned subagents): " + ", ".join(never))
+        ax.set_xlim(0, 1)
+        ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _p: f"{v:.0%}"))
+        ax.set_xlabel("share of valid episodes with a spawn call\n(Wilson 95% CI; k/n at right)")
+        ax.set_title("episodes that delegated")
+        hgrid(ax)
+        uses.append(src)
     if "hist" in ax_by:
         ax = ax_by["hist"]
         for k, n in enumerate(subs):
@@ -896,7 +1151,8 @@ def fig_spawn_counts(data: AnalysisData) -> Iterator[Rendered]:
             ax.plot([v.mean()] * 2, [k - 0.36, k + 0.36], color=INK, linewidth=1.6, zorder=4)
         ax.set_xlabel("subagent dispatches per episode (arbiter: each candidate)")
         ax.set_title("dispatches per episode")
-        ax.margins(x=0.08)
+        vmax = float(np.nanmax(num(eps.loc[eps["condition"].isin(subs), "dispatches"]).to_numpy(float), initial=0.0))
+        ax.set_xlim(-0.6, max(vmax, 1.0) + 0.6)  # never a +-0.05 axis when nothing was dispatched
         ax.xaxis.set_major_locator(MaxNLocator(integer=True))
         hgrid(ax)
         handles += [Line2D([], [], linestyle="none", marker="o", markersize=math.sqrt(260 * f), color=MUTED,
@@ -909,7 +1165,8 @@ def fig_spawn_counts(data: AnalysisData) -> Iterator[Rendered]:
             m = data.cond_metric("instruction_following")
             uses.append(_src(m, "instruction_following"))
             m = m.reindex(subs)
-            _hbars(ax, data, subs, m["mean"], m["lo"], m["hi"], missing={n: "no spawns" for n in subs})
+            no_ci, _ = _hbars(ax, data, subs, m["mean"], m["lo"], m["hi"], missing={n: "no spawns" for n in subs})
+            notes += _ci_note(no_ci, "for instruction following")
             ax.set_xlim(0, 1.05)
             ax.set_xlabel("granted / requested instructions (mean, 95% CI)")
             ax.set_title("instruction following")
@@ -943,20 +1200,28 @@ def fig_spawn_counts(data: AnalysisData) -> Iterator[Rendered]:
         ax.set_title("why requests were cut")
         hgrid(ax)
         uses.append(_cols("spawns", ["cap_reason", "condition"]))
-    axes[0].set_yticks(y, subs)
+    axes[0].set_yticks(y, _labels(data, subs))
     axes[0].set_ylim(len(subs) - 0.5, -0.5)
     for ax in axes:
         _block_separators(ax, data, subs)
+    controls = [i for i in _infos(data, subs) if i.control]
+    if controls:
+        handles += condition_legend(controls, kind="patch", scope_legend=False)[-len(controls):]
     outside_legend(fig, handles, ncols=min(len(handles), 6))
     fig.suptitle("How many subagents the orchestrator spawned, and how much of each request it got")
     caption = (
-        "One row per subagent condition (baselines spawn nothing and are omitted). Left: the distribution over "
-        "episodes of the number of subagent dispatches (arbiter candidates count individually), as a histogram "
-        "drawn with dots: dot area is the share of episodes with that count, the black tick is the mean; dots "
-        "further right mean more subagents. Middle: instruction following, the mean over spawn calls of granted / "
-        "requested instructions (1 = every request fully granted), with a bootstrap 95% interval; bars use the "
-        "strategy colour with scope lightness. Right: the share of spawn_subagents calls that were cut by the "
-        "concurrency cap or by the dispatch budget, with the number of calls."
+        "One row per subagent condition (baselines spawn nothing and are omitted; controls are hatched, a manager "
+        "control whose orchestrator lacks the editing tools is tagged [manager]). First panel: the share of valid "
+        "episodes whose orchestrator spawned subagents at least once, with a Wilson 95% interval and the k/n count "
+        "(red when no episode delegated: the condition never received its treatment, and its resolve rate "
+        "measures the orchestrator alone). Next: the distribution over episodes of the number of subagent "
+        "dispatches (arbiter candidates count individually), as a histogram drawn with dots: dot area is the "
+        "share of episodes with that count, the black tick is the mean; dots further right mean more subagents. "
+        "Then instruction following: the mean over episodes of each episode's mean granted / requested "
+        "instructions per spawn call (1 = every request fully granted; an episode with many spawn calls counts "
+        "once, like one with a single call), with a bootstrap 95% interval over episodes; episodes without a "
+        "spawn call have no value. Last: the share of the valid trials' spawn_subagents calls that were cut by "
+        "the concurrency cap or by the dispatch budget, with the number of calls."
     )
     yield Rendered("spawn_counts", fig, "Subagents spawned and instruction following", caption, uses, notes)
 
@@ -1083,7 +1348,7 @@ def fig_task_heatmap(data: AnalysisData) -> Iterator[Rendered]:
             v = frac[i, j]
             ax.text(j, i, lab[i][j] if np.isfinite(v) else "-", ha="center", va="center", fontsize=6.8,
                     color=SURFACE if (np.isfinite(v) and v > 0.55) else INK)
-    ax.set_xticks(range(len(conds)), conds, rotation=40, ha="right", rotation_mode="anchor")
+    ax.set_xticks(range(len(conds)), _labels(data, conds), rotation=40, ha="right", rotation_mode="anchor")
     ylabels = []
     for t in tasks:
         d, e = info[t]
@@ -1213,7 +1478,11 @@ def fig_calibration(data: AnalysisData) -> Iterator[Rendered]:
                             va="top", fontsize=6.5, color=INK)
                 ax.set_xlabel("prompt tokens (thousands)")
                 ax.set_ylabel("TTFT (s)")
-                ax.set_ylim(0, float(np.nanpercentile(yv, 99.5)) * 1.15)
+                # Clip only extreme outliers of a large sample, and say so; a small one shows every point.
+                top = float(np.nanpercentile(yv, 99.5) if len(yv) >= 200 else np.nanmax(yv)) * 1.15
+                ax.set_ylim(0, top)
+                if (yv > top).any():
+                    notes.append(f"{label}: {int((yv > top).sum())} TTFT point(s) above the y range not shown")
             elif col == "decode":
                 r = g["_rate"].to_numpy(float)
                 r = r[np.isfinite(r)]
@@ -1252,8 +1521,11 @@ def fig_calibration(data: AnalysisData) -> Iterator[Rendered]:
                                           "ttft_fit_b_per_1k_prompt_tokens"]))
     caption = (
         "One row per (model, provider, tier) group, most-called first. Left: time to first token of every call "
-        "against its prompt size, with the least-squares line TTFT = a + b x prompt/1000 used by the 'fitted' serving "
-        "profile (the scatter around it is provider queueing and noise). Middle: histogram of decode speed, completion "
+        "against its prompt size, with the least-squares line TTFT = a + b x prompt/1000 (calibration.csv ttft_fit_*, "
+        "descriptive; the scatter around it is provider queueing and noise; the 'fitted' serving profile instead fits "
+        "whole call time, a + b x prompt/1000 + c x completion tokens, calibration.csv lat_fit_*). The y axis shows "
+        "every point unless a group has 200 calls or more, where the top 0.5% may be cut (the notes count them). "
+        "Middle: histogram of decode speed, completion "
         "tokens divided by the time between first and last streamed chunk, with the median; providers that stream "
         "few coarse chunks make this a rough estimate. Right: call latency over the sweep's wall-clock time coloured "
         "by round, a drift check: a trend or a shift between rounds means provider speed changed during the sweep, "
@@ -1273,11 +1545,15 @@ def fig_cost_effectiveness(data: AnalysisData) -> Iterator[Rendered]:
         eps_v = data.episodes()
     except Skip:
         eps_v = None
-    rs = data.resolve_stats().set_index("condition")
-    names = data.order(rs.index)
+    stats = data.resolve_stats()
+    rs = stats.set_index("condition")
+    no_valid = [n for n in stats.attrs.get("no_valid", []) if n in data.meta]
+    names = data.order(list(rs.index) + no_valid)
     specs = [(f"cost per solve, {s}", f"cost_per_solve_{s}", f"cost_{s}_total", USD, "USD per solved task")
              for s in data.schemes()]
     notes: list[str] = []
+    if no_valid:
+        notes.append("no valid trials (rows labelled, nothing drawn): " + ", ".join(no_valid))
     if not any(_has_finite(data, f"cost_{s}_total") for s in data.schemes()) and _has_finite(data, "cost_runtime_total"):
         log.info("cost_effectiveness: %s", RUNTIME_NOTE)
         notes.append(RUNTIME_NOTE)
@@ -1300,6 +1576,10 @@ def fig_cost_effectiveness(data: AnalysisData) -> Iterator[Rendered]:
             boot = {}
             for n in names:
                 g = eps_v[(eps_v["condition"] == n) & eps_v["resolved"].notna()]
+                if numer == "wall_clock_sec":
+                    # Same subset as time_per_solve_sec: episodes with a known wall-clock (costs are strict: a NaN
+                    # cost makes both the CSV value and the ratio NaN).
+                    g = g[num(g[numer]).notna()]
                 boot[n] = bootstrap_ratio(num(g[numer]), g["resolved"])
             b = pd.DataFrame.from_dict(boot, orient="index", columns=["p", "lo", "hi"]).reindex(names)
             if point is None:
@@ -1321,25 +1601,46 @@ def fig_cost_effectiveness(data: AnalysisData) -> Iterator[Rendered]:
     nres = rs["n_resolved"].reindex(names) if "n_resolved" in rs.columns else pd.Series(np.nan, names)
     fig = new_figure(2.0 + 2.9 * len(panels), 1.8 + 0.32 * len(names))
     axes = fig.subplots(1, len(panels), sharey=True, squeeze=False)[0]
+    # (kind, conditions) -> panels, so a gap shared by every panel is noted once.
+    gaps: dict[tuple[str, tuple[str, ...]], list[str]] = {}
     for ax, (title, p, lo, hi, fmt, xlabel) in zip(axes, panels):
-        missing = {n: ("no solves" if nres.get(n) == 0 else "unknown (NaN)") for n in names}
-        _hbars(ax, data, names, p.to_numpy(float), lo.to_numpy(float), hi.to_numpy(float), missing=missing)
+        missing = {n: ("no valid trials" if n in no_valid else "no solves" if nres.get(n) == 0 else "unknown (NaN)")
+                   for n in names}
+        no_ci, unbounded = _hbars(ax, data, names, p.to_numpy(float), lo.to_numpy(float), hi.to_numpy(float),
+                                  missing=missing)
+        for kind, which in (("no_ci", no_ci), ("unbounded", unbounded)):
+            if which:
+                gaps.setdefault((kind, tuple(which)), []).append(f"'{title}'")
         if fmt is not None:
             ax.xaxis.set_major_formatter(fmt)
         ax.xaxis.set_major_locator(MaxNLocator(5))
         ax.set_title(title)
         ax.set_xlabel(xlabel, fontsize=7.5)
         ax.set_xlim(0, None)
+    for (kind, which), titles in gaps.items():
+        where = _panels_phrase(titles, len(panels))
+        if kind == "no_ci":
+            notes += _ci_note(list(which), where)
+        else:
+            notes.append(f"95% interval unbounded above {where} (more than 2.5% of the bootstrap resamples "
+                         f"contain no solve; the whisker runs to the panel edge): {', '.join(which)}")
     handles = condition_legend(_infos(data, names), kind="patch")
+    if any(kind == "unbounded" for kind, _ in gaps):
+        handles.append(_unbounded_handle())
     outside_legend(fig, handles, ncols=min(len(handles), 5))
     fig.suptitle("What one solved task costs")
     caption = (
         "Cost and time per solved task by condition: total cost (or agent wall-clock) over all valid trials divided "
         "by the number solved, i.e. mean cost per episode / resolve rate, one panel per pricing scheme and one for "
-        "time. Shorter is better. Whiskers are 95% intervals: from the CSV when it has them, otherwise a paired "
-        "bootstrap over episodes of the same ratio. Bars use the strategy colour with scope lightness (grey = "
-        "baselines, hatched = controls); 'no solves' marks conditions that solved nothing (the ratio is undefined) "
-        "and 'unknown (NaN)' marks conditions with an unpriced model in that scheme. Schemes with no finite value at "
+        "time (over the valid trials with a known wall-clock). Shorter is better. Whiskers are 95% intervals: from "
+        "the CSV when it has them, otherwise a paired bootstrap over episodes of the same ratio (2000 resamples, "
+        "seed 0). A resample that draws no solved episode has an undefined (infinite) ratio and is kept, so when "
+        "solves are rare the upper bound is unbounded: that whisker runs from its lower bound to the right edge of "
+        "the panel with an arrow head, and the notes list it. A bar without a whisker has no computable interval "
+        "(fewer than 2 valid episodes), also listed in the notes. Bars use the strategy colour with scope lightness "
+        "(grey = baselines, hatched = controls, [manager] = a manager control); 'no solves' marks conditions that "
+        "solved nothing (the ratio is undefined), 'unknown (NaN)' marks conditions with an unpriced model in that "
+        "scheme, and 'no valid trials' conditions whose every trial was invalid. Schemes with no finite value at "
         "all are not drawn."
     )
     yield Rendered("cost_effectiveness", fig, "Cost and time per solved task", caption, uses, notes)
@@ -1351,14 +1652,14 @@ def fig_cost_effectiveness(data: AnalysisData) -> Iterator[Rendered]:
 
 
 def fig_arbiter(data: AnalysisData) -> Iterator[Rendered]:
-    a = data.require("arbitrations").copy()
+    a = data.event_rows("arbitrations")
     if "condition" not in a.columns:
         raise Skip("arbitrations.csv lacks the condition column")
     a["condition"] = a["condition"].astype(str)
     names = data.order(a["condition"].unique())
     if not names:
         raise Skip("arbitrations.csv has no rows for known conditions")
-    notes: list[str] = []
+    notes: list[str] = _dropped_note(a, "arbitration(s)")
     uses: list[str] = []
     panels: list[str] = []
     for p, cols in (("agree", ["agreement"]), ("conf", ["final_confidence"]), ("debate", ["debate_rounds_used"]),
@@ -1381,7 +1682,7 @@ def fig_arbiter(data: AnalysisData) -> Iterator[Rendered]:
     axes = dict(zip(panels, panel_axes(fig, len(panels), max_cols=3)))
     x = np.arange(len(names))
     wn = 0.8 / len(names)
-    labels = [wrap(n, 14) for n in names]
+    labels = [wrap(data.meta[n].label, 14) for n in names]
     ref_handles: list = []
     if "agree" in axes:
         ax = axes["agree"]
@@ -1434,6 +1735,7 @@ def fig_arbiter(data: AnalysisData) -> Iterator[Rendered]:
         j = eps.set_index("episode_id")[["condition", "resolved"]].join(conf.rename("conf"), how="inner")
         j = j[j["conf"].notna() & j["resolved"].notna()]
         rng = np.random.default_rng(0)
+        no_ci: list[str] = []
         for k, n in enumerate(names):
             for outcome in (0.0, 1.0):
                 v = j.loc[(j["condition"] == n) & (j["resolved"] == outcome), "conf"].to_numpy(float)
@@ -1445,6 +1747,9 @@ def fig_arbiter(data: AnalysisData) -> Iterator[Rendered]:
                 mm, lo, hi = bootstrap_mean(v)
                 ax.errorbar(xpos + 0.06, mm, yerr=errs([mm], [lo], [hi]), fmt="_", color=INK, markersize=8,
                             elinewidth=1.0, capsize=2)
+                if _ci_gaps([n], [mm], [lo], [hi])[0]:
+                    no_ci.append(f"{n} ({'resolved' if outcome else 'not resolved'})")
+        notes += _ci_note(no_ci, "for the mean confidence")
         ax.set_xticks([0, 1], ["not resolved", "resolved"])
         ax.set_xlim(-0.5, 1.5)
         ax.set_ylim(0, 1.05)
@@ -1478,8 +1783,9 @@ def fig_arbiter(data: AnalysisData) -> Iterator[Rendered]:
     outside_legend(fig, handles, ncols=min(len(handles), 5))
     fig.suptitle("Arbiter: agreement, confidence, debate and winners")
     caption = (
-        "One observation per arbitrated instruction (N candidate subagents + an LLM judge), coloured by condition "
-        "(arbiter strategy hue, lighter = easier scope). Panels, where the columns exist: the share of arbitrations "
+        "One observation per arbitrated instruction of a valid trial (N candidate subagents + an LLM judge), "
+        "coloured by condition (arbiter strategy hue, lighter = easier scope). Panels, where the columns exist: the "
+        "share of arbitrations "
         "whose judge said the candidates agreed (Wilson 95% interval); the distribution of the final judge "
         "confidence (stacked by condition; unparsed judgements have no confidence and are counted in the title); how "
         "many confidence-aware debate rounds ran (0 = the first judgement was confident and agreeing); the episode's "
