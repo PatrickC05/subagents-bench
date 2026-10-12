@@ -208,6 +208,8 @@ class _Checker:
         }
         if "n_provider_errors" in ep:  # schema_version >= 3
             scalar_checks["n_provider_errors"] = sum(1 for c in d.calls if is_provider_error(c.get("error")))
+        if "n_stream_repairs" in ep:
+            scalar_checks["n_stream_repairs"] = sum(_num(c.get("stream_repairs")) for c in d.calls)
         for k, v in scalar_checks.items():
             if ep.get(k) != v:
                 self.err(f"{k}={ep.get(k)} but the records give {v}")
@@ -441,7 +443,7 @@ OFTEN_EMPTY = {
     # failures, retries, timeouts, context guard
     "error", "apply_error", "backoff_sec", "n_retries", "n_command_timeouts", "n_timeouts",
     "n_tool_errors", "context_trimmed_chars", "context_trims", "n_context_trims", "cap_reason",
-    "n_provider_errors", "cancel_kill",
+    "n_provider_errors", "cancel_kill", "stream_repairs", "n_stream_repairs",
     # provider extras (Sail sends no request id; Prime reports cost 0.0 and no reasoning tokens)
     "provider_reported_cost", "response_id", "reasoning_tokens", "reasoning_chars", "t_first_reasoning",
     "reasoning", "completion_window", "extra_body", "cached_tokens",

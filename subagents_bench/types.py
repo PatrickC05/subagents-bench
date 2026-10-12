@@ -168,6 +168,9 @@ class LLMResponse:
     response_headers: dict[str, str] = field(default_factory=dict)
     response_id: str | None = None
     raw: Any = None
+    # Tool-call repairs the client made while accumulating the stream
+    # (CallRecord.stream_repairs).
+    stream_repairs: int = 0
 
     # Back-compat conveniences used by older call sites/tests.
     @property

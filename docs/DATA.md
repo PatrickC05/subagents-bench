@@ -117,6 +117,7 @@ One line per LLM call, every role (orchestrator steps, subagent steps, judge cal
 | `price_cache_read` | float \| None | USD / 1M cached input tokens used for cost_usd (None -> price_in). |
 | `provider_reported_cost` | float \| None | Cost field from the provider's usage object, verbatim (untrusted). |
 | `error` | str \| None | Set if the call ultimately failed ('<ExceptionType>: message') or was abandoned when the episode stopped ('cancelled: ...'); usage fields are then 0. |
+| `stream_repairs` | int \| None | Repairs the client made to the streamed tool calls of this response: repeated argument deltas and duplicate calls dropped plus clashing call ids renamed (Sail re-sends a complete tool call under a second index). 0 normally; None for a failed call. (Added in schema_version 3; absent from older records.) |
 
 Each element of `attempts`:
 
@@ -391,6 +392,7 @@ One per episode. Written at start with `status: running`, rewritten at the end w
 | `tool_sec` | dict | role -> summed tool seconds (the orchestrator's includes the time blocked in spawn_subagents). |
 | `n_retries` | int | Extra HTTP attempts across all calls. |
 | `backoff_sec` | float | Total retry backoff sleep. |
+| `n_stream_repairs` | int | Sum of calls.jsonl stream_repairs: streamed tool-call repairs across all calls (0 normally). (Added in schema_version 3; absent from older records.) |
 | `n_provider_errors` | int | LLM calls of any role that failed with a provider error after all retries: a plain LLMError, not a BillingError or ContextLengthError (retries exhausted, a non-retryable 4xx such as 401/403, a missing API key); their calls.jsonl error starts with 'LLMError:' (telemetry.is_provider_error, which also works on older records). Over 0 means a provider failure touched the episode (a subagent dispatch that failed this way has status error), so the trial does not measure the condition. (Added in schema_version 3; absent from older records.) |
 | `n_command_timeouts` | int | Commands that hit their timeout. |
 | `n_context_trims` | int | Context-guard trims across all agents. |
@@ -686,6 +688,7 @@ One row per trial (harbor trial, or bare local episode): design, task covariates
 | `sim_roofline_h100_wall_sec` | Simulated episode wall time under serving profile `roofline_h100` (configs/serving.yaml): the critical path with every LLM call re-timed by the profile and tools kept as measured. |
 | `n_failed_calls` | Calls that failed or were abandoned (error set). |
 | `n_provider_errors` | Calls of any role whose error starts with 'LLMError:' (a provider failure after all retries; telemetry.is_provider_error), counted from calls.jsonl so older records count too. Over 0 makes the trial invalid (provider_error). |
+| `n_stream_repairs` | Sum of calls.jsonl stream_repairs: tool-call repairs of the streamed responses (Sail's re-sent tool calls dropped, clashing ids renamed). 0 in records written before the field existed. |
 | `n_usage_estimated` | Calls whose usage was estimated (provider sent none). |
 | `container_arch` | uname -m in the container (x86_64 on an arm64 host = emulated). |
 | `host_machine` | Host machine (e.g. arm64). |
@@ -766,6 +769,7 @@ calls.jsonl flattened, one row per LLM call, plus the episode keys, the call's c
 | `price_cache_read` | USD / 1M cached input tokens used for cost_usd (None -> price_in). |
 | `provider_reported_cost` | Cost field from the provider's usage object, verbatim (untrusted). |
 | `error` | Set if the call ultimately failed ('<ExceptionType>: message') or was abandoned when the episode stopped ('cancelled: ...'); usage fields are then 0. |
+| `stream_repairs` | Repairs the client made to the streamed tool calls of this response: repeated argument deltas and duplicate calls dropped plus clashing call ids renamed (Sail re-sends a complete tool call under a second index). 0 normally; None for a failed call. (Added in schema_version 3; absent from older records.) |
 | `cost_sail_balanced` | This call's USD under scheme `sail_balanced`; NaN if its model is unpriced in it. |
 | `cost_sail_asap` | This call's USD under scheme `sail_asap`; NaN if its model is unpriced in it. |
 | `cost_sail_flex` | This call's USD under scheme `sail_flex`; NaN if its model is unpriced in it. |

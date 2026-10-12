@@ -1047,6 +1047,7 @@ class OpenAIClient(LLMClient):
             provider_reported_cost=_reported_cost(acc.usage_raw),
             response_headers=ok.headers,
             response_id=acc.response_id,
+            stream_repairs=acc.stream_repairs,
         )
 
 

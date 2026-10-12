@@ -241,6 +241,12 @@ thread-safe: one instance is shared by concurrent subagent threads.
   failures are counted by `error_type`.
 - **Finish reason.** A stream that ends with `[DONE]` but no finish_reason
   gets `finish_reason="unknown"`.
+- **Streamed tool-call repairs.** Sail re-sends each finished tool call in
+  full under a second `index` with the same `id`. The accumulator routes
+  deltas by id, drops such re-sends and exact duplicates, and renames
+  clashing ids; `CallRecord.stream_repairs` counts the repairs per call
+  (`EpisodeRecord.n_stream_repairs` per episode, `episodes.csv`
+  `n_stream_repairs`).
 - **Usage.** Take it from the final usage chunk: `prompt_tokens`,
   `completion_tokens`, `prompt_tokens_details.cached_tokens` and
   `completion_tokens_details.reasoning_tokens`. If the stream carried no usage,

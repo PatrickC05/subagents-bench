@@ -140,6 +140,7 @@ class CallRecord:
     provider_reported_cost: float | None = _f("Cost field from the provider's usage object, verbatim (untrusted).")
     error: str | None = _f("Set if the call ultimately failed ('<ExceptionType>: message') or was abandoned when the episode stopped ('cancelled: ...'); usage fields are then 0.", default=None)
 
+    stream_repairs: int | None = _f("Repairs the client made to the streamed tool calls of this response: repeated argument deltas and duplicate calls dropped plus clashing call ids renamed (Sail re-sends a complete tool call under a second index). 0 normally; None for a failed call.", None, since=3)
 
 # ---------------------------------------------------------------------------
 # tools.jsonl
@@ -400,6 +401,7 @@ class EpisodeRecord:
     tool_sec: dict = _f("role -> summed tool seconds (the orchestrator's includes the time blocked in spawn_subagents).")
     n_retries: int = _f("Extra HTTP attempts across all calls.")
     backoff_sec: float = _f("Total retry backoff sleep.")
+    n_stream_repairs: int = _f("Sum of calls.jsonl stream_repairs: streamed tool-call repairs across all calls (0 normally).", since=3)
     n_provider_errors: int = _f("LLM calls of any role that failed with a provider error after all retries: a plain LLMError, not a BillingError or ContextLengthError (retries exhausted, a non-retryable 4xx such as 401/403, a missing API key); their calls.jsonl error starts with 'LLMError:' (telemetry.is_provider_error, which also works on older records). Over 0 means a provider failure touched the episode (a subagent dispatch that failed this way has status error), so the trial does not measure the condition.", since=3)
     n_command_timeouts: int = _f("Commands that hit their timeout.")
     n_context_trims: int = _f("Context-guard trims across all agents.")

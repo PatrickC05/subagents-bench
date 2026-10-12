@@ -1105,3 +1105,32 @@ def test_load_dotenv_does_not_override(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr()
     assert "from_file" not in out.out + out.err
     monkeypatch.delenv("SB_TEST_B", raising=False)
+
+
+# ---------------------------------------------------------------------------
+# stream repairs reach the response and the call record
+# ---------------------------------------------------------------------------
+
+
+def test_stream_repairs_are_counted_on_the_response_and_call_record(env):
+    from subagents_bench.telemetry import call_record_from_response
+
+    call = {"id": "call_1", "type": "function", "function": {"name": "bash", "arguments": '{"command": "ls"}'}}
+    server = Server(
+        sse_response(
+            delta(role="assistant", content=""),
+            delta(tool_calls=[{"index": 3, **call}]),
+            delta(tool_calls=[{"index": 0, **call}]),  # Sail's full re-send under another index
+            delta(finish="tool_calls"),
+        ),
+        simple_ok(),
+    )
+    client = make(server)
+    r = client.complete("sys", USER, [])
+    assert [tc.id for tc in r.tool_calls] == ["call_1"] and r.stream_repairs == 1
+    ids = {"episode_id": "e", "call_id": "c", "seq": 0, "role": "subagent", "agent_id": "sub-1", "dispatch_id": None,
+           "group_id": None, "arbitration_id": None, "step": 1, "agent_seq": 0}
+    assert call_record_from_response(r, ids=ids, cfg=client.cfg).stream_repairs == 1
+    clean = client.complete("sys", USER, [])
+    assert clean.stream_repairs == 0
+    assert call_record_from_response(clean, ids=ids, cfg=client.cfg).stream_repairs == 0

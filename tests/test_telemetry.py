@@ -372,7 +372,7 @@ def test_validate_accepts_older_schema_without_new_fields(tmp_path):
     rec = make_recorder(tmp_path)
     ep = dict(rec.finalize("finished"))
     added = [f.name for f in dataclasses.fields(EpisodeRecord) if f.metadata.get("since") == 3]
-    assert set(added) == {"source_sha256", "cancel_kill", "n_provider_errors", "harness_exec_sum_sec"}
+    assert set(added) == {"source_sha256", "cancel_kill", "n_provider_errors", "harness_exec_sum_sec", "n_stream_repairs"}
     old = {k: v for k, v in ep.items() if k not in added}
     assert validate_record(EpisodeRecord, old) == [f"missing field {n!r}" for n in added]
     # episode.json written by schema-2 code (e.g. a sweep already running) lacks them legitimately.

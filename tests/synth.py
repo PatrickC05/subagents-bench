@@ -267,6 +267,7 @@ class EpisodeBuilder:
             reasoning_chars=(reasoning or 0) * 4, response_id=None if failed else f"resp-{cid}",
             response_headers={"content-type": "text/event-stream"}, cost_usd=cost, price_in=p_in,
             price_out=p_out, price_cache_read=p_cache, provider_reported_cost=None, error=spec.error,
+            stream_repairs=None if failed else 0,
         )
         d = asdict(rec)
         self.calls.append(d)
@@ -512,7 +513,8 @@ class EpisodeBuilder:
                 **base, t_end=None, wall_clock_sec=None, exit_reason=None, error=None, final_summary=None,
                 orchestrator_steps=0, spawn_calls=0, dispatches=0, redispatches=0, arbitrations=0, requested_total=0,
                 granted_total=0, instruction_following=None, n_calls={}, n_tool_calls={}, tokens={}, cost_usd={},
-                llm_sec={}, tool_sec={}, n_retries=0, backoff_sec=0.0, n_provider_errors=0, n_command_timeouts=0,
+                llm_sec={}, tool_sec={}, n_retries=0, n_stream_repairs=0, backoff_sec=0.0, n_provider_errors=0,
+                n_command_timeouts=0,
                 n_context_trims=0, cancel_kill=None,
                 files_modified=None, n_files_modified=None, git_diff_stat=None,
                 harness_exec_n=None, harness_exec_sec=None, harness_exec_sum_sec=None,
@@ -547,7 +549,9 @@ class EpisodeBuilder:
             n_tool_calls={r: len(ts) for r, ts in tools_by_role.items()}, tokens=tokens, cost_usd=cost,
             llm_sec={r: sum(c["latency_sec"] for c in cs) for r, cs in by_role.items()},
             tool_sec={r: sum(x["duration_sec"] for x in ts) for r, ts in tools_by_role.items()},
-            n_retries=sum(c["n_attempts"] - 1 for c in self.calls), backoff_sec=sum(c["backoff_sec"] for c in self.calls),
+            n_retries=sum(c["n_attempts"] - 1 for c in self.calls),
+            n_stream_repairs=sum(c["stream_repairs"] or 0 for c in self.calls),
+            backoff_sec=sum(c["backoff_sec"] for c in self.calls),
             n_provider_errors=sum(1 for c in self.calls if (c["error"] or "").startswith("LLMError:")),
             n_command_timeouts=sum(1 for x in self.tools if x["timed_out"]),
             n_context_trims=sum(d["context_trims"] for d in self.dispatches),

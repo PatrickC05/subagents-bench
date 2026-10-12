@@ -76,7 +76,9 @@ CP_COLS = [
     "cp_total_sec", "cp_orch_llm_sec", "cp_sub_llm_sec", "cp_arb_llm_sec", "cp_tool_sec", "cp_group_sec",
     "overhead_sec", "harness_exec_sec", "sub_busy_sec", "parallel_speedup",
 ]
-EXTRA_COLS = ["n_failed_calls", "n_provider_errors", "n_usage_estimated", "container_arch", "host_machine"]
+EXTRA_COLS = [
+    "n_failed_calls", "n_provider_errors", "n_stream_repairs", "n_usage_estimated", "container_arch", "host_machine",
+]
 
 # harbor exceptions raised before/around the agent rather than by it.
 OUTSIDE_AGENT_EXCEPTIONS = {
@@ -91,7 +93,7 @@ INT_COLS = (
     ["round", "resolved", "max_concurrent", "n_candidates", "orchestrator_steps_budget", "orchestrator_steps",
      "spawn_calls", "delegated", "dispatches", "redispatches", "arbitrations", "n_isolation_checked",
      "n_isolation_violations", "n_leaked_files", "n_files_modified", "n_retries", "n_command_timeouts",
-     "n_failed_calls", "n_provider_errors", "n_usage_estimated", "total_tokens"]
+     "n_failed_calls", "n_provider_errors", "n_stream_repairs", "n_usage_estimated", "total_tokens"]
     + [c for c in TOKEN_COLS if c != "total_tokens"] + LENGTH_COLS
 )
 
@@ -366,6 +368,7 @@ def episode_row(trial: Trial, pricebook: PriceBook, profiles: list[Any]) -> dict
     row["n_command_timeouts"] = sum(1 for t in data.tools if t.get("timed_out"))
     row["n_failed_calls"] = sum(1 for c in data.calls if c.get("error"))
     row["n_provider_errors"] = n_provider_errors
+    row["n_stream_repairs"] = sum(int(c.get("stream_repairs") or 0) for c in data.calls)
     row["n_usage_estimated"] = sum(1 for c in data.calls if c.get("usage_source") == "estimated")
     row["container_arch"] = (ep or {}).get("container_arch")
     row["host_machine"] = (ep or {}).get("host_machine")

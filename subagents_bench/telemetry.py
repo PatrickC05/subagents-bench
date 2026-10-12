@@ -241,6 +241,7 @@ def call_record_from_response(
         finish_reason=str(resp.finish_reason),
         n_tool_calls=len(resp.tool_calls),
         tool_call_names=[tc.name for tc in resp.tool_calls],
+        stream_repairs=int(getattr(resp, "stream_repairs", 0) or 0),
         content_chars=len(resp.text or ""),
         reasoning_chars=len(resp.reasoning or ""),
         response_id=resp.response_id,
@@ -596,6 +597,7 @@ class EpisodeRecorder:
             llm_sec={},
             tool_sec={},
             n_retries=0,
+            n_stream_repairs=0,
             backoff_sec=0.0,
             n_provider_errors=0,
             n_command_timeouts=0,
@@ -649,6 +651,7 @@ class EpisodeRecorder:
             "llm_sec": {r: sum(c["latency_sec"] for c in cs) for r, cs in by_role.items()},
             "tool_sec": {r: sum(t["duration_sec"] for t in ts) for r, ts in tools_by_role.items()},
             "n_retries": sum(max(c["n_attempts"] - 1, 0) for c in calls),
+            "n_stream_repairs": sum(c.get("stream_repairs") or 0 for c in calls),
             "backoff_sec": float(sum(c["backoff_sec"] for c in calls)),
             "n_provider_errors": sum(1 for c in calls if is_provider_error(c.get("error"))),
             "n_command_timeouts": sum(1 for t in tools if t["timed_out"]),
@@ -708,7 +711,7 @@ class EpisodeRecorder:
         out.update({k: agg[k] for k in (
             "orchestrator_steps", "spawn_calls", "dispatches", "redispatches", "arbitrations",
             "requested_total", "granted_total", "instruction_following", "n_calls", "n_tool_calls",
-            "tokens", "cost_usd", "llm_sec", "tool_sec", "n_retries", "backoff_sec", "n_provider_errors",
+            "tokens", "cost_usd", "llm_sec", "tool_sec", "n_retries", "n_stream_repairs", "backoff_sec", "n_provider_errors",
             "n_command_timeouts", "n_context_trims",
         )})
         return out

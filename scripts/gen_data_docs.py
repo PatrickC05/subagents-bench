@@ -280,6 +280,7 @@ EPISODE_DOCS = {
     "parallel_speedup": "sub_busy_sec / cp_group_sec (NaN without dispatches or group time). For arbiter groups the denominator also holds isolation, judging and apply.",
     "n_failed_calls": "Calls that failed or were abandoned (error set).",
     "n_provider_errors": "Calls of any role whose error starts with 'LLMError:' (a provider failure after all retries; telemetry.is_provider_error), counted from calls.jsonl so older records count too. Over 0 makes the trial invalid (provider_error).",
+    "n_stream_repairs": "Sum of calls.jsonl stream_repairs: tool-call repairs of the streamed responses (Sail's re-sent tool calls dropped, clashing ids renamed). 0 in records written before the field existed.",
     "n_usage_estimated": "Calls whose usage was estimated (provider sent none).",
     "container_arch": "uname -m in the container (x86_64 on an arm64 host = emulated).",
     "host_machine": "Host machine (e.g. arm64).",

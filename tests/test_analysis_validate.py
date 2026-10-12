@@ -81,6 +81,20 @@ def test_token_total_mismatch(tmp_path):
     assert _cli(["check-run", str(ep)]) == 1
 
 
+def test_stream_repair_count_is_cross_checked(tmp_path):
+    ep = _episode(tmp_path)
+    doc = json.loads((ep / "episode.json").read_text())
+    assert doc["n_stream_repairs"] == 0
+    (ep / "episode.json").write_text(json.dumps({**doc, "n_stream_repairs": 3}))
+    assert "n_stream_repairs=3 but the records give 0" in _messages(check_episode(ep))
+    _rewrite_jsonl(ep / "calls.jsonl", lambda recs: [{**r, "stream_repairs": 3} if i == 0 else r for i, r in enumerate(recs)])
+    assert not any(m.startswith("n_stream_repairs") for m in _messages(check_episode(ep)))
+    # Records written before the field existed are not checked for it.
+    doc = {k: v for k, v in doc.items() if k != "n_stream_repairs"} | {"schema_version": 2}
+    (ep / "episode.json").write_text(json.dumps(doc))
+    assert not any(m.startswith("n_stream_repairs") for m in _messages(check_episode(ep)))
+
+
 def test_provider_error_count_is_cross_checked(tmp_path):
     ep = _episode(tmp_path)
     doc = json.loads((ep / "episode.json").read_text())
