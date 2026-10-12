@@ -46,17 +46,17 @@ class FakeHarborEnv:
         self.workdir = workdir
 
     async def exec(self, command, cwd=None, env=None, timeout_sec=None, user=None):
-        with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        with tempfile.TemporaryFile() as out:  # stderr merged into stdout, as in harbor
             proc = subprocess.Popen(["bash", "-c", command], cwd=cwd or self.workdir, stdin=subprocess.DEVNULL,
-                                    stdout=out, stderr=err, start_new_session=True)
+                                    stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
             PROCS.append(proc)
             deadline = time.monotonic() + (timeout_sec or 1e9)
             while proc.poll() is None:
                 if time.monotonic() > deadline:
                     raise RuntimeError(f"Command timed out after {timeout_sec} seconds")
                 await asyncio.sleep(0.01)  # a cancel here leaves the command running
-            out.seek(0), err.seek(0)
-            return Res(out.read().decode(), err.read().decode(), proc.returncode)
+            out.seek(0)
+            return Res(out.read().decode(), "", proc.returncode)
 
 
 def trial(tmp_path, monkeypatch, scripts, **overrides):

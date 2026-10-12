@@ -3,7 +3,8 @@
 Each agent has a state dir ``<state_root>/<agent_id>/`` with its persisted cwd and exports.
 A tool call is one exec of a script that stages the command and a wrapper, runs the wrapper
 as its own process group (``set -m``) next to a watchdog that kills the group at the timeout,
-and prints the output (head and tail if long) and the exit status. While a command runs, its
+and prints the output (head and tail if long) and the exit status. Its own stderr is dropped:
+harbor merges stderr into stdout, and job-control notices ("[1]- Done ...") would land there. While a command runs, its
 pid (= process group) is in ``pid_<n>``: harbor's cancel kills what is left running from it.
 """
 
@@ -75,6 +76,7 @@ _OUTER = """S={state}
 mkdir -p "$S" && printf '%s' {cmd} | base64 -d > "$S/cmd_{n}.sh" || exit 97
 cat > "$S/wrap_{n}.sh" <<'__SB_WRAP_{n}'
 {wrapper}__SB_WRAP_{n}
+exec 2>/dev/null
 set -m
 bash "$S/wrap_{n}.sh" > "$S/out_{n}" 2>&1 < /dev/null &
 __sb_p=$!

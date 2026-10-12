@@ -138,13 +138,15 @@ def test_remap_paths_and_run_tool_note(env, tmp_path):
 
 
 class DockerEnv:
+    """docker exec with stderr merged into stdout, as harbor's docker backend runs commands."""
+
     def __init__(self, image: str):
         self.cid = subprocess.run(["docker", "run", "-d", "--rm", "--init", image, "sleep", "infinity"],
                                   capture_output=True, text=True, check=True).stdout.strip()
         self.state_root, self.workdir, self.stop_event = "/tmp/.sb", "/root", threading.Event()
 
     def exec(self, command, timeout):
-        return run_process(["docker", "exec", self.cid, "bash", "-c", command], timeout, self.stop_event)
+        return run_process(["docker", "exec", self.cid, "bash", "-c", "exec 2>&1\n" + command], timeout, self.stop_event)
 
     def close(self):
         subprocess.run(["docker", "rm", "-f", self.cid], capture_output=True)
