@@ -161,16 +161,22 @@ def test_swe_sweep_spec(capsys):
 DOCKERFILE = "FROM docker.io/library/alpine:3.20 AS src\nRUN true\nFROM --platform=$BUILDPLATFORM golang:1.20\n"
 
 
+def make_tasks(root: Path) -> None:
+    """TASKS as local task dirs, the first with SWE-sweep's tests/swesweep_eval.json (3 bugs)."""
+    for t in TASKS:
+        for d in ("environment", "tests"):
+            (root / t / d).mkdir(parents=True)
+            (root / t / d / "Dockerfile").write_text(DOCKERFILE)
+        (root / t / "task.toml").write_text("")
+        (root / t / "tests" / "from.py").write_text("FROM x\n")  # not a Dockerfile: untouched
+    (root / TASKS[0] / "tests" / "swesweep_eval.json").write_text(json.dumps({"subtasks": [{"id": i} for i in "abc"]}))
+
+
 def test_local_dataset_platform_and_overrides(fake, tmp_path, monkeypatch, capsys):
     harbor = {"n_concurrent": 2, "agent_timeout_multiplier": 0.1, "extra_args": ["--override-cpus", "3"]}
     path = make_spec(tmp_path, dataset=None, dataset_path="tasks", platform="linux/amd64", harbor=harbor,
                      overrides={"budget": {"orchestrator_steps": 7}})
-    for t in TASKS:
-        for d in ("environment", "tests"):
-            (path.parent / "tasks" / t / d).mkdir(parents=True)
-            (path.parent / "tasks" / t / d / "Dockerfile").write_text(DOCKERFILE)
-        (path.parent / "tasks" / t / "task.toml").write_text("")
-        (path.parent / "tasks" / t / "tests" / "from.py").write_text("FROM x\n")  # not a Dockerfile: untouched
+    make_tasks(path.parent / "tasks")
     spec = sweep.load_spec(path)
     assert spec.dataset is None and spec.dataset_path == path.parent / "tasks" and spec.platform == "linux/amd64"
     assert {c.budget.orchestrator_steps for c in spec.configs.values()} == {7}
@@ -189,6 +195,7 @@ def test_local_dataset_platform_and_overrides(fake, tmp_path, monkeypatch, capsy
     manifest = json.loads((spec.jobs_dir / "tasks.json").read_text())
     assert manifest["platform"] == "linux/amd64" and manifest["source"] == str(path.parent / "tasks")
     assert (manifest["git_commit"], manifest["git_dirty"]) == (None, None) and sorted(manifest["tasks"]) == sorted(TASKS)
+    assert manifest["n_subtasks"] == {TASKS[0]: 3, TASKS[1]: None}
     assert sweep.pin_platform(pinned, "linux/amd64") == pinned
     assert go(spec) == 0 and json.loads((spec.jobs_dir / "tasks.json").read_text()) == manifest  # a rerun: identical
     monkeypatch.setenv("SAIL_API_KEY", "test-key")
@@ -199,6 +206,18 @@ def test_local_dataset_platform_and_overrides(fake, tmp_path, monkeypatch, capsy
     assert "--override-cpus" in fake.calls()[-1]["argv"] and (staged / "tests" / "Dockerfile").read_text() == pinned
     (path.parent / "tasks" / TASKS[1] / "task.toml").unlink()
     assert sweep.preflight(spec) == 1 and "[FAIL] dataset_path: no task.toml under" in capsys.readouterr().out
+
+
+def test_local_dataset_without_platform_records_its_tasks(fake, tmp_path):
+    """No copy: harbor runs the source task dirs, and tasks.json still records them and their bugs."""
+    path = make_spec(tmp_path, dataset=None, dataset_path="tasks")
+    make_tasks(path.parent / "tasks")
+    spec = sweep.load_spec(path)
+    assert go(spec) == 0 and not (spec.jobs_dir / "tasks").exists()
+    assert all(c["argv"][:3] == ["run", "-p", "tasks"] for c in fake.calls())
+    manifest = json.loads((spec.jobs_dir / "tasks.json").read_text())
+    assert (manifest["source"], manifest["platform"]) == (str(path.parent / "tasks"), None)
+    assert sorted(manifest["tasks"]) == sorted(TASKS) and manifest["n_subtasks"] == {TASKS[0]: 3, TASKS[1]: None}
 
 
 def test_dry_run_runs_and_writes_nothing(fake, spec, capsys):

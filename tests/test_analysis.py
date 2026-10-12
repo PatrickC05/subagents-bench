@@ -248,12 +248,18 @@ def test_conditions_rates_and_intervals(analysis):
 
 
 def test_bugs_fixed_and_regressions_from_swe_sweep_rewards(tmp_path, capsys):
-    """SWE-sweep's grader: reward = bugs fixed / bugs, 0 on a regression; a grader failure is invalid."""
+    """SWE-sweep's grader: reward = bugs fixed / bugs, 0 on a regression; a grader failure is invalid.
+    A task's bugs come from the sweep's tasks.json: a patch that breaks the build gets n_subtasks 0
+    from the grader, yet its task's bugs stay in the denominator."""
     jobs, job = tmp_path / "jobs" / "ss", "ss__r1__single_5step"
     single, g = make_config(name="single_5step", topology="single"), {"n_subtasks": 14.0, "visible_ok": 1.0}
     trial(jobs, job, "swe-sweep__goawk", single, models(0), reward=0.5, rewards=g)
     trial(jobs, job, "swe-sweep__echo", single, models(0), reward=0.0, rewards={**g, "n_subtasks": 6.0, "visible_ok": 0.0})
     trial(jobs, job, "swe-sweep__gin", single, models(0), reward=0.0, rewards={**g, "n_subtasks": 11.0, "grader_failed": 1.0})
+    trial(jobs, job, "swe-sweep__pendulum", single, models(0), reward=0.0,
+          rewards={"n_subtasks": 0.0, "visible_ok": 0.0, "agent_build_ok": 0.0, "grader_failed": 0.0})
+    bugs = {"swe-sweep__goawk": 14, "swe-sweep__echo": 6, "swe-sweep__gin": 11, "swe-sweep__pendulum": 9}
+    (jobs / "tasks.json").write_text(json.dumps({"n_subtasks": bugs}))
     pricing = tmp_path / "pricing.yaml"
     pricing.write_text(yaml.safe_dump({"fake": PRICES}))
     assert analyze([str(jobs), "--out", str(tmp_path / "out"), "--pricing", str(pricing), "--scheme", "fake"]) == 0
@@ -261,9 +267,11 @@ def test_bugs_fixed_and_regressions_from_swe_sweep_rewards(tmp_path, capsys):
     eps = pd.read_csv(tmp_path / "out" / "episodes.csv").set_index("task_name")
     assert eps.loc["swe-sweep__goawk", ["n_subtasks", "bugs_fixed", "regressed", "resolved"]].tolist() == [14, 7.0, 0, 0]
     assert eps.loc["swe-sweep__echo", ["bugs_fixed", "regressed"]].tolist() == [0.0, 1]
+    assert eps.loc["swe-sweep__pendulum", ["n_subtasks", "bugs_fixed", "regressed"]].tolist() == [9, 0.0, 1]
     assert (eps.loc["swe-sweep__gin", "valid"], eps.loc["swe-sweep__gin", "invalid_reason"]) == (False, "grader_failed")
     c = pd.read_csv(tmp_path / "out" / "conditions.csv").set_index("condition").loc["single_5step"]
-    assert c[["n_valid", "n_bugs", "bugs_fixed", "bug_fix_rate", "n_regressed", "reward_mean"]].tolist() == [2, 20, 7, 0.35, 1, 0.25]
+    assert c[["n_valid", "n_bugs", "bugs_fixed", "n_regressed"]].tolist() == [3, 29, 7, 2]
+    assert (c["bug_fix_rate"], c["reward_mean"]) == pytest.approx((7 / 29, 0.5 / 3))
 
 
 def test_stats():

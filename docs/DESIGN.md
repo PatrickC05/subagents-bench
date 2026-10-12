@@ -366,19 +366,21 @@ the verifier image bundles an x86-64 Python. With `platform` set, the sweep
 every `FROM` of `environment/Dockerfile` and `tests/Dockerfile` that has no
 platform to `FROM --platform=linux/amd64` (upper-case `FROM` only: a
 lower-case `from distutils...` continuation line sits at column 0 in
-pendulum's Dockerfile), passes the copy to harbor and writes
-`jobs/<sweep>/tasks.json` with the source dir, its git commit and dirtiness
-and a hash per task; a rerun rewrites identical files. Two simpler routes
-failed. A compose overlay with `services.main.platform` (the user's
-2026-10-09 route) does not reach harbor's separate verifier environment,
-which harbor builds without the overlays. A global `DOCKER_DEFAULT_PLATFORM`
-broke harbor 0.24.0 before any trial: its egress-control probe runs
+pendulum's Dockerfile) and passes the copy to harbor; a rerun rewrites
+identical files. Two simpler routes failed. A compose overlay with
+`services.main.platform` (the user's 2026-10-09 route) does not reach
+harbor's separate verifier environment, which harbor builds without the
+overlays. A global `DOCKER_DEFAULT_PLATFORM` broke harbor 0.24.0 before
+any trial: its egress-control probe runs
 `docker run alpine:3.23.4@sha256:...`, a multi-arch digest whose arm64
 variant this overlay2 image store already holds, so the amd64 run failed
 with "cannot overwrite digest", the probe reported no kernel support, egress
 control stayed off, and the tasks' `no-network` phases were rejected
 (`ValueError: network_mode='no-network' is not supported`); the egress
-sidecar image is built for arm64 too.
+sidecar image is built for arm64 too. With or without `platform`, a sweep
+on a `dataset_path` writes `jobs/<sweep>/tasks.json`: the source dir, its git
+commit and dirtiness, and per task a hash of the dir harbor runs and its bugs
+(below).
 
 ## Analysis (`analysis/`, `plots/`)
 
@@ -405,7 +407,11 @@ outcome there.
 **Partial rewards.** SWE-sweep's reward is the fraction of the task's bugs
 whose hidden tests pass, 0 when a visible test regressed, with the grader's
 counts next to it in harbor's `result.json`. `episodes.csv` adds
-`n_subtasks`, `bugs_fixed` (reward x n_subtasks) and `regressed`;
+`n_subtasks` (the task's bugs: the subtasks of its `tests/swesweep_eval.json`,
+recorded in `tasks.json` by the sweep; the grader's own count is 0 when the
+agent's patch breaks the build, which would drop those bugs from the
+denominator and raise `bug_fix_rate`), `bugs_fixed` (reward x n_subtasks)
+and `regressed`;
 `conditions.csv` adds `n_bugs`, `bugs_fixed`, `bug_fix_rate` (bugs fixed over
 bugs in the valid trials, the micro-average SWE-sweep reports), `n_regressed`
 and `reward_mean`. `resolved` stays reward >= 1, every bug of the task fixed,

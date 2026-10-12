@@ -186,28 +186,38 @@ def _tree_hash(d: Path) -> str:
     return h.hexdigest()
 
 
+def n_subtasks(task: Path) -> int | None:
+    """A SWE-sweep task's bugs: the subtasks of ``tests/swesweep_eval.json``, all of which its
+    grader grades (it reports none when the agent's patch breaks the build); else None."""
+    subtasks = _json(task / "tests" / "swesweep_eval.json").get("subtasks")
+    return len(subtasks) if isinstance(subtasks, list) else None
+
+
 def stage_tasks(spec: Spec) -> None:
-    """With ``platform`` set, copy the sweep's tasks to ``<jobs_dir>/tasks/`` with every ``FROM``
-    of their ``environment/Dockerfile`` and ``tests/Dockerfile`` pinned to it, and write
-    ``<jobs_dir>/tasks.json`` (source dir, its git commit and dirtiness, a hash per task). A rerun
-    rewrites identical files. Pinning in the Dockerfiles is the one way that reaches harbor's
-    separate verifier image: a compose overlay does not, and a global DOCKER_DEFAULT_PLATFORM
-    breaks harbor's egress-control probe (``docker run`` of a multi-arch digest fails when the
-    other variant is in the image store), which rejects the tasks' ``no-network`` phases."""
-    if not spec.platform:
+    """For a local dataset, write ``<jobs_dir>/tasks.json``: source dir, its git commit and
+    dirtiness, and per task a hash of the dir harbor runs and its bugs (:func:`n_subtasks`, the
+    analysis's denominator). With ``platform`` set, first copy the tasks to ``<jobs_dir>/tasks/``
+    with every ``FROM`` of their ``environment/Dockerfile`` and ``tests/Dockerfile`` pinned to it.
+    A rerun rewrites identical files. Pinning in the Dockerfiles is the one way that reaches
+    harbor's separate verifier image: a compose overlay does not, and a global
+    DOCKER_DEFAULT_PLATFORM breaks harbor's egress-control probe (``docker run`` of a multi-arch
+    digest fails when the other variant is in the image store), which rejects the tasks'
+    ``no-network`` phases."""
+    if not spec.dataset_path:
         return
     dest, src = task_root(spec), spec.dataset_path
     commit = _output(["git", "-C", str(src), "rev-parse", "HEAD"])
-    manifest = {"source": str(src), "git_commit": commit, "platform": spec.platform, "tasks": {},
+    manifest = {"source": str(src), "git_commit": commit, "platform": spec.platform, "tasks": {}, "n_subtasks": {},
                 "git_dirty": bool(_output(["git", "-C", str(src), "status", "--porcelain", "."])) if commit else None}
     for t in spec.tasks:
-        if (dest / t).exists():
-            shutil.rmtree(dest / t)
-        shutil.copytree(src / t, dest / t)
-        for df in (dest / t / "environment" / "Dockerfile", dest / t / "tests" / "Dockerfile"):
-            if df.is_file():
-                df.write_text(pin_platform(df.read_text(), spec.platform))
-        manifest["tasks"][t] = _tree_hash(dest / t)
+        if spec.platform:
+            if (dest / t).exists():
+                shutil.rmtree(dest / t)
+            shutil.copytree(src / t, dest / t)
+            for df in (dest / t / "environment" / "Dockerfile", dest / t / "tests" / "Dockerfile"):
+                if df.is_file():
+                    df.write_text(pin_platform(df.read_text(), spec.platform))
+        manifest["tasks"][t], manifest["n_subtasks"][t] = _tree_hash(dest / t), n_subtasks(dest / t)
     (spec.jobs_dir / "tasks.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
 
