@@ -1,228 +1,152 @@
-"""Unified configuration for subagent-orchestration experiments.
-
-A single :class:`ExperimentConfig` describes one point in the design space the
-project studies: which model orchestrates, which (possibly smaller) model is
-served to its subagents, how many subagents it may spawn, what kind of subtask
-it is nudged to delegate, which benchmark subset it runs on, and the
-time/token budgets.
-
-The same config object drives both Terminal-Bench 4.0 and ExploitBench; only
-the ``benchmark`` field and a handful of benchmark-scoped knobs differ, so a
-sweep can be expressed as a list of configs that vary one axis at a time.
-"""
+"""Experiment configuration: one condition of the study, loaded strictly from YAML."""
 
 from __future__ import annotations
 
-import copy
-from dataclasses import dataclass, field, asdict
-from enum import Enum
+import dataclasses
+import os
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-
-class Benchmark(str, Enum):
-    TERMINAL_BENCH = "terminal_bench"
-    EXPLOIT_BENCH = "exploit_bench"
-
-
-class Topology(str, Enum):
-    """How agents are wired together.
-
-    * ``single`` -- baseline 1: the orchestrator model works alone with the
-      same tools and budget. No subagents.
-    * ``subagents`` -- the orchestrator may spawn subagents. When
-      ``subagent.model`` equals ``orchestrator.model`` this is baseline 2
-      (same-model subagents), which isolates the effect of *having* subagents
-      from the effect of subagent *size*.
-    """
-
-    SINGLE = "single"
-    SUBAGENTS = "subagents"
+TOPOLOGIES = ("single", "subagents")
+STRATEGIES = ("parallel", "sequential", "arbiter")
+SCOPES = ("easy", "medium", "hard")
+TOOL_NAMES = ("bash", "edit_file", "read_file", "list_dir", "search")
 
 
-class SubtaskType(str, Enum):
-    """Delegation behaviour nudged into the orchestrator's system prompt.
-
-    This selects the *prefix* prepended to the orchestrator prompt. The exact
-    wording lives in :mod:`subagents_bench.prompts`. ``none`` leaves the
-    orchestrator free to decide; the others steer what it hands to subagents.
-    """
-
-    NONE = "none"
-    PARALLEL_EXPLORATION = "parallel_exploration"
-    LOCALIZE_THEN_FIX = "localize_then_fix"
-    VERIFY = "verify"
-    DECOMPOSE = "decompose"
+class ConfigError(ValueError):
+    """An invalid experiment config (unknown key, bad choice)."""
 
 
 @dataclass
 class ModelConfig:
-    """A single model endpoint.
-
-    ``provider`` picks the client backend:
-
-    * ``anthropic`` -- native Anthropic Messages API (typical orchestrator).
-    * ``openai`` -- any OpenAI-compatible chat/completions endpoint. This also
-      covers subagents served locally by **vLLM**: point ``base_url`` at the
-      vLLM server (``http://host:8000/v1``).
-
-    ``price_in``/``price_out`` are USD per 1M tokens, used for cost telemetry.
-    For vLLM-served subagents on fixed hardware there is no API price; set both
-    to an amortised estimate (or 0 to report tokens only).
-    """
+    """A Sail model. Prices (USD per 1M tokens) only feed harbor's AgentContext cost."""
 
     model: str
-    provider: str = "anthropic"
-    base_url: str | None = None
-    api_key_env: str | None = None
-    max_output_tokens: int = 8192
-    temperature: float = 0.0
-    # USD per 1M tokens.
-    price_in: float = 0.0
-    price_out: float = 0.0
+    completion_window: str = "balanced"
+    temperature: float = 0.7
+    max_output_tokens: int = 4096
+    max_retries: int = 4
+    retry_budget_sec: float = 120.0
+    request_timeout_sec: float = 180.0
+    price_in: float | None = None
     price_cache_read: float | None = None
-    extra_body: dict[str, Any] = field(default_factory=dict)
+    price_out: float | None = None
+
+
+@dataclass
+class ArbiterConfig:
+    n_candidates: int = 3
+    debate_rounds: int = 1
+    confidence_threshold: float = 0.8
 
 
 @dataclass
 class SubagentConfig:
-    model: ModelConfig | None = None
-    # Maximum number of subagents the orchestrator may have live at once.
-    max_concurrent: int = 4
-    # Hard cap on total dispatches across the whole episode (re-dispatches
-    # included). None -> derive from max_concurrent * orchestrator steps.
-    max_dispatches: int | None = None
-    # Per-subagent step budget (a subagent runs its own tool loop).
+    model: ModelConfig | None = None  # None: the orchestrator's model (same-model control)
+    strategy: str = "parallel"
+    scope: str = "hard"
+    max_concurrent: int = 3
+    max_dispatches: int = 15
     max_steps: int = 8
-    # Per-subagent token budget; None -> inherit from BudgetConfig.
-    token_budget: int | None = None
+    max_output_chars: int = 12000
+    arbiter: ArbiterConfig = field(default_factory=ArbiterConfig)
 
 
 @dataclass
 class BudgetConfig:
-    # Orchestrator-visible step budget for the whole episode. The study fixes
-    # this at 5 steps per episode.
     orchestrator_steps: int = 5
-    # Total token budget across orchestrator + all subagents.
-    total_token_budget: int = 2_000_000
-    # Wall-clock timeout for the whole episode, seconds.
-    timeout_sec: int = 1800
+    command_timeout_sec: int = 180
+    max_command_timeout_sec: int = 900
 
 
 @dataclass
-class SandboxConfig:
-    """Where tools actually execute.
-
-    * ``harbor`` -- the harness hands us a live ``BaseEnvironment`` (the
-      SWE-bench / Terminal-Bench Docker container); we exec inside it.
-    * ``exploitbench`` -- the ExploitBench container, driven through its MCP
-      tool interface.
-    * ``local_docker`` -- the standalone runner starts its own container from
-      ``image`` for smoke tests and local development.
-    """
-
-    kind: str = "harbor"
-    image: str | None = None
-    workdir: str = "/app"
-    network: bool = False
+class ToolsConfig:
+    max_output_chars: int = 12000
+    orchestrator_tools: list[str] | None = None  # None: all five; read-only tools make a "manager"
 
 
 @dataclass
 class ExperimentConfig:
     name: str
-    benchmark: Benchmark = Benchmark.TERMINAL_BENCH
-    topology: Topology = Topology.SUBAGENTS
-    subtask_type: SubtaskType = SubtaskType.NONE
-
-    orchestrator: ModelConfig = field(
-        default_factory=lambda: ModelConfig(model="claude-opus-4-8", provider="anthropic")
-    )
+    orchestrator: ModelConfig
+    topology: str = "subagents"
     subagent: SubagentConfig = field(default_factory=SubagentConfig)
     budget: BudgetConfig = field(default_factory=BudgetConfig)
-    sandbox: SandboxConfig = field(default_factory=SandboxConfig)
+    tools: ToolsConfig = field(default_factory=ToolsConfig)
 
-    # Benchmark task selection. For Terminal-Bench, ``task_ids`` filters by id
-    # and ``difficulties`` by the task's difficulty label (the task-size axis).
-    task_ids: list[str] = field(default_factory=list)
-    difficulties: list[str] = field(default_factory=list)
-    # How many trials per task (seeds), and where to write logs.
-    n_trials: int = 1
-    seed: int = 1
-    output_dir: str = "runs"
+    @property
+    def subagent_model(self) -> ModelConfig:
+        return self.subagent.model or self.orchestrator
 
-    def resolved_subagent_model(self) -> ModelConfig:
-        """The model a subagent uses, defaulting to the orchestrator's."""
-        if self.subagent.model is not None:
-            return self.subagent.model
-        return self.orchestrator
-
-    def is_same_model_baseline(self) -> bool:
-        return (
-            self.topology is Topology.SUBAGENTS
-            and self.resolved_subagent_model().model == self.orchestrator.model
-        )
-
-    # ---- (de)serialisation -------------------------------------------------
+    @property
+    def orchestrator_tools(self) -> list[str]:
+        allowed = self.tools.orchestrator_tools
+        return [t for t in TOOL_NAMES if allowed is None or t in allowed]
 
     def to_dict(self) -> dict[str, Any]:
-        d = asdict(self)
-        # asdict leaves enums as Enum members in some python versions; coerce.
-        return _coerce_enums_to_values(d)
-
-    @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> "ExperimentConfig":
-        raw = copy.deepcopy(raw)
-
-        def model_cfg(d: dict[str, Any] | None) -> ModelConfig | None:
-            if d is None:
-                return None
-            return ModelConfig(**d)
-
-        orchestrator = model_cfg(raw.get("orchestrator")) or ModelConfig(
-            model="claude-opus-4-8"
-        )
-
-        sub_raw = raw.get("subagent", {}) or {}
-        subagent = SubagentConfig(
-            model=model_cfg(sub_raw.get("model")),
-            max_concurrent=sub_raw.get("max_concurrent", 4),
-            max_dispatches=sub_raw.get("max_dispatches"),
-            max_steps=sub_raw.get("max_steps", 8),
-            token_budget=sub_raw.get("token_budget"),
-        )
-
-        budget = BudgetConfig(**(raw.get("budget", {}) or {}))
-        sandbox = SandboxConfig(**(raw.get("sandbox", {}) or {}))
-
-        return cls(
-            name=raw["name"],
-            benchmark=Benchmark(raw.get("benchmark", "terminal_bench")),
-            topology=Topology(raw.get("topology", "subagents")),
-            subtask_type=SubtaskType(raw.get("subtask_type", "none")),
-            orchestrator=orchestrator,
-            subagent=subagent,
-            budget=budget,
-            sandbox=sandbox,
-            task_ids=raw.get("task_ids", []) or [],
-            difficulties=raw.get("difficulties", []) or [],
-            n_trials=raw.get("n_trials", 1),
-            seed=raw.get("seed", 1),
-            output_dir=raw.get("output_dir", "runs"),
-        )
-
-    @classmethod
-    def from_yaml(cls, path: str | Path) -> "ExperimentConfig":
-        with open(path) as f:
-            return cls.from_dict(yaml.safe_load(f))
+        return dataclasses.asdict(self)
 
 
-def _coerce_enums_to_values(obj: Any) -> Any:
-    if isinstance(obj, Enum):
-        return obj.value
-    if isinstance(obj, dict):
-        return {k: _coerce_enums_to_values(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_coerce_enums_to_values(v) for v in obj]
-    return obj
+_NESTED = {
+    (ExperimentConfig, "orchestrator"): ModelConfig,
+    (ExperimentConfig, "subagent"): SubagentConfig,
+    (ExperimentConfig, "budget"): BudgetConfig,
+    (ExperimentConfig, "tools"): ToolsConfig,
+    (SubagentConfig, "model"): ModelConfig,
+    (SubagentConfig, "arbiter"): ArbiterConfig,
+}
+
+
+def _build(cls: type, raw: Any, where: str) -> Any:
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{where or 'config'}: expected a mapping, got {type(raw).__name__}")
+    names = {f.name for f in dataclasses.fields(cls)}
+    unknown = sorted(str(k) for k in raw if k not in names)
+    if unknown:
+        raise ConfigError(f"unknown key(s): {', '.join(where + k for k in unknown)}")
+    kwargs = {}
+    for k, v in raw.items():
+        sub = _NESTED.get((cls, k))
+        kwargs[k] = _build(sub, v, f"{where}{k}.") if sub and v is not None else v
+    try:
+        return cls(**kwargs)
+    except TypeError as e:
+        raise ConfigError(f"{where or 'config'}: {e}") from None
+
+
+def from_dict(raw: Any) -> ExperimentConfig:
+    """Build and check a config; raises :class:`ConfigError`."""
+    cfg = _build(ExperimentConfig, raw, "")
+    for where, value, choices in (
+        ("topology", cfg.topology, TOPOLOGIES),
+        ("subagent.strategy", cfg.subagent.strategy, STRATEGIES),
+        ("subagent.scope", cfg.subagent.scope, SCOPES),
+    ):
+        if value not in choices:
+            raise ConfigError(f"{where}: {value!r} is not one of {', '.join(choices)}")
+    bad = sorted(set(cfg.tools.orchestrator_tools or []) - set(TOOL_NAMES))
+    if bad:
+        raise ConfigError(f"tools.orchestrator_tools: unknown tool(s) {bad}; choose from {list(TOOL_NAMES)}")
+    return cfg
+
+
+def load_config(path: str | os.PathLike) -> ExperimentConfig:
+    try:
+        return from_dict(yaml.safe_load(Path(path).read_text()))
+    except ConfigError as e:
+        raise ConfigError(f"{path}: {e}") from None
+
+
+def load_dotenv(path: str | os.PathLike) -> None:
+    """Set the ``KEY=VALUE`` lines of ``path`` that are not already in the environment."""
+    p = Path(path)
+    if not p.is_file():
+        return
+    for line in p.read_text().splitlines():
+        key, sep, value = line.strip().removeprefix("export ").partition("=")
+        key = key.strip()
+        if sep and key and not key.startswith("#"):
+            os.environ.setdefault(key, value.strip().strip("'\""))
