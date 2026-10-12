@@ -35,6 +35,7 @@ JUDGE_SPEC = ToolSpec(
     }, "required": ["winner", "confidence", "agreement", "rationale"]},
 )
 DIFF_CAP_CHARS = 4000
+SCRIPT_MAX_BYTES = 100_000  # a command reaches the container as one argv string: Linux caps it at 128 KiB
 NO_JUDGEMENT = {"winner": None, "confidence": None, "agreement": None, "parse_ok": False}
 
 
@@ -61,13 +62,18 @@ def _changed(before: dict[str, str], after: dict[str, str]) -> list[str]:
 
 def _copy_files(env: Any, src: str, dst: str, rels: list[str]) -> None:
     """Make ``rels`` under ``dst`` match ``src`` (copied, or deleted where ``src`` has none)."""
-    lines = []
+    script, size = "", 0
     for rel in rels:
         s, d = shlex.quote(f"{src}/{rel}"), shlex.quote(f"{dst}/{rel}")
-        lines.append(f'if [ -e {s} ]; then mkdir -p -- "$(dirname -- {d})" && rm -f -- {d} && cp -a -- {s} {d}; '
-                     f"else rm -f -- {d}; fi || exit 1")
-    if lines:
-        _sh(env, "\n".join(lines))
+        line = (f'if [ -e {s} ]; then mkdir -p -- "$(dirname -- {d})" && rm -f -- {d} && cp -a -- {s} {d}; '
+                f"else rm -f -- {d}; fi || exit 1\n")
+        n = len(line.encode("utf-8", "replace"))
+        if size + n > SCRIPT_MAX_BYTES:
+            _sh(env, script)
+            script, size = "", 0
+        script, size = script + line, size + n
+    if script:
+        _sh(env, script)
 
 
 def _map_back(env: Any, copy: str, workdir: str) -> None:

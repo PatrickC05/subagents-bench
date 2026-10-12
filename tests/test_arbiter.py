@@ -9,6 +9,7 @@ import re
 import pytest
 
 from fakes import ORCH, SUB, FakeFactory, Reply, assert_consistent, make_config, run_local, tc
+from subagents_bench import arbiter
 from subagents_bench.arbiter import parse_judgement
 from subagents_bench.llm import LLMResponse
 from subagents_bench.prompts import JUDGE_RETRY_NOTE
@@ -101,6 +102,21 @@ def test_copy_paths_written_into_files_name_the_workdir_after_apply(tmp_path):
     assert open(f"{work}/run.sh").read() == f"cat {work}/app.py\n"
     judge = [q for q in f[ORCH].requests if q["system"].startswith("You are an impartial")][0]["messages"][0].content
     assert "/arb/" not in judge
+
+
+def test_apply_of_many_files_stays_under_the_argv_limit(tmp_path, monkeypatch):
+    sizes, sh = [], arbiter._sh
+    monkeypatch.setattr(arbiter, "SCRIPT_MAX_BYTES", 3000)
+    monkeypatch.setattr(arbiter, "_sh", lambda env, script: sizes.append(len(script.encode())) or sh(env, script))
+
+    def many(k, messages, work):
+        if len(messages) == 1:
+            return Reply("", [tc("bash", command=f"mkdir -p {work}/lib && for i in $(seq 60); do echo $i > {work}/lib/m$i.py; done")])
+        return Reply("", [tc("submit", report="ok")])
+
+    _, r, _, _, work, _ = arbitrate(tmp_path, many, [judgement(0)])
+    assert r["arbitrations"][0]["n_applied_files"] == 60 and len(os.listdir(f"{work}/lib")) == 60
+    assert max(sizes) <= 3000
 
 
 def test_debate_when_not_confident_then_original_report_plus_revision(tmp_path):
