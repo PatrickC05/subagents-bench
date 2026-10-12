@@ -127,9 +127,15 @@ class ModelConfig:
     # Model context window in tokens; enables the subagent context guard.
     context_window: int | None = None
     # Retries after the first HTTP attempt (so max_retries + 1 attempts total).
-    max_retries: int = 8
-    # Connect/read timeout per HTTP attempt (read = max gap between bytes).
-    request_timeout_sec: float = 600.0
+    max_retries: int = 4
+    # Fail fast: no retry is started once it would begin more than this many
+    # seconds after the call's first attempt, so a provider outage surfaces in
+    # about two minutes instead of many. Sail's failed attempts take ~30 s
+    # ("chat completion failed"), so this allows 3-4 attempts.
+    retry_budget_sec: float = 120.0
+    # Connect/read timeout per HTTP attempt (read = max gap between bytes;
+    # the longest gap seen on Sail was 73 s, a Gemma reply sent as one chunk).
+    request_timeout_sec: float = 180.0
     # Stream SSE (timings per chunk); False -> one plain POST per attempt.
     stream: bool = True
     # Descriptive only (FLOPs accounting offline); None = unknown.
@@ -336,6 +342,9 @@ class ExperimentConfig:
             if m is None:
                 continue
             at_least(f"{where}.max_output_tokens", m.max_output_tokens, 1)
+            at_least(f"{where}.max_retries", m.max_retries, 0)
+            at_least(f"{where}.retry_budget_sec", m.retry_budget_sec, 0)
+            at_least(f"{where}.request_timeout_sec", m.request_timeout_sec, 1)
             if m.context_window is not None:
                 at_least(f"{where}.context_window", m.context_window, 1)
         return p

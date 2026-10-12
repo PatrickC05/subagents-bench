@@ -45,7 +45,8 @@ def test_defaults_match_design():
     assert ToolsConfig().max_output_chars == 12000
     assert SandboxConfig().workdir == "auto"
     m = ModelConfig(model="x")
-    assert (m.reasoning_passback, m.max_retries, m.request_timeout_sec, m.stream, m.context_window) == (True, 8, 600.0, True, None)
+    assert m.retry_budget_sec == 120.0
+    assert (m.reasoning_passback, m.max_retries, m.request_timeout_sec, m.stream, m.context_window) == (True, 4, 180.0, True, None)
 
 
 @pytest.mark.parametrize("path", YAMLS)

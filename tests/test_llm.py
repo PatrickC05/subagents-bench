@@ -205,8 +205,8 @@ def test_model_config_old_yaml_dict_still_loads():
     assert m.extra_headers == {}
     assert m.reasoning_passback is True
     assert m.context_window is None
-    assert m.max_retries == 8
-    assert m.request_timeout_sec == 600.0
+    assert m.max_retries == 4 and m.retry_budget_sec == 120.0
+    assert m.request_timeout_sec == 180.0
     assert m.stream is True
     assert m.active_params_b is None and m.total_params_b is None
     # New fields round-trip through a plain dict.
@@ -412,6 +412,47 @@ def test_reported_cost_variants():
 # ---------------------------------------------------------------------------
 # Retries and error classification
 # ---------------------------------------------------------------------------
+
+
+def _rate_limited(after: str = "5"):
+    return httpx.Response(429, headers={"retry-after": after}, json={"error": {"message": "rate limited"}})
+
+
+def test_retry_budget_gives_up_instead_of_waiting_past_it(env):
+    sleeps: list[float] = []
+    server = Server(_rate_limited("30"), simple_ok())
+    with pytest.raises(LLMError) as ei:
+        make(server, sleeps, retry_budget_sec=20.0).complete("s", USER, [])
+    e = ei.value
+    assert "giving up after 1 attempts" in str(e) and "retry budget 20s" in str(e)
+    assert sleeps == [] and len(server.requests) == 1  # no 30 s wait, no second request
+    assert len(e.attempts) == 1 and e.attempts[0].backoff_sec == 0.0 and e.status == 429
+    # The same wait fits a larger budget: retried.
+    server2 = Server(_rate_limited("30"), simple_ok("fine"))
+    assert make(server2, [], retry_budget_sec=60.0).complete("s", USER, []).text == "fine"
+
+
+def test_retry_budget_counts_time_spent_in_failed_attempts(env, monkeypatch):
+    clock = iter([0.0, 0.0, 0.0, 50.0, 50.0, 50.0, 100.0, 100.0, 100.0, 130.0, 130.0, 130.0])
+    last = [0.0]
+
+    def fake_time():
+        last[0] = next(clock, last[0])
+        return last[0]
+
+    server = Server(*[_rate_limited("1") for _ in range(6)])
+    client = make(server, [], retry_budget_sec=120.0, max_retries=8)
+    monkeypatch.setattr(llm.time, "time", fake_time)
+    with pytest.raises(LLMError) as ei:
+        client.complete("s", USER, [])
+    # Attempts end at ~0, 50, 100 s (fake clock); a retry starting after 120 s is not made.
+    n = len(ei.value.attempts)
+    assert 2 <= n < 6 and len(server.requests) == n and "retry budget 120s" in str(ei.value)
+
+
+def test_backoff_is_capped_for_fast_failure(env):
+    c = make(Server(), [])
+    assert max(c._backoff(k, None) for k in range(1, 30) for _ in range(20)) <= llm.BACKOFF_MAX_SEC == 15.0
 
 
 def test_429_retry_after_then_success(env):

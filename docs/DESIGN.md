@@ -162,8 +162,9 @@ task_ids, difficulties, n_trials, seed, output_dir
 - `extra_headers: dict`
 - `reasoning_passback: bool = True`
 - `context_window: int | None` (enables the context guard)
-- `max_retries: int = 8`
-- `request_timeout_sec: float = 600`
+- `max_retries: int = 4`
+- `retry_budget_sec: float = 120` (no retry starts later than this after the call's first attempt)
+- `request_timeout_sec: float = 180` (connect/read timeout per attempt; read = the longest gap between bytes)
 - `stream: bool = True`
 - the descriptive `active_params_b: float | None` and `total_params_b: float | None`
 
@@ -207,9 +208,19 @@ thread-safe: one instance is shared by concurrent subagent threads.
   has `reasoning`, add `reasoning_content`.
 - **Retries.** Retry on 408, 409, 425, 429, 500, 502, 503, 504, 529, transport
   errors, and streams that end without any finish_reason or `[DONE]`. Use
-  exponential backoff from 2 s, doubled per attempt up to 120 s, with full
-  jitter. Honor `Retry-After`. Stop after `max_retries`. Record every
-  `Attempt`, with the backoff stored on the failed attempt.
+  exponential backoff from 2 s, doubled per attempt up to 15 s, with full
+  jitter. Honor `Retry-After`. Stop after `max_retries`, or as soon as the
+  next attempt would start more than `retry_budget_sec` (120 s) after the
+  first: **fail fast**. A provider outage then surfaces in about two
+  minutes, not after many. The numbers come from the 2026-10-11/12 runs:
+  Sail's failed attempts ended after ~28 s (max 60 s, all "chat completion
+  failed" stream errors); 4 of 314 calls needed a retry; the two calls that
+  never recovered spent 407 s and 533 s on 9 attempts under the old limits
+  (8 retries, 120 s backoff cap, 600 s read timeout); one call recovered
+  only after 380 s. The 180 s read timeout is 2.5x the longest gap between
+  bytes seen (73 s, a Gemma reply sent as one chunk; DeepSeek's longest was
+  11 s). Record every `Attempt`, with the backoff stored on the failed
+  attempt.
 - **Billing errors.** HTTP 402, or a 4xx other than 429 whose body mentions
   balance/billing/credit/quota/payment, raises `BillingError` immediately.
   A 429 is billing only with an explicit billing marker

@@ -114,7 +114,7 @@ KEYLESS_PROVIDERS = frozenset({"vllm", "openai_compatible"})
 
 RETRYABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 529})
 BACKOFF_BASE_SEC = 2.0
-BACKOFF_MAX_SEC = 120.0
+BACKOFF_MAX_SEC = 15.0
 # Upper bound on a server-supplied Retry-After we are willing to sleep.
 RETRY_AFTER_MAX_SEC = 600.0
 # Error bodies/messages stored on Attempt records are truncated to this.
@@ -739,7 +739,7 @@ class OpenAIClient(LLMClient):
         super().__init__(cfg)
         if not cfg.base_url:
             raise ValueError("OpenAIClient needs cfg.base_url (use make_client for provider defaults)")
-        timeout_sec = float(getattr(cfg, "request_timeout_sec", 600.0))
+        timeout_sec = float(getattr(cfg, "request_timeout_sec", 180.0))
         self._timeout = httpx.Timeout(timeout_sec, connect=min(30.0, timeout_sec))
         self._owns_http = http_client is None
         # One pooled client shared by all threads (httpx.Client is thread-safe).
@@ -955,7 +955,8 @@ class OpenAIClient(LLMClient):
         except LLMError as e:  # no API key: nothing was sent
             e.request = info
             raise
-        max_retries = max(int(getattr(cfg, "max_retries", 8)), 0)
+        max_retries = max(int(getattr(cfg, "max_retries", 4)), 0)
+        retry_budget = float(getattr(cfg, "retry_budget_sec", 120.0))
 
         attempts: list[Attempt] = []
         t_start = time.time()
@@ -993,7 +994,17 @@ class OpenAIClient(LLMClient):
                         status=f.status,
                         request=info,
                     ) from None
-                att.backoff_sec = self._backoff(n, f.retry_after)
+                backoff = self._backoff(n, f.retry_after)
+                elapsed = att.t_end - t_start
+                if elapsed + backoff > retry_budget:
+                    raise LLMError(
+                        f"{where}: giving up after {n} attempts in {elapsed:.0f}s (retry budget "
+                        f"{retry_budget:.0f}s); last {f.error_type} ({status_txt}): {_truncate(f.message, 500)}",
+                        attempts=attempts,
+                        status=f.status,
+                        request=info,
+                    ) from None
+                att.backoff_sec = backoff
                 log.warning(
                     "%s attempt %d failed (%s, %s); retrying in %.1fs",
                     where, n, f.error_type, status_txt, att.backoff_sec,
@@ -1092,8 +1103,8 @@ class AnthropicClient(LLMClient):
                 self._client = anthropic.Anthropic(
                     api_key=resolve_api_key(self.cfg),
                     base_url=self.cfg.base_url,
-                    max_retries=int(getattr(self.cfg, "max_retries", 8)),
-                    timeout=float(getattr(self.cfg, "request_timeout_sec", 600.0)),
+                    max_retries=int(getattr(self.cfg, "max_retries", 4)),
+                    timeout=float(getattr(self.cfg, "request_timeout_sec", 180.0)),
                     default_headers=dict(getattr(self.cfg, "extra_headers", None) or {}) or None,
                 )
             return self._client
