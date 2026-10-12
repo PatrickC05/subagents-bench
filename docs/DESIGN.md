@@ -317,13 +317,16 @@ dir; that also triggers the probe. A billing error exits 3.
 **Process handling.** harbor runs in its own process group and gets exactly
 one SIGINT: a terminal Ctrl-C used to reach it twice (from the terminal and
 from the sweep), and the second SIGINT cancels the teardown of harbor's
-`asyncio.run`, which left task containers behind. SIGTERM and SIGHUP stop
-the sweep like Ctrl-C, unless SIGHUP was already ignored (`nohup`). The
-sweep runs the `harbor` next to its own Python (pinned in `uv.lock`) before
-one on PATH: a globally installed harbor would otherwise run every job,
-with another version and without this package importable. On macOS,
-`run_experiment.sh` runs the sweep under `caffeinate -i`: a sleeping laptop
-drops the network and every running call with it.
+`asyncio.run`, which left task containers behind. harbor starts with SIGINT
+at its default: a sweep launched with `&` from a script inherits SIGINT
+ignored, and harbor would ignore the stop and be killed two minutes later,
+its containers left running. SIGTERM and SIGHUP stop the sweep like Ctrl-C,
+unless SIGHUP was already ignored (`nohup`). The sweep runs the `harbor`
+next to its own Python (pinned in `uv.lock`) before one on PATH: a globally
+installed harbor would otherwise run every job, with another version and
+without this package importable. On macOS, `run_experiment.sh` runs the
+sweep under `caffeinate -i`: a sleeping laptop drops the network and every
+running call with it.
 
 `preflight` checks Docker, harbor, `SAIL_API_KEY` and one request per model,
 and with `--oracle` runs harbor's oracle agent on every task (reused while
