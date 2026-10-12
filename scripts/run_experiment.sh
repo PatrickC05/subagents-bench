@@ -31,7 +31,9 @@
 # within minutes of the outage), 130 interrupted.
 #
 # Each trial's outcome is printed as harbor finishes it (reward, exit reason,
-# wall clock, provider errors), so failures show while the job runs.
+# wall clock, provider errors), so failures show while the job runs. On macOS
+# the sweep runs under `caffeinate -i` so the machine does not idle-sleep
+# (and lose the network) mid-sweep; SB_NO_CAFFEINATE=1 turns that off.
 set -euo pipefail
 
 CALLER_PWD="$(pwd)"
@@ -119,9 +121,16 @@ elif [ "${SKIP_PREFLIGHT:-0}" != "1" ]; then
   fi
 fi
 
+# Keep macOS from idle-sleeping during the sweep: sleep drops the network,
+# and every model call and harbor job needs it (SB_NO_CAFFEINATE=1: don't).
+AWAKE=()
+if [ "$DRY_RUN" != "1" ] && [ "${SB_NO_CAFFEINATE:-0}" != "1" ] && command -v caffeinate >/dev/null 2>&1; then
+  AWAKE=(caffeinate -i)
+fi
+
 printf '\n== sweep: %s %s\n' "$SHOW_SPEC" "${SWEEP_ARGS[*]-}"
 set +e
-"$BIN" sweep "$SPEC" ${SWEEP_ARGS[@]+"${SWEEP_ARGS[@]}"}
+${AWAKE[@]+"${AWAKE[@]}"} "$BIN" sweep "$SPEC" ${SWEEP_ARGS[@]+"${SWEEP_ARGS[@]}"}
 rc=$?
 set -e
 case "$rc" in

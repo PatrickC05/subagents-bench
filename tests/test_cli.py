@@ -294,3 +294,24 @@ def test_setup_shows_why_the_dataset_download_failed(tmp_path, bash):
     assert "download failed (`harbor dataset download terminal-bench@2.0` failed (exit 1)" in fail[0]
     assert "network access to GitHub" in fail[0] and "SUBAGENTS_BENCH_DATASET_CACHE" in fail[0]
     assert "[PASS] unit tests" in res.stdout and "[PASS] SAIL_API_KEY" in res.stdout
+
+
+@pytest.mark.parametrize("bash", BASHES)
+def test_run_experiment_keeps_the_machine_awake_during_the_sweep(tmp_path, bash):
+    repo = _stub_repo(tmp_path)
+    fakebin = tmp_path / "fakebin"
+    fakebin.mkdir()
+    awake_log = tmp_path / "caffeinate.log"
+    (fakebin / "caffeinate").write_text(f'#!/bin/sh\necho "$@" >> {awake_log}\nshift\nexec "$@"\n')
+    (fakebin / "caffeinate").chmod(0o755)
+    path = f"{fakebin}:{os.environ['PATH']}"
+    res = _run(bash, repo, "run_experiment.sh", env={"PATH": path, "SKIP_PREFLIGHT": "1"})
+    assert res.returncode == 0, res.stderr
+    assert awake_log.read_text().split()[:2] == ["-i", str(repo / ".venv/bin/subagents-bench")]
+    assert _calls(repo) == [["sweep", str(repo / "configs/sweeps/pilot.yaml")]]
+    # Not for a dry run, and not when turned off.
+    awake_log.unlink()
+    assert _run(bash, repo, "run_experiment.sh", "--dry-run", env={"PATH": path}).returncode == 0
+    assert _run(bash, repo, "run_experiment.sh", env={"PATH": path, "SKIP_PREFLIGHT": "1",
+                                                      "SB_NO_CAFFEINATE": "1"}).returncode == 0
+    assert not awake_log.exists()

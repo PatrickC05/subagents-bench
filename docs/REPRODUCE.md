@@ -297,6 +297,12 @@ Other things that stop a sweep:
   later (after fixing the key, if a 401/403 caused it): the job is rerun. If
   the models answer again, the failure was transient: the sweep goes on,
   that job fails (exit code 1 at the end), and the next run retries it.
+  The sweep needs the network throughout: harbor looks the dataset up
+  online at the start of every job, and a job harbor cannot start is also
+  followed by the probe (no network: exit 4). Keep the machine online; on
+  macOS `run_experiment.sh` runs the sweep under `caffeinate -i` so it does
+  not idle-sleep (closing the lid still sleeps it; `SB_NO_CAFFEINATE=1`
+  turns this off).
 - **Repeated failures.** Three failed jobs in a row (Docker, harbor or
   provider trouble) stop the sweep.
 - **Another sweep on the same jobs dir.** A sweep holds
