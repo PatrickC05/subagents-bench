@@ -1603,3 +1603,19 @@ def test_oracle_job_through_real_harbor(tmp_path):
     assert info["mean_reward"] == 1.0 and info["failing_tasks"] == []
     st = sweep.job_status(spec.jobs_dir / sweep.ORACLE_JOB)
     assert st.complete and (st.n_total, st.n_completed, st.n_errored) == (1, 1, 0)
+
+
+def test_progress_lines_are_flushed_at_once(capsys, monkeypatch):
+    flushed = []
+    real_print = print
+
+    def spy(*a, **kw):
+        flushed.append(kw.get("flush"))
+        real_print(*a, **kw)
+
+    monkeypatch.setattr("builtins.print", spy)
+    sweep.say("[1/15] job: running")
+    assert flushed == [True] and "[1/15] job: running" in capsys.readouterr().out
+    import inspect
+    for fn in (sweep.run_sweep, sweep.run_preflight, sweep.run_oracle, sweep.print_plan):
+        assert inspect.signature(fn).parameters["out"].default is sweep.say

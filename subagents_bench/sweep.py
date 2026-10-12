@@ -108,6 +108,12 @@ EXIT_FAIL = 1
 EXIT_CONFIG = 2
 EXIT_BILLING = 3
 EXIT_PROVIDER = 4
+
+
+def say(line: str) -> None:
+    """Print a progress line at once (the sweep's output is often redirected
+    to a log file, where print would buffer it behind harbor's output)."""
+    print(line, flush=True)
 EXIT_INTERRUPTED = 130
 
 # Why a finished trial does not measure its condition, so its job is rerun
@@ -1931,7 +1937,7 @@ def print_plan(
     harbor: str | None,
     check: ResumeCheck | None = None,
     holder: dict[str, Any] | None = None,
-    out: Callable[[str], None] = print,
+    out: Callable[[str], None] = say,
 ) -> None:
     """The --dry-run report: settings, validation, resume checks, jobs +
     commands, estimate."""
@@ -2125,7 +2131,7 @@ def run_sweep(
     allow_code_change: bool = False,
     max_consecutive_failures: int = 3,
     dotenv_path: Path | None = None,
-    out: Callable[[str], None] = print,
+    out: Callable[[str], None] = say,
 ) -> int:
     """Run (or with ``dry_run`` only print) every planned job. Exit codes:
     0 all selected jobs complete, 1 some failed or still need a retry,
@@ -2512,7 +2518,7 @@ def _oracle_rewards(job_dir: Path, tasks: list[str]) -> tuple[dict[str, dict[str
 
 
 def run_oracle(
-    spec: SweepSpec, tasks: list[str], harbor: str, out: Callable[[str], None] = print, *, redo: bool = False,
+    spec: SweepSpec, tasks: list[str], harbor: str, out: Callable[[str], None] = say, *, redo: bool = False,
     pass_fds: tuple[int, ...] = (),
 ) -> tuple[bool, dict[str, Any]]:
     """``harbor run -a oracle`` on every task into ``<jobs_dir>/_oracle``.
@@ -2562,7 +2568,7 @@ def run_preflight(
     redo_oracle: bool = False,
     skip_llm: bool = False,
     dotenv_path: Path | None = None,
-    out: Callable[[str], None] = print,
+    out: Callable[[str], None] = say,
 ) -> int:
     """Run every check, write ``<jobs_dir>/preflight.json``, print a
     PASS/FAIL checklist. Returns 0 iff every required check passed, 2 if

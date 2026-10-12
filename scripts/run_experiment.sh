@@ -36,6 +36,8 @@ set -euo pipefail
 
 CALLER_PWD="$(pwd)"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Progress lines appear at once also when the output goes to a log file.
+export PYTHONUNBUFFERED=1
 
 usage() { awk 'NR > 1 && /^set -euo/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"; }
 
