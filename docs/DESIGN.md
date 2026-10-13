@@ -184,7 +184,8 @@ on 2026-10-11 (and 0 of 2 same-model ones), and in 0 of 20 subagent-condition
 episodes of the complete 2026-10-12 smoke sweep: it solved the tasks itself,
 so those conditions measured only the orchestrator. With the delegation hint
 it still delegated in 0 of 20 (the `smoke_hinted` sweep, issue #7): in 8 of
-them it weighed delegating and judged the task too simple. The three
+them it weighed delegating and judged the task too simple. On 3 medium tasks
+it delegated in 1 of 6 hinted episodes and 0 of 6 neutral ones. The three
 `manager_*_hard` conditions give it only the read-only tools and add one line
 to its prompt: everything that runs a command or changes the container must
 be delegated.

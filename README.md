@@ -155,7 +155,9 @@ valid, 13 solved, no reruns, $0.019, about 15 min.
 - **Telling it to delegate did not help.** With `subagent.delegation_hint`
   (its steps are scarce, subagent steps do not count) it still delegated in
   0 of 20 episodes. It read the hint: in 8 episodes it weighed delegating and
-  each time judged the task too simple to need it (issue #7).
+  each time judged the task too simple to need it (issue #7). On 3 medium
+  tasks (`hint_medium`, 2 rounds) it weighed delegating in 6 of 6 hinted
+  episodes but delegated in 1, which failed (0 of 6 without the hint).
 - **The manager conditions do delegate**: 6 of 6 episodes in both sweeps.
   They solved 3 of 6 on the earlier harness and 5 of 6 on this one
   (parallel 2 of 2, sequential 2 of 2, arbiter 1 of 2), at about 7-9 min and
