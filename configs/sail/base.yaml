@@ -30,6 +30,7 @@ subagent:
   max_dispatches: 15             # per episode; every arbiter candidate counts
   max_steps: 8
   max_output_chars: 12000
+  delegation_hint: false          # true: the prompt says its steps are scarce, subagents' free
   arbiter:
     n_candidates: 3
     debate_rounds: 1

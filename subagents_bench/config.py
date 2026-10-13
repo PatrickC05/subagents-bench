@@ -52,6 +52,7 @@ class SubagentConfig:
     max_dispatches: int = 15
     max_steps: int = 8
     max_output_chars: int = 12000
+    delegation_hint: bool = False  # tell the orchestrator its steps are scarce and subagents' steps free
     arbiter: ArbiterConfig = field(default_factory=ArbiterConfig)
 
 
@@ -127,6 +128,8 @@ def from_dict(raw: Any) -> ExperimentConfig:
     ):
         if value not in choices:
             raise ConfigError(f"{where}: {value!r} is not one of {', '.join(choices)}")
+    if not isinstance(cfg.subagent.delegation_hint, bool):
+        raise ConfigError(f"subagent.delegation_hint: expected true or false, got {cfg.subagent.delegation_hint!r}")
     bad = sorted(set(cfg.tools.orchestrator_tools or []) - set(TOOL_NAMES))
     if bad:
         raise ConfigError(f"tools.orchestrator_tools: unknown tool(s) {bad}; choose from {list(TOOL_NAMES)}")

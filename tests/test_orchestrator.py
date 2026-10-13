@@ -5,7 +5,10 @@ from __future__ import annotations
 import threading
 import time
 
+import pytest
+
 from fakes import ORCH, SUB, FakeFactory, Reply, assert_consistent, make_config, run_local, tc
+from subagents_bench.config import ConfigError
 from subagents_bench.llm import BillingError, ContextLengthError, ProviderError
 from subagents_bench.prompts import LAST_STEP_NOTE, LENGTH_CUTOFF_NOTE, LENGTH_CUTOFF_REPLY
 
@@ -70,7 +73,19 @@ def test_default_prompt_is_neutral_about_delegation(tmp_path):
     _, _, f = go(tmp_path, {ORCH: [Reply("", [tc("finish")])]})
     system = f[ORCH].requests[0]["system"]
     assert "separate model instances" in system and "one spawn_subagents call uses one of your steps" in system.lower()
-    assert "must be delegated" not in system and SUB not in system
+    assert "must be delegated" not in system and SUB not in system and "scarce" not in system
+
+
+def test_delegation_hint_states_the_step_trade_off(tmp_path):
+    _, _, f = go(tmp_path, {ORCH: [Reply("", [tc("finish")])]}, subagent={"delegation_hint": True})
+    system = f[ORCH].requests[0]["system"]
+    assert "Your steps are the scarce resource: you have 5," in system
+    assert system.index("the subagents' steps do not count.\n\nYour steps") < system.index("\n\nStrategy:")
+    _, _, f = go(tmp_path / "single", {ORCH: [Reply("", [tc("finish")])]}, topology="single",
+                 subagent={"delegation_hint": True})
+    assert "scarce" not in f[ORCH].requests[0]["system"]
+    with pytest.raises(ConfigError, match="delegation_hint"):
+        make_config(subagent={"delegation_hint": "yes"})
 
 
 def test_parallel_spawn_runs_concurrently_within_the_grant(tmp_path):

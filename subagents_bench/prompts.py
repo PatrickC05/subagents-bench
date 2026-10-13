@@ -2,7 +2,8 @@
 
 The orchestrator's description of subagents never names the subagent model ("separate
 model instances"), so the same-model control reads the same text, and the default
-(all-tools) prompt never asks it to delegate; the manager prompt says it must.
+(all-tools) prompt never asks it to delegate; the manager prompt says it must, and
+``subagent.delegation_hint`` adds a paragraph stating the step trade-off.
 """
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ instruction, not your conversation or the task, so make every instruction self-c
 (goal, paths, commands, constraints, what to report). Each runs at most {max_steps} steps and \
 returns a written report; you get all reports as the result of the call. One spawn_subagents \
 call uses one of your steps, like any other tool call; the subagents' steps do not count.
-
+{hint}
 Strategy: {strategy}
 
 Scope: {scope}
@@ -67,6 +68,10 @@ STRATEGY = {
                "arbiter model compares their reports{diffs} and picks the best; if it is not confident, the "
                "candidates first read each other's reports and revise theirs. You get the winning report.{copy}",
 }
+DELEGATION_HINT = ("\nYour steps are the scarce resource: you have {steps}, and most tasks need more work than "
+                   "that. Subagent steps do not count against yours, so delegate as much of the work as their scope "
+                   "(below) allows and keep your own steps for planning, combining their reports and checking the "
+                   "result.\n")
 ARBITER_COPY = (" Each candidate edits a private copy of the working directory and only the winner's changes "
                 "are applied to it; changes outside the working directory (/etc, packages, services) are made "
                 "directly by every candidate.")
@@ -100,6 +105,7 @@ def orchestrator_prompt(cfg: ExperimentConfig, workdir: str) -> str:
     hard = s.scope == "hard"
     return text + SUBAGENTS.format(
         max_steps=s.max_steps,
+        hint=DELEGATION_HINT.format(steps=b.orchestrator_steps) if s.delegation_hint else "",
         strategy=STRATEGY[s.strategy].format(n=n, diffs=" (and their file changes)" if hard else "",
                                              copy=ARBITER_COPY if hard else ""),
         scope=SCOPE[s.scope],
