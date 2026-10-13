@@ -74,8 +74,9 @@ def judgement(winner, confidence, agreement):
                          rationale="r")], prompt_tokens=2000, completion_tokens=100)
 
 
-def trial(jobs: Path, job: str, task: str, cfg, scripts, reward=None, exception=None) -> Path:
-    """One real episode in ``<jobs>/<job>/<task>__x/agent`` plus harbor's config.json and result.json."""
+def trial(jobs: Path, job: str, task: str, cfg, scripts, reward=None, exception=None, rewards=None) -> Path:
+    """One real episode in ``<jobs>/<job>/<task>__x/agent`` plus harbor's config.json and result.json
+    (``rewards``: the grader's other fields, as SWE-sweep's verifier writes them)."""
     d = jobs / job / f"{task}__x"
     work = jobs.parent / "work" / job / task
     work.mkdir(parents=True)
@@ -91,7 +92,7 @@ def trial(jobs: Path, job: str, task: str, cfg, scripts, reward=None, exception=
     exc = {"exception_type": exception, "exception_message": "x", "exception_traceback": "", "occurred_at": iso(t1)}
     (d / "result.json").write_text(json.dumps({
         "task_name": task, "trial_name": d.name, "exception_info": exc if exception else None,
-        "verifier_result": None if reward is None else {"rewards": {"reward": reward}},
+        "verifier_result": None if reward is None else {"rewards": {"reward": reward, **(rewards or {})}},
         "started_at": iso(t0 - 2), "finished_at": iso(t1 + 2),
         "environment_setup": {"started_at": iso(t0 - 2), "finished_at": iso(t0 - 1)},
         "agent_setup": {"started_at": iso(t0 - 1), "finished_at": iso(t0)},
@@ -207,6 +208,18 @@ def test_validity_of_timeout_and_provider_failure(analysis):
     ({"exit_reason": "cancelled"}, {"exception_info": {"exception_type": "AgentTimeoutError"},
                                     "agent_execution": {"started_at": "2026-10-12T16:00:00Z"},
                                     "verifier": {"started_at": "2026-10-12T16:30:00Z"}}, None),
+    ({"exit_reason": "finished"}, {"verifier_result": {"rewards": {"reward": 0.0, "grader_failed": 1.0}},
+                                   "verifier": {"started_at": "2026-10-12T16:30:00Z"}}, "grader_failed"),
+    # after the verifier started: a separate verifier's failure is infrastructure, a shared one's an outcome
+    ({"exit_reason": "finished"}, {"exception_info": {"exception_type": "EnvironmentStartTimeoutError"},
+                                   "verifier_environment_mode": "separate",
+                                   "verifier": {"started_at": "2026-10-12T16:30:00Z"}}, "verifier_failed"),
+    ({"exit_reason": "finished"}, {"exception_info": {"exception_type": "RewardFileNotFoundError"},
+                                   "verifier_environment_mode": "shared",
+                                   "verifier": {"started_at": "2026-10-12T16:30:00Z"}}, None),
+    ({"exit_reason": "cancelled"}, {"exception_info": {"exception_type": "AgentTimeoutError"},
+                                    "verifier_environment_mode": "separate", "verifier_result": {"rewards": {"reward": 0}},
+                                    "verifier": {"started_at": "2026-10-12T16:30:00Z"}}, None),
 ])
 def test_invalid_reason(tmp_path, episode, result, reason):
     (tmp_path / "agent").mkdir()
@@ -232,6 +245,43 @@ def test_conditions_rates_and_intervals(analysis):
     assert c.loc["gemma31b_arbiter_hard", "cost_total_mean"] == pytest.approx(v["cost_total"].mean())
     assert c.loc["gemma31b_arbiter_hard", "cost_per_solve"] == pytest.approx(v["cost_total"].sum())
     assert c.loc["single_5step", "delegated_frac"] == 0 and c.loc["single_5step", "resolve_rate"] == 0.5
+
+
+def test_bugs_fixed_and_regressions_from_swe_sweep_rewards(tmp_path, capsys):
+    """SWE-sweep's grader: reward = bugs fixed / bugs (rounded to 4 places), 0 on a regression; a
+    grader failure is invalid. Bugs fixed are the grader's exact count, 0 on a regression. A task's
+    bugs come from the sweep's tasks.json: a patch that breaks the build gets n_subtasks 0 from the
+    grader, yet its task's bugs stay in the denominator. A valid trial without a reward (a verifier
+    in the agent's container failed after it started) is reward 0 with no bug fixed."""
+    jobs, job = tmp_path / "jobs" / "ss", "ss__r1__single_5step"
+    single, g = make_config(name="single_5step", topology="single"), {"n_subtasks": 14.0, "visible_ok": 1.0}
+    trial(jobs, job, "swe-sweep__goawk", single, models(0), reward=0.3571, rewards={**g, "n_resolved": 5.0})
+    trial(jobs, job, "swe-sweep__echo", single, models(0), reward=0.0,
+          rewards={**g, "n_subtasks": 6.0, "n_resolved": 2.0, "visible_ok": 0.0})
+    trial(jobs, job, "swe-sweep__gin", single, models(0), reward=0.0, rewards={**g, "n_subtasks": 11.0, "grader_failed": 1.0})
+    trial(jobs, job, "swe-sweep__pendulum", single, models(0), reward=0.0,
+          rewards={"n_subtasks": 0.0, "visible_ok": 0.0, "agent_build_ok": 0.0, "grader_failed": 0.0})
+    unscored = trial(jobs, job, "swe-sweep__click", single, models(0), exception="RewardFileNotFoundError")
+    res = json.loads((unscored / "result.json").read_text())
+    res.update(verifier={"started_at": res["finished_at"]}, verifier_environment_mode="shared")
+    (unscored / "result.json").write_text(json.dumps(res))
+    bugs = {"swe-sweep__goawk": 14, "swe-sweep__echo": 6, "swe-sweep__gin": 11, "swe-sweep__pendulum": 9,
+            "swe-sweep__click": 13}
+    (jobs / "tasks.json").write_text(json.dumps({"n_subtasks": bugs}))
+    pricing = tmp_path / "pricing.yaml"
+    pricing.write_text(yaml.safe_dump({"fake": PRICES}))
+    assert analyze([str(jobs), "--out", str(tmp_path / "out"), "--pricing", str(pricing), "--scheme", "fake"]) == 0
+    assert "bug_fix_rate" in capsys.readouterr().out
+    eps = pd.read_csv(tmp_path / "out" / "episodes.csv").set_index("task_name")
+    assert eps.loc["swe-sweep__goawk", ["n_subtasks", "bugs_fixed", "regressed", "resolved"]].tolist() == [14, 5, 0, 0]
+    assert eps.loc["swe-sweep__echo", ["bugs_fixed", "regressed"]].tolist() == [0.0, 1]
+    assert eps.loc["swe-sweep__pendulum", ["n_subtasks", "bugs_fixed", "regressed"]].tolist() == [9, 0.0, 1]
+    assert eps.loc["swe-sweep__click", ["valid", "reward", "resolved", "n_subtasks", "bugs_fixed"]].tolist() == [
+        True, 0, 0, 13, 0]
+    assert (eps.loc["swe-sweep__gin", "valid"], eps.loc["swe-sweep__gin", "invalid_reason"]) == (False, "grader_failed")
+    c = pd.read_csv(tmp_path / "out" / "conditions.csv").set_index("condition").loc["single_5step"]
+    assert c[["n_valid", "n_resolved", "n_bugs", "bugs_fixed", "n_regressed"]].tolist() == [4, 0, 42, 5, 2]
+    assert (c["bug_fix_rate"], c["reward_mean"]) == pytest.approx((5 / 42, 0.3571 / 4))
 
 
 def test_stats():

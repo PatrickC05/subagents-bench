@@ -1,7 +1,8 @@
 """Find the harbor trials of sweep jobs dirs and load their ``result.json`` and episode records.
 
 Layout: ``<jobs_dir>/<sweep>__r<round>__<condition>/<trial>/{config.json, result.json, agent/}``.
-Dirs starting with ``_`` (moved-aside partial jobs, the oracle run) or ``.`` are skipped.
+Dirs starting with ``_`` (moved-aside partial jobs, the oracle run) or ``.`` are skipped. A task's
+bugs (SWE-sweep) come from ``<jobs_dir>/tasks.json``, which the sweep writes from the task dirs.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ class Trial:
     result: dict | None  # harbor's result.json; None while the trial runs
     episode: dict | None  # agent/episode.json; None if the agent never started
     records: dict[str, list[dict]]  # kind -> records (empty lists without an episode)
+    n_subtasks: int | None = None  # the task's bugs (SWE-sweep), from the sweep's tasks.json
 
     @property
     def task_name(self) -> str:
@@ -46,7 +48,7 @@ def load_trial(trial_dir: Path) -> Trial:
     job = trial_dir.parent
     m = JOB_RE.match(job.name)
     episode = _json(trial_dir / "agent" / "episode.json")
-    return Trial(
+    t = Trial(
         dir=trial_dir,
         sweep=m["sweep"] if m else job.parent.name,
         round=int(m["round"]) if m else None,
@@ -55,6 +57,8 @@ def load_trial(trial_dir: Path) -> Trial:
         episode=episode,
         records={k: _jsonl(trial_dir / "agent" / f"{k}.jsonl") for k in RECORD_KINDS},
     )
+    t.n_subtasks = ((_json(job.parent / "tasks.json") or {}).get("n_subtasks") or {}).get(t.task_name)
+    return t
 
 
 def load_trials(jobs_dir: str | Path) -> list[Trial]:

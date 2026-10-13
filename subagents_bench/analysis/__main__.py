@@ -16,6 +16,7 @@ from .pricing import DEFAULT_PRICING, load_prices
 
 SHOW = ["condition", "n", "n_valid", "n_resolved", "resolve_rate", "resolve_ci_lo", "resolve_ci_hi", "n_delegated",
         "cost_total_mean", "wall_clock_sec_mean"]
+SHOW_BUGS = ["n_bugs", "bugs_fixed", "bug_fix_rate", "n_regressed"]  # when a task reported its bugs (SWE-sweep)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -36,7 +37,9 @@ def main(argv: list[str] | None = None) -> int:
     tables = build_tables(trials, load_prices(args.pricing, args.scheme))
     summ = summary(tables, [str(d) for d in args.jobs_dirs], {"file": str(args.pricing), "scheme": args.scheme})
     write(tables, summ, args.out)
-    print(tables["conditions"][SHOW].to_string(index=False, float_format=lambda x: f"{x:.3g}"))
+    conds = tables["conditions"]
+    print(conds[SHOW + (SHOW_BUGS if conds["n_bugs"].sum() else [])].to_string(index=False,
+                                                                                float_format=lambda x: f"{x:.3g}"))
     print(f"\n{summ['n_valid']} of {summ['n_trials']} trials valid; invalid: {summ['invalid_reasons'] or 'none'}")
     cp = summ["critical_path"]
     overhead = "n/a" if cp["mean_overhead_sec"] is None else f"{cp['mean_overhead_sec']:.3g} s"

@@ -1,15 +1,20 @@
 """Sweep launcher: one ``harbor run`` job per (round, condition) of a sweep spec, resumable.
 
-A spec (``configs/sweeps/*.yaml``) names a base config, the dataset and tasks, the rounds, the
-harbor settings and the conditions (overrides deep-merged onto the base); ``extends: <spec>``
-merges it over another spec. Relative paths resolve against the repository root (the spec's
-nearest ancestor holding a pyproject.toml). Exit codes: 0 done, 1 jobs failed or need a retry,
-2 spec or config error, 3 billing error, 4 provider outage, 130 interrupted.
+A spec (``configs/sweeps/*.yaml``) names a base config, the dataset (a harbor registry name, or
+``dataset_path``: a local directory of task dirs, passed as ``harbor run -p``, with ``platform``
+to pin its Dockerfiles' ``FROM`` lines in a copy under the jobs dir) and tasks, the rounds, the
+harbor settings (``n_concurrent``, ``agent_timeout_multiplier``, ``extra_args`` for every harbor
+run), sweep-wide ``overrides`` (deep-merged onto the base before the conditions, e.g. the step
+budget) and the conditions (overrides deep-merged onto that); ``extends: <spec>`` merges it over
+another spec. Relative paths resolve against the repository root (the spec's nearest ancestor
+holding a pyproject.toml). Exit codes: 0 done, 1 jobs failed or need a retry, 2 spec or config
+error, 3 billing error, 4 provider outage, 130 interrupted.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import os
 import random
@@ -31,9 +36,10 @@ from .llm import Message, SailClient
 from .records import git_commit
 
 AGENT = "subagents_bench.harness.harbor_agent:OrchestratorAgent"
-SPEC_KEYS = {"extends", "name", "base", "dataset", "tasks", "rounds", "order_seed", "harbor", "conditions",
-             "jobs_dir"}
-HARBOR_KEYS = {"n_concurrent", "agent_timeout_multiplier"}
+SPEC_KEYS = {"extends", "name", "base", "dataset", "dataset_path", "platform", "tasks", "rounds", "order_seed",
+             "harbor", "overrides", "conditions", "jobs_dir"}
+HARBOR_KEYS = {"n_concurrent", "agent_timeout_multiplier", "extra_args"}
+FROM_RE = re.compile(r"^FROM (?!--platform)", re.M)  # a Dockerfile FROM without a platform (instructions in upper case)
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")  # job names are <sweep>__r<k>__<condition>
 POLL_SEC = 10.0  # live trial lines
 STOP_GRACE_SEC = 120.0  # on SIGINT harbor cancels its trials and removes their containers
@@ -50,12 +56,15 @@ def say(line: str) -> None:
 class Spec:
     name: str
     root: Path
-    dataset: str
+    dataset: str | None  # harbor registry name@version (``-d``), or None with a dataset_path
+    dataset_path: Path | None  # a local directory of task dirs (``-p``)
+    platform: str | None  # pin the tasks' Dockerfiles to this platform, in a copy (stage_tasks)
     tasks: list[str]
     rounds: int
     order_seed: int
     n_concurrent: int
     timeout_multiplier: float
+    extra_args: list[str]  # appended to every harbor run (the oracle's too)
     jobs_dir: Path
     configs: dict[str, ExperimentConfig]  # condition -> resolved config
     raw: dict[str, Any]  # the spec after `extends`
@@ -92,14 +101,23 @@ def load_spec(path: str | os.PathLike) -> Spec:
         raise ConfigError(f"{path}: unknown key(s): {', '.join(unknown)}")
     try:
         name, conditions, tasks, rounds = raw["name"], raw["conditions"], raw["tasks"], raw["rounds"]
-        base = _yaml(root / raw["base"])
-        spec = Spec(name, root, raw["dataset"], tasks, rounds, raw["order_seed"], harbor["n_concurrent"],
-                    harbor["agent_timeout_multiplier"], root / raw.get("jobs_dir", f"jobs/{name}"), {}, raw)
+        base = deep_merge(_yaml(root / raw["base"]), raw.get("overrides") or {})
+        dataset, dataset_path, platform = raw.get("dataset"), raw.get("dataset_path"), raw.get("platform")
+        extra_args = harbor.get("extra_args") or []
+        spec = Spec(name, root, dataset, root / dataset_path if dataset_path else None, platform, tasks, rounds,
+                    raw["order_seed"], harbor["n_concurrent"], harbor["agent_timeout_multiplier"], extra_args,
+                    root / raw.get("jobs_dir", f"jobs/{name}"), {}, raw)
     except KeyError as e:
         raise ConfigError(f"{path}: missing key {e}") from None
     if not (isinstance(tasks, list) and tasks and isinstance(conditions, dict) and conditions
             and isinstance(rounds, int) and rounds >= 1):
         raise ConfigError(f"{path}: tasks and conditions must be non-empty, rounds an integer >= 1")
+    if bool(dataset) == bool(dataset_path):
+        raise ConfigError(f"{path}: set exactly one of dataset (a harbor registry name) and dataset_path (a directory)")
+    if platform is not None and not (isinstance(platform, str) and platform and dataset_path):
+        raise ConfigError(f"{path}: platform must be a string like linux/amd64 and needs dataset_path (images built here)")
+    if not (isinstance(extra_args, list) and all(isinstance(a, str) for a in extra_args)):
+        raise ConfigError(f"{path}: harbor.extra_args must be a list of strings")
     bad = [n for n in (name, *conditions) if not NAME_RE.fullmatch(str(n)) or "__" in str(n)]
     if bad:
         raise ConfigError(f"{path}: invalid name(s) {bad}: use letters, digits, '_', '.', '-' but not '__'")
@@ -138,15 +156,69 @@ def _rel(p: Path, root: Path) -> str:
     return str(p.relative_to(root)) if p.is_relative_to(root) else str(p)
 
 
+def task_root(spec: Spec) -> Path | None:
+    """The task dirs harbor runs: ``dataset_path``, or its pinned copy when ``platform`` is set."""
+    return spec.jobs_dir / "tasks" if spec.platform else spec.dataset_path
+
+
 def harbor_cmd(spec: Spec, job: str, agent: str = AGENT) -> list[str]:
-    cmd = [harbor_bin() or "harbor", "run", "-d", spec.dataset]
+    source = ["-p", _rel(task_root(spec), spec.root)] if spec.dataset_path else ["-d", spec.dataset]
+    cmd = [harbor_bin() or "harbor", "run", *source]
     for t in spec.tasks:
         cmd += ["-i", t]
     cmd += ["-a", agent, "-e", "docker", "-n", str(spec.n_concurrent), "-k", "1",
             "-o", _rel(spec.jobs_dir, spec.root), "--job-name", job]
     if agent == AGENT:
         cmd += ["--agent-timeout-multiplier", str(spec.timeout_multiplier)]
-    return cmd + ["-y", "-q"]
+    return cmd + spec.extra_args + ["-y", "-q"]
+
+
+def pin_platform(dockerfile: str, platform: str) -> str:
+    """``FROM --platform=<platform> ...`` on every FROM that has no platform (idempotent)."""
+    return FROM_RE.sub(f"FROM --platform={platform} ", dockerfile)
+
+
+def _tree_hash(d: Path) -> str:
+    h = hashlib.sha256()
+    for p in sorted(x for x in d.rglob("*") if x.is_file()):
+        h.update(f"{p.relative_to(d)}\0{p.stat().st_size}\0".encode())
+        h.update(p.read_bytes())
+    return h.hexdigest()
+
+
+def n_subtasks(task: Path) -> int | None:
+    """A SWE-sweep task's bugs: the subtasks of ``tests/swesweep_eval.json``, all of which its
+    grader grades (it reports none when the agent's patch breaks the build); else None."""
+    subtasks = _json(task / "tests" / "swesweep_eval.json").get("subtasks")
+    return len(subtasks) if isinstance(subtasks, list) else None
+
+
+def stage_tasks(spec: Spec) -> None:
+    """For a local dataset, write ``<jobs_dir>/tasks.json``: source dir, its git commit and
+    dirtiness, and per task a hash of the dir harbor runs and its bugs (:func:`n_subtasks`, the
+    analysis's denominator). With ``platform`` set, first copy the tasks to ``<jobs_dir>/tasks/``
+    with every ``FROM`` of their ``environment/Dockerfile`` and ``tests/Dockerfile`` pinned to it.
+    A rerun rewrites identical files. Pinning in the Dockerfiles is the one way that reaches
+    harbor's separate verifier image: a compose overlay does not, and a global
+    DOCKER_DEFAULT_PLATFORM breaks harbor's egress-control probe (``docker run`` of a multi-arch
+    digest fails when the other variant is in the image store), which rejects the tasks'
+    ``no-network`` phases."""
+    if not spec.dataset_path:
+        return
+    dest, src = task_root(spec), spec.dataset_path
+    commit = _output(["git", "-C", str(src), "rev-parse", "HEAD"])
+    manifest = {"source": str(src), "git_commit": commit, "platform": spec.platform, "tasks": {}, "n_subtasks": {},
+                "git_dirty": bool(_output(["git", "-C", str(src), "status", "--porcelain", "."])) if commit else None}
+    for t in spec.tasks:
+        if spec.platform:
+            if (dest / t).exists():
+                shutil.rmtree(dest / t)
+            shutil.copytree(src / t, dest / t)
+            for df in (dest / t / "environment" / "Dockerfile", dest / t / "tests" / "Dockerfile"):
+                if df.is_file():
+                    df.write_text(pin_platform(df.read_text(), spec.platform))
+        manifest["tasks"][t], manifest["n_subtasks"][t] = _tree_hash(dest / t), n_subtasks(dest / t)
+    (spec.jobs_dir / "tasks.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -163,7 +235,11 @@ def _trials(job_dir: Path) -> list[Path]:
 
 def retry_reason(trial: Path) -> str | None:
     """Why a finished trial does not measure its condition (so its job is rerun), or None.
-    An agent timeout is an outcome: harbor still runs the verifier after it."""
+    An agent timeout is an outcome: harbor still runs the verifier after it. So is an exception
+    after the verifier started in the agent's container (Terminal-Bench): the agent can leave it
+    broken. A verifier in its own fresh container (harbor's ``verifier_environment_mode``
+    ``separate``, SWE-sweep) the agent cannot break: an exception there without a reward (its
+    image failed to build or start, it timed out, or it wrote no reward file) is infrastructure."""
     res, ep = _json(trial / "result.json"), _json(trial / "agent" / "episode.json")
     exc = (res.get("exception_info") or {}).get("exception_type")
     if ep.get("exit_reason") == "billing_error" or exc == "BillingError":
@@ -172,6 +248,10 @@ def retry_reason(trial: Path) -> str | None:
         return "provider"
     if exc and not (res.get("verifier") or {}).get("started_at"):
         return f"harbor {exc}"  # environment/setup failure, or the agent crashed before the verifier
+    if rewards(res).get("grader_failed"):
+        return "grader"  # SWE-sweep's verifier could not grade (its own setup failed): not a 0
+    if exc and _reward(res) is None and res.get("verifier_environment_mode") == "separate":
+        return "verifier"  # SWE-sweep's separate verifier failed before it graded: not a 0
     return None
 
 
@@ -325,6 +405,7 @@ def run(spec: Spec, jobs: list[tuple[int, str]], dry_run: bool = False) -> int:
     configs_dir.mkdir(parents=True, exist_ok=True)
     for cond, cfg in spec.configs.items():
         (configs_dir / f"{cond}.yaml").write_text(yaml.safe_dump(cfg.to_dict(), sort_keys=False))
+    stage_tasks(spec)
     t_start = time.time()
     _write_status(spec, "running", t_start)
     models = sweep_models(spec)
@@ -397,6 +478,10 @@ def preflight(spec: Spec, oracle: bool = False) -> int:
           else "not found: run scripts/setup.sh")
     check("SAIL_API_KEY", bool(os.environ.get("SAIL_API_KEY")), "set" if os.environ.get("SAIL_API_KEY")
           else "missing: add it to .env")
+    if spec.dataset_path is not None:  # a registry dataset is resolved by harbor itself
+        missing = [t for t in spec.tasks if not (spec.dataset_path / t / "task.toml").is_file()]
+        check("dataset_path", not missing, f"{len(spec.tasks)} tasks under {spec.dataset_path}" if not missing
+              else f"no task.toml under {spec.dataset_path} for: {', '.join(missing)}")
     for m in sweep_models(spec):
         t0 = time.time()
         err = ping(m)
@@ -408,6 +493,8 @@ def preflight(spec: Spec, oracle: bool = False) -> int:
         else:
             if job_dir.exists():
                 say(f"  oracle: earlier job moved to {_rel(move_aside(job_dir, spec.jobs_dir), spec.root)}")
+            spec.jobs_dir.mkdir(parents=True, exist_ok=True)
+            stage_tasks(spec)
             cmd = harbor_cmd(spec, "_oracle", agent="oracle")
             say(f"  oracle: $ {shlex.join(cmd)}")
             run_job(cmd, dict(os.environ), spec.root)
@@ -423,8 +510,15 @@ def _unsolved(spec: Spec, job_dir: Path) -> list[str]:
     return [t for t in spec.tasks if t not in solved]
 
 
+def rewards(res: dict[str, Any]) -> dict[str, Any]:
+    """The verifier's reward file: ``reward`` (Terminal-Bench: 1 or 0; SWE-sweep: the fraction of
+    bugs fixed, 0 on a regression) and, from SWE-sweep's grader, ``n_resolved``, ``visible_ok``,
+    ``grader_failed`` among others."""
+    return (res.get("verifier_result") or {}).get("rewards") or {}
+
+
 def _reward(res: dict[str, Any]) -> Any:
-    return ((res.get("verifier_result") or {}).get("rewards") or {}).get("reward")
+    return rewards(res).get("reward")
 
 
 def _output(cmd: list[str]) -> str | None:

@@ -1,0 +1,32 @@
+# The delegation hint on SWE-sweep, where a whole repository is far more than 5 steps of work:
+# gemma31b_parallel_hard with the neutral prompt and with `subagent.delegation_hint: true`, on 3 of
+# swe_sweep.yaml's repositories x 2 rounds = 4 harbor jobs, 12 episodes. On Terminal-Bench the
+# neutral prompt delegated in 0 of 64 episodes and the hinted one in 1 of 26 (issue #7).
+#   scripts/run_experiment.sh configs/sweeps/swe_hint.yaml
+# Everything but the tasks, rounds and conditions is swe_sweep.yaml's (`extends` would also merge
+# in its 15 conditions); tests/test_sweep.py checks both conditions against it.
+name: swe_hint
+base: configs/sail/base.yaml
+dataset_path: ../class-6-swe-sweep/swe-sweep/tasks
+platform: linux/amd64
+tasks:                               # language, bugs
+  - swe-sweep__goawk                 # Go, 14
+  - swe-sweep__click                 # Python, 13
+  - swe-sweep__svgo                  # JavaScript, 11
+rounds: 2
+order_seed: 0
+
+overrides:
+  budget:
+    orchestrator_steps: 5
+    command_timeout_sec: 600
+    max_command_timeout_sec: 1800
+
+harbor:
+  n_concurrent: 4
+  agent_timeout_multiplier: 0.0833
+  extra_args: [--override-cpus, "3", --override-memory-mb, "7000"]
+
+conditions:
+  gemma31b_parallel_hard: {subagent: {strategy: parallel, scope: hard}}
+  hinted_parallel_hard: {subagent: {delegation_hint: true, strategy: parallel, scope: hard}}

@@ -13,7 +13,8 @@ on **Terminal-Bench 2.0** and **ExploitBench** (tasks with real, runnable
 scoring), and reports resolve rate against **tokens** and **wall-clock time** as
 Pareto curves.
 
-This version runs Terminal-Bench 2.0 only; the ExploitBench adapter is not part of it.
+This version runs Terminal-Bench 2.0 and [SWE-sweep](#swe-sweep); the
+ExploitBench adapter is not part of it.
 
 ## The experiment
 
@@ -94,9 +95,10 @@ and runs nothing. On macOS the sweep runs under `caffeinate -i` (turn off with
 The sweep is resumable: run the same command again after any stop. Complete
 jobs are skipped; an unfinished job, or one with a trial that did not measure
 its condition (provider failure, billing error, harbor or agent crash before
-the verifier), is moved to `jobs/<sweep>/_partial/` and rerun. An agent
-timeout is an outcome, not a retry. On a provider failure the sweep sends one
-tiny request to every model and stops with exit 4 if one still fails.
+the verifier, or on SWE-sweep a verifier that could not grade), is moved to
+`jobs/<sweep>/_partial/` and rerun. An agent timeout is an outcome, not a
+retry. On a provider failure the sweep sends one tiny request to every
+model and stops with exit 4 if one still fails.
 Ctrl-C gives harbor up to two minutes to remove its containers.
 
 `analyze.sh [JOBS_DIR...]` aggregates the jobs (several dirs are one data
@@ -114,6 +116,53 @@ resolved config, and one harbor trial by hand is
 SUBAGENTS_BENCH_CONFIG=configs/sail/base.yaml .venv/bin/harbor run -d terminal-bench@2.0 \
   -i fix-git -a subagents_bench.harness.harbor_agent:OrchestratorAgent -e docker -o jobs/manual -y
 ```
+
+## SWE-sweep
+
+[SWE-sweep](https://github.com/facebookresearch/swe-sweep) (Lieret et al.
+2026) hands the agent a whole repository with no issue text: find and fix as
+many bugs as you can without breaking a passing test. A separate verifier
+container runs hidden tests per bug; the reward is the fraction of the task's
+bugs fixed, 0 if a visible test regressed. It is not on the harbor registry:
+clone it next to this repository (`git clone
+https://github.com/facebookresearch/swe-sweep ../class-6-swe-sweep/swe-sweep`,
+or set `dataset_path` in the spec to your clone's `tasks/`) and run
+
+```bash
+scripts/run_experiment.sh configs/sweeps/swe_sweep.yaml
+```
+
+[`configs/sweeps/swe_sweep.yaml`](configs/sweeps/swe_sweep.yaml) is the
+pilot's 15 conditions on 10 small repositories (Go, Python, JavaScript, C;
+6-14 bugs each, 106 in all) x 3 rounds. It copies the 10 tasks to
+`jobs/swe_sweep/tasks/` with every Dockerfile `FROM` pinned to `linux/amd64`
+(the verifier image ships an x86-64 Python; `jobs/swe_sweep/tasks.json`
+records the clone's commit, a hash per task and its bugs) and passes that
+copy to harbor with `-p`, caps each container at 3 CPUs and 7 GB (the tasks
+ask for 16 and 64 GB), gives commands 600 s (test suites run emulated) and
+the agent one hour. The orchestrator's step budget is 5, as in the pilot
+(the spec's `overrides.budget.orchestrator_steps`), and `single_matched`
+keeps the 40 (5 x 8 subagent steps) that `pilot.yaml` gives it: a
+condition's own setting beats the overrides. A larger budget therefore takes
+two edits, `orchestrator_steps` and `single_matched`'s matched budget under
+`conditions:`, both shown in the spec's comments. The analysis adds the
+bugs fixed (the grader's count, 0 on a regression) and regressions per
+episode and the micro-averaged `bug_fix_rate` per condition, SWE-sweep's own
+metric; `resolved` keeps meaning every bug of the task fixed. Expect 5-20
+minutes and about ten times the tokens of a Terminal-Bench episode, and an
+image build of a few minutes per task the first time (1-2.5 GB each).
+
+The first agent run
+([`configs/sweeps/swe_hint.yaml`](configs/sweeps/swe_hint.yaml),
+2026-10-13: `gemma31b_parallel_hard` with the neutral and the hinted prompt
+on goawk, click and svgo x 2 rounds, 12 of 12 trials valid, $0.45) is the
+opposite of Terminal-Bench: the orchestrator delegated in every episode, 6
+of 6 with each prompt, but no agent changed a source file and no bug was
+fixed (0 of 152). The 82 Gemma subagents spent about two thirds of their
+8 steps reading code (one tool call per step, 80 used all 8), and the
+orchestrators delegated at step 3-5, with 0-2 steps left. There is no
+single-agent baseline on these repositories yet
+([issue #7](https://github.com/PatrickC05/subagents-bench/issues/7)).
 
 ## Where data and figures land
 
@@ -251,7 +300,7 @@ subagents_bench/
   sweep.py, cli.py    sweep specs, preflight, harbor jobs; `subagents-bench`
   analysis/           validity, cost, critical path, tables, delegation gate
   plots/              the eight figures
-configs/              sail/base.yaml, sweeps/{pilot,smoke}.yaml, pricing.yaml
+configs/              sail/base.yaml, sweeps/{pilot,smoke,swe_sweep}.yaml, pricing.yaml
 scripts/              setup.sh, run_experiment.sh, analyze.sh
 tests/                offline tests (fake models, fake harbor); RUN_DOCKER=1, RUN_LIVE=1 opt in
 ```

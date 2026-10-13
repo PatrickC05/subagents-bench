@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -140,6 +141,128 @@ def test_hint_specs_match_the_pilot_but_for_the_hint():
             assert {**cfg.to_dict(), "name": twin} == pilot.configs[twin].to_dict()
 
 
+def test_swe_sweep_spec(capsys):
+    s, pilot = sweep.load_spec(REPO / "configs/sweeps/swe_sweep.yaml"), sweep.load_spec(REPO / "configs/sweeps/pilot.yaml")
+    assert s.dataset is None and s.dataset_path == REPO / "../class-6-swe-sweep/swe-sweep/tasks"
+    assert len(s.tasks) == 10 and all(t.startswith("swe-sweep__") for t in s.tasks) and len(sweep.plan(s)) == 45
+    assert list(s.configs) == list(pilot.configs)
+    for cond, cfg in s.configs.items():
+        assert cfg.budget.orchestrator_steps == (40 if cond == "single_matched" else 5), cond
+        assert (cfg.budget.command_timeout_sec, cfg.budget.max_command_timeout_sec) == (600, 1800)
+    assert s.platform == "linux/amd64" and s.timeout_multiplier * 43200 == pytest.approx(3600, abs=5)
+    cmd = sweep.harbor_cmd(s, "swe_sweep__r1__single_5step")
+    assert cmd[1:4] == ["run", "-p", "jobs/swe_sweep/tasks"] and cmd[-2:] == ["-y", "-q"]  # the pinned copy
+    assert cmd[cmd.index("--override-cpus") + 1] == "3" and cmd[cmd.index("--override-memory-mb") + 1] == "7000"
+    oracle = sweep.harbor_cmd(s, "_oracle", agent="oracle")
+    assert "--override-cpus" in oracle and "--agent-timeout-multiplier" not in oracle
+    assert sweep.run(s, sweep.plan(s), dry_run=True) == 0
+    assert capsys.readouterr().out.count("$ SUBAGENTS_BENCH_CONFIG=jobs/swe_sweep/configs/") == 45
+
+
+def test_swe_hint_spec_matches_swe_sweep_but_for_the_hint():
+    s, full = sweep.load_spec(REPO / "configs/sweeps/swe_hint.yaml"), sweep.load_spec(REPO / "configs/sweeps/swe_sweep.yaml")
+    assert set(s.tasks) < set(full.tasks) and (s.rounds, len(sweep.plan(s))) == (2, 4)
+    assert (s.dataset_path, s.platform, s.n_concurrent, s.timeout_multiplier, s.extra_args) == (
+        full.dataset_path, full.platform, full.n_concurrent, full.timeout_multiplier, full.extra_args)
+    for cond, cfg in s.configs.items():
+        twin = cond.replace("hinted_", "gemma31b_", 1)
+        assert cfg.subagent.delegation_hint == cond.startswith("hinted_") and not full.configs[twin].subagent.delegation_hint
+        cfg.subagent.delegation_hint = False
+        assert {**cfg.to_dict(), "name": twin} == full.configs[twin].to_dict()
+    text = (REPO / "configs/sweeps/swe_hint.yaml").read_text()
+    if s.dataset_path.is_dir():
+        assert {t: int(re.search(rf"- {t} +# \w+, (\d+)\n", text)[1]) for t in s.tasks} == {
+            t: sweep.n_subtasks(s.dataset_path / t) for t in s.tasks}
+
+
+def test_swe_sweep_larger_budget_hint(tmp_path, monkeypatch):
+    """swe_sweep.yaml's larger step budget, made as its comments say (orchestrator_steps and the
+    commented conditions block): every condition gets it, single_matched it x 8 subagent steps."""
+    text = (REPO / "configs/sweeps/swe_sweep.yaml").read_text()
+    assert text.count("\n    orchestrator_steps: 5 ") == 1
+    text = text.replace("\n    orchestrator_steps: 5 ", "\n    orchestrator_steps: 30 ")
+    text = text.replace("\n# conditions:", "\nconditions:").replace("\n#   single_matched:", "\n  single_matched:")
+    (tmp_path / "b30.yaml").write_text(text)
+    monkeypatch.chdir(REPO)  # no pyproject.toml above tmp_path: the spec's paths resolve against the cwd
+    s = sweep.load_spec(tmp_path / "b30.yaml")
+    steps = {c: cfg.budget.orchestrator_steps for c, cfg in s.configs.items()}
+    assert steps.pop("single_matched") == 30 * s.configs["gemma31b_parallel_hard"].subagent.max_steps
+    assert set(steps.values()) == {30} and len(steps) == 14
+
+
+def test_swe_sweep_bug_counts_in_the_docs():
+    """README's bug counts are the spec's per-task comments, which are the tasks' own (if cloned)."""
+    s = sweep.load_spec(REPO / "configs/sweeps/swe_sweep.yaml")
+    text = (REPO / "configs/sweeps/swe_sweep.yaml").read_text()
+    bugs = {t: int(re.search(rf"- {t} +# \w+, (\d+)\n", text)[1]) for t in s.tasks}
+    readme = " ".join((REPO / "README.md").read_text().split())
+    assert f"{min(bugs.values())}-{max(bugs.values())} bugs each, {sum(bugs.values())} in all" in readme
+    if s.dataset_path.is_dir():
+        assert bugs == {t: sweep.n_subtasks(s.dataset_path / t) for t in s.tasks}
+
+
+DOCKERFILE = "FROM docker.io/library/alpine:3.20 AS src\nRUN true\nFROM --platform=$BUILDPLATFORM golang:1.20\n"
+
+
+def make_tasks(root: Path) -> None:
+    """TASKS as local task dirs, the first with SWE-sweep's tests/swesweep_eval.json (3 bugs)."""
+    for t in TASKS:
+        for d in ("environment", "tests"):
+            (root / t / d).mkdir(parents=True)
+            (root / t / d / "Dockerfile").write_text(DOCKERFILE)
+        (root / t / "task.toml").write_text("")
+        (root / t / "tests" / "from.py").write_text("FROM x\n")  # not a Dockerfile: untouched
+    (root / TASKS[0] / "tests" / "swesweep_eval.json").write_text(json.dumps({"subtasks": [{"id": i} for i in "abc"]}))
+
+
+def test_local_dataset_platform_and_overrides(fake, tmp_path, monkeypatch, capsys):
+    harbor = {"n_concurrent": 2, "agent_timeout_multiplier": 0.1, "extra_args": ["--override-cpus", "3"]}
+    path = make_spec(tmp_path, dataset=None, dataset_path="tasks", platform="linux/amd64", harbor=harbor,
+                     overrides={"budget": {"orchestrator_steps": 7}})
+    make_tasks(path.parent / "tasks")
+    spec = sweep.load_spec(path)
+    assert spec.dataset is None and spec.dataset_path == path.parent / "tasks" and spec.platform == "linux/amd64"
+    assert {c.budget.orchestrator_steps for c in spec.configs.values()} == {7}
+    assert sweep.run(spec, sweep.plan(spec), dry_run=True) == 0 and not spec.jobs_dir.exists()
+    assert "$ SUBAGENTS_BENCH_CONFIG=jobs/t/configs/" in capsys.readouterr().out
+    assert go(spec) == 0
+    for call in fake.calls():
+        argv = call["argv"]
+        assert argv[:3] == ["run", "-p", "jobs/t/tasks"] and "-d" not in argv
+        assert argv[argv.index("--override-cpus") + 1] == "3" and argv[-2:] == ["-y", "-q"]
+    staged = spec.jobs_dir / "tasks" / TASKS[0]
+    pinned = ("FROM --platform=linux/amd64 docker.io/library/alpine:3.20 AS src\nRUN true\n"
+              "FROM --platform=$BUILDPLATFORM golang:1.20\n")
+    assert (staged / "environment" / "Dockerfile").read_text() == (staged / "tests" / "Dockerfile").read_text() == pinned
+    assert (staged / "tests" / "from.py").read_text() == "FROM x\n" and (staged / "task.toml").is_file()
+    manifest = json.loads((spec.jobs_dir / "tasks.json").read_text())
+    assert manifest["platform"] == "linux/amd64" and manifest["source"] == str(path.parent / "tasks")
+    assert (manifest["git_commit"], manifest["git_dirty"]) == (None, None) and sorted(manifest["tasks"]) == sorted(TASKS)
+    assert manifest["n_subtasks"] == {TASKS[0]: 3, TASKS[1]: None}
+    assert sweep.pin_platform(pinned, "linux/amd64") == pinned
+    assert go(spec) == 0 and json.loads((spec.jobs_dir / "tasks.json").read_text()) == manifest  # a rerun: identical
+    monkeypatch.setenv("SAIL_API_KEY", "test-key")
+    shutil.rmtree(spec.jobs_dir / "tasks")
+    assert sweep.preflight(spec, oracle=True) == 0  # the oracle stages the copy too
+    out = capsys.readouterr().out
+    assert f"[PASS] dataset_path: 2 tasks under {path.parent / 'tasks'}" in out and "oracle: $ " in out
+    assert "--override-cpus" in fake.calls()[-1]["argv"] and (staged / "tests" / "Dockerfile").read_text() == pinned
+    (path.parent / "tasks" / TASKS[1] / "task.toml").unlink()
+    assert sweep.preflight(spec) == 1 and "[FAIL] dataset_path: no task.toml under" in capsys.readouterr().out
+
+
+def test_local_dataset_without_platform_records_its_tasks(fake, tmp_path):
+    """No copy: harbor runs the source task dirs, and tasks.json still records them and their bugs."""
+    path = make_spec(tmp_path, dataset=None, dataset_path="tasks")
+    make_tasks(path.parent / "tasks")
+    spec = sweep.load_spec(path)
+    assert go(spec) == 0 and not (spec.jobs_dir / "tasks").exists()
+    assert all(c["argv"][:3] == ["run", "-p", "tasks"] for c in fake.calls())
+    manifest = json.loads((spec.jobs_dir / "tasks.json").read_text())
+    assert (manifest["source"], manifest["platform"]) == (str(path.parent / "tasks"), None)
+    assert sorted(manifest["tasks"]) == sorted(TASKS) and manifest["n_subtasks"] == {TASKS[0]: 3, TASKS[1]: None}
+
+
 def test_dry_run_runs_and_writes_nothing(fake, spec, capsys):
     assert sweep.run(spec, sweep.plan(spec, only=["par"]), dry_run=True) == 0
     out = capsys.readouterr().out
@@ -180,7 +303,8 @@ def test_job_state_and_retry_reasons(tmp_path):
     write_trial(job, "b", 1)
     assert sweep.job_state(job) == ("complete", "2 trials")
     expected = {"ok": None, "timeout": None, "unsolved": None, "provider": "provider", "billing": "billing",
-                "crash": "harbor RuntimeError", "infra": "harbor EnvironmentStartTimeoutError"}
+                "crash": "harbor RuntimeError", "infra": "harbor EnvironmentStartTimeoutError",
+                "partial": None, "regressed": None, "grader": "grader", "verifier": "verifier", "shared_verifier": None}
     for i, (mode, reason) in enumerate(expected.items()):
         assert sweep.retry_reason(write_trial(tmp_path / "trials", "x", i, mode)) == reason, mode
     ep = job / "a__t0" / "agent" / "episode.json"
@@ -359,6 +483,11 @@ def test_probe_sends_one_short_request_per_model(spec, monkeypatch):
     ({"rounds": 0}, "rounds an integer >= 1"),
     ({"conditions": {"a__b": {}}}, "invalid name(s) ['a__b']"),
     ({"conditions": {"x": {"subagent": {"strategy": "swarm"}}}}, "condition x: subagent.strategy"),
+    ({"dataset_path": "tasks"}, "exactly one of dataset"),
+    ({"dataset": None}, "exactly one of dataset"),
+    ({"overrides": {"budget": {"steps": 1}}}, "unknown key(s): budget.steps"),
+    ({"platform": "linux/amd64"}, "platform must be a string like linux/amd64 and needs dataset_path"),
+    ({"harbor": {"n_concurrent": 4, "agent_timeout_multiplier": 4.0, "extra_args": "-y"}}, "harbor.extra_args must be"),
 ])
 def test_bad_specs_are_config_errors(tmp_path, over, msg):
     with pytest.raises(ConfigError) as e:

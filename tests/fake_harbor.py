@@ -2,9 +2,13 @@
 
 Each call is appended to ``$FAKE_HARBOR_LOG``; ``$FAKE_HARBOR_MODES`` (JSON ``{job: mode}``) picks
 how a job goes (default ``ok``). The first trial of a job gets the mode, the others are ``ok``:
-ok, timeout (agent timeout: an outcome), provider, billing, crash, infra, unsolved (reward 0).
-Whole-job modes: absent (exit 1 before creating the job dir), slow (1 s between trials),
-outage (a provider failure, then hang until SIGINT), hang (no trial, hang until SIGINT).
+ok, timeout (agent timeout: an outcome), provider, billing, crash, infra, unsolved (reward 0),
+and SWE-sweep's grader output: partial (7 of 14 bugs fixed), regressed (visible tests failed:
+reward 0), grader (the grader itself failed), verifier (its separate verifier failed after it
+started: no reward); shared_verifier is the same failure in a verifier that shares the agent's
+container (Terminal-Bench). Whole-job modes: absent (exit 1 before creating the job dir), slow
+(1 s between trials), outage (a provider failure, then hang until SIGINT), hang (no trial, hang
+until SIGINT).
 """
 
 from __future__ import annotations
@@ -36,13 +40,19 @@ def write_trial(job_dir: Path, task: str, i: int, mode: str = "ok") -> Path:
         ep, exc, verified = None, "EnvironmentStartTimeoutError", False
     elif mode == "unsolved":
         reward = 0.0
+    elif mode in ("verifier", "shared_verifier"):
+        exc, reward = "RewardFileNotFoundError", None
+    grader = {"partial": {"reward": 0.5, "n_subtasks": 14.0, "n_resolved": 7.0, "visible_ok": 1.0, "grader_failed": 0.0},
+              "regressed": {"reward": 0.0, "n_subtasks": 14.0, "n_resolved": 0.0, "visible_ok": 0.0, "grader_failed": 0.0},
+              "grader": {"reward": 0.0, "n_subtasks": 14.0, "grader_failed": 1.0}}
     (trial / "agent").mkdir(parents=True)
     if ep is not None:
         (trial / "agent" / "episode.json").write_text(json.dumps(ep))
     res = {"task_name": task, "trial_name": trial.name, "started_at": T0, "finished_at": T1,
            "exception_info": {"exception_type": exc, "exception_message": "x", "occurred_at": T1} if exc else None,
-           "verifier_result": {"rewards": {"reward": reward}} if verified else None,
-           "verifier": {"started_at": T0, "finished_at": T1} if verified else None}
+           "verifier_result": {"rewards": grader.get(mode, {"reward": reward})} if verified and reward is not None else None,
+           "verifier": {"started_at": T0, "finished_at": T1} if verified else None,
+           "verifier_environment_mode": "separate" if mode in (*grader, "verifier") else "shared"}
     (trial / "result.json").write_text(json.dumps(res))
     return trial
 

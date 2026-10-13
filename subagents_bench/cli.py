@@ -20,7 +20,8 @@ def _rounds(text: str) -> list[int]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="subagents-bench", description="Orchestrator + subagents on Terminal-Bench 2.0.")
+    parser = argparse.ArgumentParser(prog="subagents-bench",
+                                     description="Orchestrator + subagents on Terminal-Bench 2.0 and SWE-sweep.")
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("validate", help="load experiment config YAML(s) and print the resolved config")
     p.add_argument("configs", nargs="+")
