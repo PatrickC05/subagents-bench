@@ -362,10 +362,10 @@ def test_pricing_config_matches_the_base_config():
 def test_all_figures_render(analysis, tmp_path):
     out, _ = analysis
     assert plot([str(out), "--out", str(tmp_path)]) == 0
-    for name in FIGURES:
-        assert (tmp_path / f"{name}.png").stat().st_size > 10_000
+    for name in FIGURES:  # no interactive episode here: that figure only says so
+        assert (tmp_path / f"{name}.png").stat().st_size > (1_000 if name == "interactivity" else 10_000)
     index = (tmp_path / "index.md").read_text()
-    assert index.count("\n## ") == len(FIGURES) == 8 and all(f"({n}.png)" in index for n in FIGURES)
+    assert index.count("\n## ") == len(FIGURES) == 9 and all(f"({n}.png)" in index for n in FIGURES)
 
 
 def test_analyze_script(jobs, tmp_path):

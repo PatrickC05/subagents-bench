@@ -25,6 +25,7 @@ import signal
 import subprocess
 import sys
 import time
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -32,6 +33,7 @@ from typing import Any, Callable
 import yaml
 
 from .config import ConfigError, ExperimentConfig, ModelConfig, from_dict
+from .hints import HINTS_DIR_ENV, HintError, generate_reports, load_reports, load_subtasks, schedule, write_reports
 from .llm import Message, SailClient
 from .records import git_commit
 
@@ -43,6 +45,7 @@ FROM_RE = re.compile(r"^FROM (?!--platform)", re.M)  # a Dockerfile FROM without
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")  # job names are <sweep>__r<k>__<condition>
 POLL_SEC = 10.0  # live trial lines
 STOP_GRACE_SEC = 120.0  # on SIGINT harbor cancels its trials and removes their containers
+SESSION_GRACE_SEC = 120.0  # an interactive session's shutdown and kill, before harbor's agent timeout
 STATUS = {0: "complete", 1: "incomplete", 3: "aborted: billing error", 4: "aborted: provider outage",
           130: "interrupted"}
 
@@ -126,7 +129,78 @@ def load_spec(path: str | os.PathLike) -> Spec:
             spec.configs[cond] = from_dict({**deep_merge(base, over or {}), "name": cond})
         except ConfigError as e:
             raise ConfigError(f"{path}: condition {cond}: {e}") from None
+    if interactive(spec) and not dataset_path:
+        raise ConfigError(f"{path}: interactive conditions take their hints from SWE-sweep task dirs: set dataset_path")
     return spec
+
+
+def interactive(spec: Spec) -> dict[str, ExperimentConfig]:
+    """The conditions whose episodes are interactive sessions."""
+    return {c: cfg for c, cfg in spec.configs.items() if cfg.interactive is not None}
+
+
+def hints_dir(spec: Spec) -> Path:
+    """Generated bug reports for ``hint_detail: report`` (``subagents-bench hints``)."""
+    return spec.jobs_dir / "hints"
+
+
+def check_interactive(spec: Spec) -> list[str]:
+    """Problems that would fail or cut short an interactive condition's trials: a task without
+    SWE-sweep subtasks or (``report``) without a generated report per scheduled subtask, and a
+    harbor agent timeout (the task's ``[agent] timeout_sec`` x the multiplier) that would cancel
+    the session before its own deadline."""
+    conds = interactive(spec)
+    if not conds:
+        return []
+    problems = []
+    longest = max(cfg.interactive.wall_clock_sec for cfg in conds.values())
+    for t in spec.tasks:
+        task = spec.dataset_path / t
+        try:
+            load_subtasks(task)
+            for c, cfg in conds.items():
+                if cfg.interactive.hint_detail == "report":
+                    schedule(cfg.interactive, task, t, hints_dir(spec))
+        except HintError as e:
+            problems.append(f"{t}: {e}")
+            continue
+        try:
+            timeout = tomllib.loads((task / "task.toml").read_text())["agent"]["timeout_sec"] * spec.timeout_multiplier
+        except (OSError, ValueError, KeyError, TypeError):
+            continue  # harbor applies its own default; preflight's dataset check reports a missing task.toml
+        if timeout < longest + SESSION_GRACE_SEC:
+            problems.append(f"{t}: harbor's agent timeout {timeout:.0f}s ({spec.timeout_multiplier} x the task's) "
+                            f"would cancel a {longest:.0f}s session: raise harbor.agent_timeout_multiplier")
+    return problems
+
+
+def make_hints(spec: Spec, force: bool = False) -> int:
+    """Write a bug report per subtask of every task (``hint_detail: report``) with the
+    orchestrator's model of the first interactive condition; existing reports are kept unless
+    ``force``. 0 if every task has its reports, else 1."""
+    conds = interactive(spec)
+    if not conds:
+        say(f"sweep {spec.name!r} has no interactive condition: nothing to generate")
+        return 0
+    model = next(iter(conds.values())).orchestrator
+    client, failed = SailClient(model), 0
+    try:
+        for t in spec.tasks:
+            try:
+                existing = {} if force else load_reports(hints_dir(spec), t)
+            except HintError:
+                existing = {}
+            try:
+                reports = generate_reports(spec.dataset_path / t, client, existing)
+            except Exception as e:  # one task's failure does not lose the others'
+                say(f"  [FAIL] {t}: {type(e).__name__}: {str(e)[:300]}")
+                failed += 1
+                continue
+            path = write_reports(hints_dir(spec), t, model.model, reports)
+            say(f"  [OK] {t}: {len(reports)} reports ({len(reports) - len(existing)} new) -> {_rel(path, spec.root)}")
+    finally:
+        client.close()
+    return 1 if failed else 0
 
 
 def plan(spec: Spec, only: list[str] | None = None, rounds: list[int] | None = None) -> list[tuple[int, str]]:
@@ -424,7 +498,8 @@ def run(spec: Spec, jobs: list[tuple[int, str]], dry_run: bool = False) -> int:
             _log(spec, "moved", **ids, state=state, why=why, to=moved)
         say(f"{prefix}: running {len(spec.tasks)} trials")
         watcher, t0 = Watcher(job_dir, models), time.time()
-        env = {**os.environ, "SUBAGENTS_BENCH_CONFIG": str(configs_dir / f"{cond}.yaml")}
+        env = {**os.environ, "SUBAGENTS_BENCH_CONFIG": str(configs_dir / f"{cond}.yaml"),
+               HINTS_DIR_ENV: str(hints_dir(spec))}
         try:
             rc = run_job(harbor_cmd(spec, job), env, spec.root, watcher.poll)
         except KeyboardInterrupt:
@@ -482,6 +557,10 @@ def preflight(spec: Spec, oracle: bool = False) -> int:
         missing = [t for t in spec.tasks if not (spec.dataset_path / t / "task.toml").is_file()]
         check("dataset_path", not missing, f"{len(spec.tasks)} tasks under {spec.dataset_path}" if not missing
               else f"no task.toml under {spec.dataset_path} for: {', '.join(missing)}")
+    if interactive(spec):
+        problems = check_interactive(spec)
+        check("interactive sessions", not problems, "; ".join(problems) if problems else
+              f"{len(interactive(spec))} condition(s): subtasks, hints and agent timeout fit every task")
     for m in sweep_models(spec):
         t0 = time.time()
         err = ping(m)

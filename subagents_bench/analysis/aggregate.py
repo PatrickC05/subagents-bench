@@ -12,6 +12,8 @@ from typing import Any
 import pandas as pd
 
 from ..config import SCOPES, STRATEGIES
+from .interactivity import condition_table as interactivity_table
+from .interactivity import hint_rows, position_table
 from .latency import PARTS, critical_path
 from .load import Trial
 from .pricing import call_cost
@@ -42,6 +44,8 @@ def episode_row(t: Trial, prices: dict) -> dict[str, Any]:
     row.update(t_start=ep["t_start"], wall_clock_sec=ep.get("wall_clock_sec"), steps=len(recs["steps"]),
                spawns=len(recs["spawns"]), dispatches=len(recs["dispatches"]), arbitrations=len(recs["arbitrations"]),
                delegated=int(len(recs["spawns"]) > 0), n_provider_errors=ep.get("n_provider_errors"),
+               interactive=int(ep["config"].get("interactive") is not None), n_hints=ep.get("n_hints"),
+               n_hints_delivered=ep.get("n_hints_delivered"),
                n_stream_repairs=sum(c["stream_repairs"] for c in recs["calls"]))
     for role, short in ROLE_SHORT.items():
         mine = [c for c in recs["calls"] if c["role"] == role]
@@ -63,8 +67,8 @@ def record_rows(t: Trial, valid: bool, prices: dict) -> dict[str, list[dict]]:
     r = t.records
     return {
         "calls": [{**key, **c, "cost": call_cost(c, prices)} for c in r["calls"]],
-        "tools": [{**key, **x} for x in r["tools"]],
-        "dispatches": [{**key, **design, **{k: v for k, v in d.items() if k != "files_modified"},
+        "tools": [{**key, **{k: v for k, v in x.items() if k != "arguments"}} for x in r["tools"]],
+        "dispatches": [{**key, **design, **{k: v for k, v in d.items() if k not in ("files_modified", "instruction")},
                         "n_files_modified": len(d["files_modified"])} for d in r["dispatches"]],
         "arbitrations": [{**key, **{k: v for k, v in a.items() if k != "rounds"}, "n_rounds": len(a["rounds"]),
                           "candidate_dispatch_ids": ";".join(a["candidate_dispatch_ids"]),
@@ -113,12 +117,17 @@ def condition_table(episodes: pd.DataFrame) -> pd.DataFrame:
 def build_tables(trials: list[Trial], prices: dict) -> dict[str, pd.DataFrame]:
     eps = [episode_row(t, prices) for t in trials]
     recs: dict[str, list[dict]] = {"calls": [], "tools": [], "dispatches": [], "arbitrations": []}
+    hints: list[dict] = []
     for t, e in zip(trials, eps):
         for kind, rows in record_rows(t, e["valid"], prices).items():
             recs[kind] += rows
+        hints += hint_rows(t, _keys(t), e["valid"])
     episodes = pd.DataFrame(eps)
+    hint_table = pd.DataFrame(hints)
     return {"episodes": episodes, "conditions": condition_table(episodes),
-            **{k: pd.DataFrame(v) for k, v in recs.items()}}
+            **{k: pd.DataFrame(v) for k, v in recs.items()},
+            "hints": hint_table, "interactivity": interactivity_table(hint_table),
+            "hint_positions": position_table(hint_table)}
 
 
 def delegation_gate(conditions: pd.DataFrame) -> list[str]:

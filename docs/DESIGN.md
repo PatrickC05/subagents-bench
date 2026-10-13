@@ -196,6 +196,84 @@ fails its delegation gate (exit 3) when a subagent condition never
 delegated in any valid episode, so a sweep cannot quietly measure the wrong
 thing.
 
+### Interactive sessions (`interactive.py`, `hints.py`)
+
+A batch episode gives the orchestrator one request and a step budget. An
+interactive episode (`interactive:` in the config) is a timed session
+that measures something else: how fast the agent turns to a new request
+while earlier ones are still in progress, the way a user keeps adding
+"and also look at X" to a running session. SWE-sweep fits this because one
+task is one repository with 6-14 bugs (subtasks) in the sweeps' 10
+repositories, each graded on its own hidden tests, so a request about bug k
+is a new area of the same codebase rather than a fresh context.
+
+**The schedule.** The harness reads the task dir's
+`tests/swesweep_eval.json` on the host (the agent's container has no
+`tests/`), shuffles the subtasks with a seed per task (`order_seed`, the same
+order in every condition, so conditions are compared on the same sequence)
+and sends subtask k as a hint at `k x interval_sec` (300 s), as many as fit
+in `wall_clock_sec` (3600 s: 12) and the task has. The first user message
+is the task instruction plus `Hint: <hint 0>` (SWE-sweep's instruction
+already allows a `Hint:` section in the first message); later ones say
+"Another one, while you keep working on the earlier ones." A hint names the
+files the reference fix changes (`files`) and by default the hidden tests'
+ids (`tests`). Those ids describe the behaviour in most repositories
+(`test_symlink_resolution`), not in goawk (`interp::TestInterp`) or libexpat
+(`runtests`), which is why `swe_interactive.yaml` uses click, pint, isort
+and echo. `report` instead sends a one-to-three-sentence bug report written
+beforehand from the hidden test patch by `subagents-bench hints` (the first
+interactive condition's orchestrator model, told not to describe the fix),
+read from `jobs/<sweep>/hints/<task>.json`. A scripted, timed user rather
+than harbor's simulated user (an LLM that converses through a bridge): the
+stimulus must be identical across conditions and arrive at fixed times,
+whatever the agent does.
+
+**Delivery.** Messages are delivered only between steps, as one user
+message (hints and reports in arrival order, merged into the previous
+message when that is a user message, so turns alternate). A hint that
+arrives during the orchestrator's LLM call, its own tools or a blocking
+`spawn_subagents` waits for the step to end. That queueing is the quantity
+of interest: a single agent running a 10-minute test suite cannot hear the
+user until it finishes, and neither can an orchestrator blocked on its
+subagents. There is no `finish` (a call to it is an unknown tool), and the
+note after each step is `[m:ss of 60:00 elapsed; subagents running: sub-3
+(2:10), ...; dispatch budget left: D]`. `wait(timeout_sec?)` blocks until a
+hint is due, a report is ready or the timeout passes; a reply without a
+tool call waits the same way (the end of a chat turn). The session ends at
+`wall_clock_sec` (a timer sets the recorder's stop event, every agent
+unwinds as on harbor's cancel, exit `deadline`) or, with `end_when_idle`,
+when every hint was sent, nothing runs and the orchestrator waits (exit
+`idle`). `budget.orchestrator_steps` is only a safety cap (400 in the
+sweep). Afterwards the harbor agent runs the cancel's kill script, since
+commands of stopped subagents keep running in the container, and records
+`end_kill`.
+
+**Background subagents.** With `subagent.spawn_mode: background` (parallel
+strategy only), `spawn_subagents` starts each granted instruction on a pool
+of `max_concurrent` threads and returns at once, naming the subagents;
+granted = min(requested, free slots, dispatches left). Each report is
+delivered like a hint when its subagent ends, capped like a blocking spawn's.
+`blocking` keeps the batch behaviour, so the three interactive conditions
+separate where a hint waits: behind the agent's own commands (single),
+behind its subagents (blocking), or nowhere but the LLM call (background).
+`delegation_hint` in an interactive episode needs background mode and says
+that delegating keeps the orchestrator free to respond; the batch hint's
+step argument does not apply without a step budget. The dispatch budget is
+60 in the sweep (the batch study's 15 would run out within minutes).
+
+**Context.** A one-hour single agent can outgrow the model's context.
+`max_context_chars` (400000 in the sweep, about 100k tokens) replaces the
+oldest tool outputs (never the task message or the newest results) with a
+marker once the conversation is over the limit, down to 75% of it, so the
+cached prompt prefix changes rarely; `n_elided_results` counts them.
+
+**Checks.** `preflight` fails an interactive sweep when a task has no
+subtasks, when `report` hints are missing, or when harbor's agent timeout
+(the task's 43200 s x `agent_timeout_multiplier`) is below the session plus
+120 s: SWE-sweep's 0.0833 gives 3599 s, which would cancel a 3600 s session,
+so `swe_interactive.yaml` uses 0.0903 (3900 s). A spec with an interactive
+condition must set `dataset_path`.
+
 ### Provider fail-fast (`records.py`, `orchestrator.py`)
 
 The first provider failure after retries in a call of any role
@@ -283,7 +361,7 @@ the verifier.
 ### Records (`records.py`)
 
 One JSONL file per kind (calls, tools, steps, spawns, dispatches,
-arbitrations, transcript) plus `episode.json`, written as events happen by
+arbitrations, inbox, transcript) plus `episode.json`, written as events happen by
 a thread-safe recorder. Failed and abandoned LLM calls are recorded too.
 `finalize` computes every episode total from the records written, so the
 totals equal the JSONL sums, and closes the episode: records that arrive
@@ -448,10 +526,33 @@ episodes whose critical path exceeds their wall clock (a check that should
 stay 0). With the test fakes, overhead is under 10% of wall clock (thread
 start-up, the marker and `find` execs).
 
+**Interactivity.** `analysis/interactivity.py` turns each hint of an
+interactive episode into a row of latencies after the hint was sent:
+delivery (into the conversation), response (the first orchestrator call that
+saw it returned), dispatch (a subagent started whose instruction names a
+target file or a hidden test's name), touch (any tool call naming a target
+file) and edit (an `edit_file` on one, or a bash command naming one that
+writes), plus what the orchestrator was doing when it arrived and the
+grader's verdict for the subtask from `verifier/eval.json`. Tool records
+keep their arguments (strings cut to 2000 characters) and dispatches their
+instruction for this. File matching is textual: a path or its last two
+components, or a bare basename not inside another path (an agent that `cd`s
+into the package). It is a heuristic in two ways. Subtasks share files:
+2231 of SWE-sweep's 4068 subtasks share a target file with another subtask
+of their task, so work on an earlier hint's bug can register as touching a
+later one; the rows flag `shared_files` and the summary reports touch and
+edit for unshared hints too (echo's 6 bugs are in 6 files). And `search`
+over the whole repository is not a touch. Missing events (never happened
+before the session ended) count as infinitely late in the medians, and
+`*_before_next` is the share within one interval, before the next request.
+For a background spawn the critical path counts only starting it (its
+subagents run off the orchestrator's chain), so it stays below the wall
+clock.
+
 **Statistics.** Resolve rates with Wilson 95% intervals; mean cost, wall
 clock and tokens with a seeded percentile bootstrap (2000 resamples).
 
-**Figures.** Eight PNGs with captions in `index.md` (docs/DATA.md). Colour
+**Figures.** Nine PNGs (the ninth for interactive sessions) with captions in `index.md` (docs/DATA.md). Colour
 is the strategy (parallel blue, sequential orange, arbiter aqua; single agent
 grey); critical-path parts use orchestrator blue, subagent orange, judge
 aqua, tools yellow and overhead grey.

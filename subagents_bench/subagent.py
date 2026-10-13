@@ -22,6 +22,7 @@ SUBMIT_SPEC = ToolSpec(
      "required": ["report"]},
 )
 FILES_CAP = 200
+INSTRUCTION_CHARS = 4000  # of the instruction in the dispatch record (the transcript has it whole)
 
 
 @dataclass
@@ -147,7 +148,8 @@ def run_dispatch(rt: Runtime, d: Dispatch) -> DispatchResult:
     rec.write("dispatches", {
         "dispatch_id": d.dispatch_id, "group_id": d.group_id, "agent_id": d.agent_id,
         "arbitration_id": d.arbitration_id, "candidate_index": d.candidate_index,
-        "instruction_index": d.instruction_index, "status": status, "steps_used": steps, "t_start": t_start,
+        "instruction_index": d.instruction_index, "instruction": d.instruction[:INSTRUCTION_CHARS],
+        "status": status, "steps_used": steps, "t_start": t_start,
         "t_end": time.time(), "report_chars": len(report), "files_modified": files, "error": error,
     })
     return DispatchResult(status, report, steps)

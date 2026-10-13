@@ -164,6 +164,38 @@ orchestrators delegated at step 3-5, with 0-2 steps left. There is no
 single-agent baseline on these repositories yet
 ([issue #7](https://github.com/PatrickC05/subagents-bench/issues/7)).
 
+### Interactivity: a new bug every 5 minutes
+
+[`configs/sweeps/swe_interactive.yaml`](configs/sweeps/swe_interactive.yaml)
+turns an episode into a 60-minute session. The first user message is the task
+plus one bug as a hint; every 5 minutes the user sends another bug of the same
+repository ("Another one, while you keep working on the earlier ones"), up to
+12. There is no step budget and no `finish`; the agent can `wait` for the next
+message. The question is how long each new request waits before work on it
+starts, and whether the earlier ones keep going:
+
+| Condition | Where a new request waits |
+|---|---|
+| `single_interactive` | the orchestrator alone: behind its own running commands |
+| `blocking_interactive` | subagents, but `spawn_subagents` blocks until they all report |
+| `background_interactive` | subagents run in the background and report as messages (`subagent.spawn_mode: background`) |
+| `background_hinted` | the same, with the prompt saying that delegating keeps it free to respond |
+
+Hints name the files the bug's reference fix changes and its hidden tests' ids
+(`interactive.hint_detail: tests`); `report` uses bug reports written once per
+subtask by `subagents-bench hints configs/sweeps/swe_interactive.yaml`. The
+analysis adds `hints.csv` (per hint: delivery, response, dispatch, first touch
+and first edit of its files, in seconds after it was sent, and whether the
+grader counts it fixed), `interactivity.csv` (per condition: censored medians
+and the share started before the next hint) and `hint_positions.csv`, plus the
+`interactivity` figure. Design and caveats (shared files, path matching):
+docs/DESIGN.md, *Interactive sessions*; columns: docs/DATA.md. 4 conditions x
+4 repositories x 2 rounds = 32 one-hour episodes, about 8 hours at 4 at once.
+
+```bash
+scripts/run_experiment.sh configs/sweeps/swe_interactive.yaml
+```
+
 ## Where data and figures land
 
 ```
@@ -293,14 +325,16 @@ subagents_bench/
   tools.py            bash, edit_file, read_file, list_dir, search via a per-agent shell
   prompts.py          orchestrator, subagent, judge and debate prompts
   orchestrator.py     the step loop and spawn_subagents
+  interactive.py      timed sessions: hints as user messages, background subagents, wait
+  hints.py            SWE-sweep subtasks -> the hint schedule; generated bug reports
   subagent.py         one subagent run (a dispatch)
   arbiter.py          candidates, judge, debate, copy isolation and apply
   records.py          the episode records
   harness/harbor_agent.py   harbor's external agent (OrchestratorAgent)
   sweep.py, cli.py    sweep specs, preflight, harbor jobs; `subagents-bench`
   analysis/           validity, cost, critical path, tables, delegation gate
-  plots/              the eight figures
-configs/              sail/base.yaml, sweeps/{pilot,smoke,swe_sweep}.yaml, pricing.yaml
+  plots/              the nine figures
+configs/              sail/base.yaml, sweeps/{pilot,smoke,swe_sweep,swe_interactive}.yaml, pricing.yaml
 scripts/              setup.sh, run_experiment.sh, analyze.sh
 tests/                offline tests (fake models, fake harbor); RUN_DOCKER=1, RUN_LIVE=1 opt in
 ```

@@ -15,6 +15,7 @@ jobs/<sweep>/
   <sweep>__r<k>__<condition>/         one harbor job (round k); harbor's config.json, result.json, job.log
     <task>__<suffix>/                 one harbor trial: config.json, result.json, trial.log, verifier/
       agent/                          harbor's logs_dir: this harness's records (below)
+      verifier/eval.json              SWE-sweep's grader: per-subtask verdicts (read by the interactivity analysis)
   _partial/<job>.<k>/                 a job run moved aside before its rerun (never analysed)
   _oracle/                            preflight --oracle: harbor's oracle agent on every task
   tasks.json                          with a local `dataset_path`: the source dir, its git commit and dirtiness,
@@ -22,6 +23,8 @@ jobs/<sweep>/
                                       (`n_subtasks`: the subtasks in its tests/swesweep_eval.json, else null)
   tasks/<task>/                       with `platform` set: the sweep's tasks copied from `dataset_path` with
                                       their Dockerfiles pinned (the dirs harbor runs)
+  hints/<task>.json                   interactive sweeps with `hint_detail: report`: {task, model, generated_at,
+                                      reports: {subtask id: bug report}}, from `subagents-bench hints`
 ```
 
 The analysis loads only job dirs whose name does not start with `_` or `.`,
@@ -81,12 +84,14 @@ still unwinding after harbor's cancel) are dropped.
 | `group_id` | the spawn group of a subagent's tool, or of the orchestrator's `spawn_subagents` call |
 | `step` | the agent's step |
 | `call_id` | the LLM call that asked for the tool |
-| `name` | `bash`, `edit_file`, `read_file`, `list_dir`, `search`, `finish`, `spawn_subagents`, `submit`, or an unknown name the model used |
-| `t_start`, `t_end` | the tool's run; for `spawn_subagents` the whole spawn |
+| `name` | `bash`, `edit_file`, `read_file`, `list_dir`, `search`, `finish`, `spawn_subagents`, `wait` (interactive), `submit`, or an unknown name the model used |
+| `t_start`, `t_end` | the tool's run; for a blocking `spawn_subagents` the whole spawn, for a background one only starting it |
 | `exit_code` | shell exit status of `bash`, `read_file`, `list_dir`, `search`; null for the others |
 | `timed_out` | the command hit its timeout and was killed |
 | `is_error` | the result was an error (bad arguments, non-zero exit of a read-only tool, unknown tool, ...) |
 | `output_chars` | size of the full output before truncation (bytes for shell tools, characters otherwise) |
+| `tool_call_id` | the model's id of the tool call (in the transcript's `tool_calls`) |
+| `arguments` | the call's arguments, each string cut to 2000 characters (the transcript has them whole); the interactivity analysis matches its paths and commands |
 
 ### `steps.jsonl`: one orchestrator step
 
@@ -105,11 +110,15 @@ still unwinding after harbor's cancel) are dropped.
 |---|---|
 | `group_id`, `step` | the group and the orchestrator step |
 | `strategy`, `scope` | as configured |
+| `spawn_mode` | `blocking` (the call returns with every report), or `background` (interactive episodes: it returns at once and each report is delivered through the inbox) |
 | `requested` | instructions in the call |
 | `granted` | instructions run: min(requested, per-call limit, dispatch budget left); the per-call limit is `max_concurrent` (3), or `max_concurrent // n_candidates` (1) for the arbiter, which spends `n_candidates` dispatches per instruction |
 | `dispatch_ids` | every dispatch of the group (arbiter: every candidate) |
 | `arbitration_ids` | the group's arbitrations (arbiter only) |
-| `t_start`, `t_end` | the group's run |
+| `t_start`, `t_end` | the group's run (background: only starting it) |
+
+Background spawns grant min(requested, free slots = `max_concurrent` minus
+the subagents still running, dispatch budget left).
 
 ### `dispatches.jsonl`: one subagent run
 
@@ -118,6 +127,7 @@ still unwinding after harbor's cancel) are dropped.
 | `dispatch_id`, `group_id`, `agent_id` | ids |
 | `arbitration_id`, `candidate_index` | the arbitration and the 0-based candidate (arbiter only) |
 | `instruction_index` | 0-based position of its instruction in the spawn call |
+| `instruction` | its instruction, cut to 4000 characters |
 | `status` | `submitted` (called `submit`), `no_tool_call` (answered without a tool; the text is the report), `max_steps`, `error` (a provider or harness failure), `cancelled` (the episode stopped) |
 | `steps_used` | LLM steps taken |
 | `t_start`, `t_end` | the run |
@@ -156,6 +166,22 @@ still unwinding after harbor's cancel) are dropped.
 | `tool_calls` | `[{id, name, arguments}]` of an assistant message |
 | `tool_results` | `[{call_id, content, is_error}]` of a tool message (the step note is appended to the last one) |
 
+### `inbox.jsonl`: one delivery to the orchestrator (interactive episodes)
+
+Empty in batch episodes. One line per hint (user message) and per background
+subagent report, written when it is delivered, plus one per hint never
+delivered (the session ended first), written when the episode ends.
+
+| Field | Meaning |
+|---|---|
+| `kind` | `hint` or `report` |
+| `t_ready` | a hint: when it was sent (session start + `hint_index` x `interval_sec`); a report: when its subagent ended |
+| `t_delivered` | when it entered the orchestrator's conversation (between steps); null for a hint never delivered |
+| `step` | the orchestrator step whose LLM call saw it first (1 for hint 0, in the first message); null if never delivered |
+| `hint_index`, `subtask_id`, `target_files`, `f2p` | a hint's position and its SWE-sweep subtask: id, the files the reference fix changes, the hidden tests that fail before it (null for a report) |
+| `dispatch_id`, `agent_id`, `status` | a report's subagent and its dispatch status (null for a hint) |
+| `chars` | length of the hint text or of the full report |
+
 ### `episode.json`: the episode
 
 Written at the start and rewritten when the episode ends; the totals are
@@ -171,7 +197,7 @@ computed from the records, so they equal the JSONL sums.
 | `git_commit` | commit of the checkout that ran (null outside git) |
 | `config` | the resolved ExperimentConfig |
 | `t_start`, `t_end`, `wall_clock_sec` | the agent's run (harbor's setup and verifier excluded) |
-| `exit_reason` | `finished`, `max_steps`, `no_tool_call`, `cancelled` (harbor's agent timeout), `provider_error`, `billing_error`, `error` (e.g. the orchestrator's context overflowed) |
+| `exit_reason` | `finished`, `max_steps`, `no_tool_call`, `cancelled` (harbor's agent timeout), `provider_error`, `billing_error`, `error` (e.g. the orchestrator's context overflowed); interactive episodes: `deadline` (the session's wall clock ran out), `idle` (every hint was sent, nothing ran and the orchestrator waited), `max_steps` (the safety cap) |
 | `error` | the first provider or billing failure, the exception, or a traceback tail; null otherwise |
 | `orchestrator_steps`, `spawn_calls`, `dispatches`, `arbitrations` | record counts |
 | `tokens_by_role` | `{orchestrator, subagent, arbiter, debate}` -> `{prompt, cached, completion, reasoning}` |
@@ -180,6 +206,15 @@ computed from the records, so they equal the JSONL sums.
 | `n_stream_repairs` | sum of the calls' `stream_repairs` |
 | `cancel_kill` | after harbor's cancel: `{ok, n_killed, error}` of killing the agent's leftover commands; else null |
 | `reward`, `resolved` | null (the verifier's reward is in harbor's `result.json`) |
+
+Interactive episodes add:
+
+| Field | Meaning |
+|---|---|
+| `session_t0` | the session's start: hint k is sent at `session_t0` + k x `interval_sec` |
+| `n_hints`, `n_hints_delivered` | hints scheduled, and delivered before the session ended |
+| `n_elided_results` | older tool outputs replaced by a marker to stay within `max_context_chars` |
+| `end_kill` | `{ok, n_killed, error}` of killing the commands left running when the session ended (harbor runs only) |
 
 ## Sweep files
 
@@ -230,6 +265,7 @@ Every per-trial and per-record table starts with the **keys**: `sweep`,
 | `reward`, `resolved` | the verifier's reward (Terminal-Bench: 1 or 0; SWE-sweep: the fraction of the task's bugs fixed, 0 on a regression); resolved = 1 if reward >= 1, else 0. A valid trial without a reward (a verifier in the agent's container failed after it started) has reward 0 and resolved 0 (and on SWE-sweep bugs_fixed 0); an invalid one without a reward has both empty |
 | `n_subtasks`, `bugs_fixed`, `regressed` | SWE-sweep only (else empty): the task's bugs (from `tasks.json`, so a trial whose patch breaks the build, which the grader reports as 0 subtasks, keeps them), the grader's `n_resolved` (0 if a visible test regressed, as SWE-sweep's scoring counts it; reward x n_subtasks would carry the reward's rounding to 4 places), and 1 if a visible test regressed (`visible_ok` 0) |
 | `t_start`, `wall_clock_sec` | the episode's |
+| `interactive`, `n_hints`, `n_hints_delivered` | 1 for an interactive session, and its hints scheduled and delivered (empty in batch episodes) |
 | `steps`, `spawns`, `dispatches`, `arbitrations` | record counts |
 | `delegated` | 1 if the orchestrator spawned at least once |
 | `n_provider_errors`, `n_stream_repairs` | from the episode and its calls |
@@ -248,8 +284,8 @@ Each row is one record of a trial plus the keys and `valid`:
 | Table | Columns after the keys and `valid` |
 |---|---|
 | `calls.csv` | every `calls.jsonl` field, `cost` |
-| `tools.csv` | every `tools.jsonl` field |
-| `dispatches.csv` | `strategy`, `scope`, every `dispatches.jsonl` field except `files_modified`, `n_files_modified` |
+| `tools.csv` | every `tools.jsonl` field except `arguments` |
+| `dispatches.csv` | `strategy`, `scope`, every `dispatches.jsonl` field except `files_modified` and `instruction`, `n_files_modified` |
 | `arbitrations.csv` | every `arbitrations.jsonl` field except `rounds` (`candidate_dispatch_ids` joined with `;`), `n_rounds`, `n_judge_calls`, `n_debate_calls`, `all_parsed` (every round parsed) |
 
 ### `conditions.csv`: one row per condition (valid trials only)
@@ -267,6 +303,48 @@ Each row is one record of a trial plus the keys and `valid`:
 Rows are ordered: single-agent baselines, the strategy x scope grid, the
 same-model control, the managers, then conditions without an episode.
 
+### `hints.csv`: one row per hint of an interactive episode
+
+Built by `analysis/interactivity.py` from `inbox.jsonl`, the steps, tools and
+dispatches, and the grader's per-subtask verdicts in
+`<trial>/verifier/eval.json`. Every latency is seconds after the hint was
+sent (`t_ready`), empty when the event never happened. Path matching is a
+heuristic (docs/DESIGN.md).
+
+| Columns | Meaning |
+|---|---|
+| keys, `valid`, `topology`, `spawn_mode`, `hint_detail`, `interval_sec` | the trial and its design (`spawn_mode` empty for a single agent) |
+| `hint_index`, `subtask_id`, `target_files` (`;`-joined), `n_target_files` | the hint and its subtask |
+| `shared_files` | one of its target files is also a target of an earlier hint's subtask (its touch and edit latencies can come from that subtask's work) |
+| `t_ready_sec` | when it was sent, after the session start |
+| `delivered` | it reached the orchestrator before the session ended |
+| `busy_at_arrival` | what the orchestrator was doing when it was sent: `llm` (a call), `tool` (its own tool), `spawn` (a blocking spawn), `wait`, `idle` (between steps or waiting after a reply without a tool), `start` (hint 0) |
+| `delivery_sec` | until it entered the conversation |
+| `response_sec` | until the first orchestrator LLM call that saw it returned |
+| `dispatch_sec` | until a subagent started whose instruction names a target file or one of the hidden tests' names |
+| `touch_sec`, `touch_by` | until any agent's tool call named a target file (`read_file`/`edit_file`/`list_dir`/`search` path, or a `bash` command), and that agent's role |
+| `edit_sec` | until an edit of a target file: `edit_file` on it, or a `bash` command naming it that writes (`sed -i`, `perl -i`, a redirection or `tee` to it, `patch`, `git apply`, a Python write) |
+| `continued_after_next` | a target file was named again after the next hint was sent (empty for the last hint) |
+| `resolved`, `partial`, `counted` | the grader's verdict for the subtask, and resolved with no visible regression (what the reward counts); empty without `eval.json` |
+
+### `interactivity.csv`: one row per interactive condition (valid trials only)
+
+| Columns | Meaning |
+|---|---|
+| `condition`, `topology`, `spawn_mode`, `n_episodes`, `n_hints` | the design and the counts |
+| `delivered_frac` | hints delivered before the session ended |
+| `busy_at_arrival_frac` | hints after the first that arrived while the orchestrator was in an LLM call, its own tool or a blocking spawn |
+| `{m}_frac`, `{m}_median_sec`, `{m}_mean_sec`, `{m}_mean_ci_lo`, `{m}_mean_ci_hi`, `{m}_before_next` | for m in `delivery`, `response`, `dispatch`, `touch`, `edit`: the share of hints where it happened; the median counting a missing one as infinitely late (NaN when more than half are missing); the mean (bootstrap 95% interval) over those where it happened; the share where it happened within one `interval_sec` (before the next hint) |
+| `{touch,edit}_median_sec_unshared`, `{touch,edit}_before_next_unshared` | the same over hints without `shared_files` |
+| `continued_after_next_frac` | hints whose files were named again after the next hint was sent |
+| `n_graded`, `hinted_fixed_frac` | hints with a grader verdict, and the share counted fixed |
+
+### `hint_positions.csv`: one row per interactive condition and hint position
+
+`condition`, `hint_index`, `n`, `{delivery,response,dispatch,touch,edit}_median_sec`
+(censored as above), `touch_before_next`, `hinted_fixed_frac`: whether the
+reaction slows as requests pile up.
+
 ### `summary.json`
 
 | Field | Meaning |
@@ -278,12 +356,15 @@ same-model control, the managers, then conditions without an episode.
 
 ## Figures (`figures/<sweep>/`)
 
-`python -m subagents_bench.plots ANALYSIS_DIR --out FIGDIR` draws eight PNGs
+`python -m subagents_bench.plots ANALYSIS_DIR --out FIGDIR` draws nine PNGs
 from the tables (valid trials only) and writes `index.md` with a caption for
 each: `main_grid` (resolve rate with Wilson interval and delegated fraction
 per condition), `pareto_cost` and `pareto_time` (resolve rate vs mean cost
 and wall clock, with the Pareto front), `time_breakdown` (critical-path parts
 and overhead per condition), `token_composition` (tokens and cost by role),
 `delegation` (spawns and dispatch outcomes), `arbiter` (judge confidence,
-debate rate, isolation violations) and `timeline` (Gantt of the calls and
-tools of one delegating episode per strategy).
+debate rate, isolation violations) `timeline` (Gantt of the calls and
+tools of one delegating episode per strategy) and `interactivity` (median
+minutes from a hint to the orchestrator's answer, the first touch and the
+first edit of its files per condition, and the share touched before the next
+hint by hint position; a placeholder without interactive episodes).

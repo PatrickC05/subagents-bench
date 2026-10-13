@@ -1,0 +1,53 @@
+# Interactivity on SWE-sweep: a 60-minute session in which the user sends one of the repository's
+# bugs every 5 minutes (12 hints, fewer when the task has fewer bugs) and expects the earlier ones
+# to keep being worked on. Measured per hint: how long until the orchestrator received it, answered
+# it, dispatched on it, and until any agent touched and edited the bug's files (analysis/
+# interactivity.py), and whether the grader counts the bug fixed. 4 conditions x 4 repositories x
+# 2 rounds = 8 harbor jobs, 32 one-hour episodes (about 8 hours at 4 at once, plus image builds).
+#   scripts/run_experiment.sh configs/sweeps/swe_interactive.yaml
+#
+# The conditions separate where a hint waits:
+#   single_interactive       the orchestrator alone: a hint waits for its own commands to finish
+#   blocking_interactive     subagents, but spawn_subagents blocks until they all report
+#   background_interactive   subagents run in the background; reports arrive as messages
+#   background_hinted        the same, with the prompt saying delegating keeps it free to respond
+name: swe_interactive
+base: configs/sail/base.yaml
+dataset_path: ../class-6-swe-sweep/swe-sweep/tasks
+platform: linux/amd64
+tasks:                               # language, bugs; repositories whose hidden test names describe the bug
+  - swe-sweep__click                 # Python, 13
+  - swe-sweep__pint                  # Python, 13
+  - swe-sweep__isort                 # Python, 11
+  - swe-sweep__echo                  # Go, 6 (every bug in its own file: unambiguous touch latencies)
+rounds: 2
+order_seed: 0
+
+overrides:
+  interactive:
+    wall_clock_sec: 3600
+    interval_sec: 300
+    hint_detail: tests               # files | tests | report (run `subagents-bench hints` first)
+    order_seed: 0                    # the bugs' order per task, the same in every condition
+    end_when_idle: true
+    max_context_chars: 400000        # about 100k tokens: elide the oldest tool output beyond it
+  budget:
+    orchestrator_steps: 400          # a safety cap only: the session ends at its deadline
+    command_timeout_sec: 600         # test suites run for minutes under amd64 emulation
+    max_command_timeout_sec: 1800
+  subagent:
+    max_dispatches: 60               # 12 hints in an hour need far more than the batch study's 15
+    max_concurrent: 3
+
+harbor:
+  n_concurrent: 4
+  # x the tasks' 43200 s agent timeout = 3900 s: the 3600 s session plus its shutdown. The session's
+  # own deadline ends the episode; harbor's timeout only catches a stuck one (preflight checks this).
+  agent_timeout_multiplier: 0.0903
+  extra_args: [--override-cpus, "3", --override-memory-mb, "7000"]
+
+conditions:
+  single_interactive: {topology: single}
+  blocking_interactive: {subagent: {strategy: parallel, scope: hard, spawn_mode: blocking}}
+  background_interactive: {subagent: {strategy: parallel, scope: hard, spawn_mode: background}}
+  background_hinted: {subagent: {strategy: parallel, scope: hard, spawn_mode: background, delegation_hint: true}}

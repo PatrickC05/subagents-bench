@@ -4,7 +4,10 @@
       -a subagents_bench.harness.harbor_agent:OrchestratorAgent -e docker
 
 The synchronous orchestrator runs in a worker thread; records go to harbor's ``logs_dir``
-(the trial's ``agent/``). On harbor's cancel (its agent timeout) the agent stops the episode,
+(the trial's ``agent/``). With ``interactive`` in the config the episode is a timed session
+(:mod:`subagents_bench.interactive`) whose hints come from the task dir harbor runs (its
+``tests/swesweep_eval.json``, read here on the host; generated reports from
+``$SUBAGENTS_BENCH_HINTS_DIR``); when it ends, the commands its agents left running are killed. On harbor's cancel (its agent timeout) the agent stops the episode,
 waits up to 30 s for the thread, kills every agent command still running in the container
 (cancelling a ``docker exec`` client leaves the process running, and the verifier grades the
 same container next), removes the arbiter copies and finalizes the episode as ``cancelled``.
@@ -26,6 +29,8 @@ from harbor.models.agent.context import AgentContext, ModelUsage
 from .. import __version__
 from ..config import load_config, load_dotenv
 from ..environment import HarborEnvironment
+from ..hints import HINTS_DIR_ENV, HintError, schedule
+from ..interactive import InteractiveOrchestrator
 from ..llm import LLMError, SailClient
 from ..orchestrator import Orchestrator
 from ..records import EpisodeRecorder
@@ -55,11 +60,18 @@ def kill_script(state_root: str) -> str:
     return KILL_SCRIPT.format(root=shlex.quote(state_root))
 
 
-def task_name(trial_dir: Path) -> str:
+def task_path(trial_dir: Path) -> Path | None:
+    """The task dir harbor runs, from the trial's ``config.json`` (relative to harbor's cwd)."""
     try:
-        return Path(json.loads((trial_dir / "config.json").read_text())["task"]["path"]).name
+        p = Path(json.loads((trial_dir / "config.json").read_text())["task"]["path"])
     except (OSError, ValueError, KeyError, TypeError):
-        return trial_dir.name.rsplit("__", 1)[0]
+        return None
+    return p if p.is_absolute() else Path.cwd() / p
+
+
+def task_name(trial_dir: Path) -> str:
+    p = task_path(trial_dir)
+    return p.name if p is not None else trial_dir.name.rsplit("__", 1)[0]
 
 
 class OrchestratorAgent(BaseAgent):
@@ -94,9 +106,13 @@ class OrchestratorAgent(BaseAgent):
         pwd = await asyncio.to_thread(env.exec, "pwd", 60)
         workdir = pwd.stdout.strip().splitlines()[-1]
         trial_dir = Path(self.logs_dir).parent
+        hints = self._hints(trial_dir)
         rec = self.recorder = EpisodeRecorder(self.logs_dir, self.config, task_name=task_name(trial_dir),
                                               trial_name=trial_dir.name)
-        orch = Orchestrator(self.config, env, rec, workdir, self.client_factory)
+        if hints is None:
+            orch = Orchestrator(self.config, env, rec, workdir, self.client_factory)
+        else:
+            orch = InteractiveOrchestrator(self.config, env, rec, workdir, hints, self.client_factory)
         fut = asyncio.ensure_future(asyncio.to_thread(orch.run, instruction))
         try:
             await asyncio.shield(fut)
@@ -109,10 +125,21 @@ class OrchestratorAgent(BaseAgent):
             raise
         finally:
             self._fill_context(context)
+        if hints is not None:  # stopped background subagents leave their commands running in the container
+            rec.update(end_kill=await self._kill(environment, env.state_root))
         if fut.result() == "billing_error":
             raise rec.failure
         if fut.result() == "provider_error":
             raise ProviderUnavailableError(f"episode ended with provider_error: {rec.failure}") from rec.failure
+
+    def _hints(self, trial_dir: Path) -> list | None:
+        """The interactive episode's hint schedule, or None for a batch episode."""
+        if self.config.interactive is None:
+            return None
+        path = task_path(trial_dir)
+        if path is None:
+            raise HintError(f"{trial_dir}/config.json names no task path: an interactive episode needs the task dir")
+        return schedule(self.config.interactive, path, path.name, os.environ.get(HINTS_DIR_ENV))
 
     async def _kill(self, environment: Any, state_root: str) -> dict[str, Any]:
         """SIGKILL the agent commands still running; returns the episode's ``cancel_kill``."""

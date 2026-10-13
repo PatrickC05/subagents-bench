@@ -1,4 +1,4 @@
-"""The eight figures, drawn from the analysis tables of valid trials.
+"""The nine figures (the last for interactive sessions only), drawn from the analysis tables of valid trials.
 
 Each figure function takes the tables and a PNG path, saves the figure and returns its
 (title, caption) for ``index.md``.
@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
+from matplotlib.ticker import MaxNLocator
 
 from ..analysis.aggregate import condition_order
 from ..analysis.latency import CATEGORY
@@ -393,8 +394,64 @@ def timeline(t: Tables, path: Path) -> tuple[str, str]:
     return "Timeline of one episode per strategy", caption
 
 
+LATENCY_MARKS = {"response": ("orchestrator answered", SERIES[0], "o"), "touch": ("files touched", SERIES[1], "s"),
+                 "edit": ("files edited", SERIES[2], "^")}
+
+
+def interactivity(t: Tables, path: Path) -> tuple[str, str]:
+    caption = ("Interactive sessions only. Left: per condition, the median minutes from a hint being sent to the "
+               "orchestrator's first answer that saw it, to the first tool call naming one of the subtask's files, "
+               "and to the first edit of one (a hint whose event never happened counts as infinitely late; an "
+               "arrow at the right edge: more than half never happened). Right: per hint position, the share of "
+               "hints whose files were touched before the next hint was sent; a falling line means the agent "
+               "reacts more slowly as requests pile up.")
+    inter, pos = t.get("interactivity", pd.DataFrame()), t.get("hint_positions", pd.DataFrame())
+    if inter is None or inter.empty:
+        fig, ax = plt.subplots(figsize=(8, 2))
+        _empty(ax, "no interactive episodes")
+        _save(fig, path)
+        return "Interactivity: reaction to each new request", caption
+    fig, (a, b) = plt.subplots(1, 2, figsize=(10, _height(len(inter)) + 0.6),
+                               gridspec_kw={"width_ratios": [1.4, 1], "wspace": 0.35})
+    y = np.arange(len(inter))
+    a.set_yticks(y, inter["condition"])
+    a.set_ylim(len(inter) - 0.5, -0.5)
+    a.grid(axis="y", visible=False)
+    cols = [f"{m}_median_sec" for m in LATENCY_MARKS]
+    finite = inter[cols].to_numpy(dtype=float) / 60
+    top = float(np.nanmax(finite)) if np.isfinite(finite).any() else 1.0
+    top = top if top > 0 else 1.0
+    for k, (m, (label, color, marker)) in enumerate(LATENCY_MARKS.items()):
+        x = inter[f"{m}_median_sec"].astype(float) / 60
+        dy = (k - 1) * 0.18
+        a.scatter(x, y + dy, s=36, color=color, marker=marker, label=label, zorder=3, edgecolor=SURFACE, linewidth=1)
+        for yi in y[x.isna().to_numpy()]:
+            a.annotate("", xy=(top * 1.12, yi + dy), xytext=(top * 1.0, yi + dy),
+                       arrowprops={"arrowstyle": "->", "color": color, "lw": 1.2})
+    a.set_xlim(0, top * 1.15)
+    a.set_xlabel("median minutes after the hint was sent")
+    a.set_title("Time to react to a new request")
+    a.legend(loc="lower left", bbox_to_anchor=(0, 1.08), ncol=3)
+    if pos is None or pos.empty:
+        _empty(b, "no hint positions")
+    else:
+        for i, cond in enumerate(inter["condition"]):
+            g = pos[pos["condition"] == cond].sort_values("hint_index")
+            color = SERIES[i] if i < len(SERIES) else MUTED
+            b.plot(g["hint_index"], g["touch_before_next"], color=color, linewidth=2, marker="os^D"[i % 4],
+                   markersize=5, label=cond)
+        b.set_ylim(-0.03, 1.03)
+        b.xaxis.set_major_locator(MaxNLocator(integer=True))
+        b.set_xlabel("hint position (0 = the first request)")
+        b.set_ylabel("touched before the next hint")
+        b.set_title("Reaction by position")
+        b.legend(loc="lower left", bbox_to_anchor=(0, 1.08), ncol=1 if len(inter) > 2 else 2)
+    _save(fig, path)
+    return "Interactivity: reaction to each new request", caption
+
+
 FIGURES: dict[str, Callable[[Tables, Path], tuple[str, str]]] = {
     "main_grid": main_grid, "pareto_cost": pareto_cost, "pareto_time": pareto_time,
     "time_breakdown": time_breakdown, "token_composition": token_composition, "delegation": delegation,
-    "arbiter": arbiter, "timeline": timeline,
+    "arbiter": arbiter, "timeline": timeline, "interactivity": interactivity,
 }

@@ -23,8 +23,16 @@ from .llm import BillingError, LLMError, LLMResponse, Message, ProviderError, To
 from .tools import ToolOutput
 
 ROLES = ("orchestrator", "subagent", "arbiter", "debate")
-KINDS = ("calls", "tools", "steps", "spawns", "dispatches", "arbitrations", "transcript")
+KINDS = ("calls", "tools", "steps", "spawns", "dispatches", "arbitrations", "inbox", "transcript")
 POLL_SEC = 0.2
+ARG_CHARS = 2000  # per string argument of a tool call in its record (the transcript has them whole)
+
+
+def clip_arguments(arguments: Any) -> Any:
+    """A tool call's arguments for its record: long strings cut to ``ARG_CHARS``."""
+    if not isinstance(arguments, dict):
+        return arguments
+    return {k: v[:ARG_CHARS] if isinstance(v, str) else v for k, v in arguments.items()}
 
 
 @functools.cache
@@ -182,7 +190,8 @@ class EpisodeRecorder:
             self.write("tools", {
                 **who.fields(), "step": step, "call_id": call_id, "name": tc.name, "t_start": t0, "t_end": time.time(),
                 "exit_code": out.exit_code, "timed_out": out.timed_out, "is_error": out.is_error,
-                "output_chars": out.output_chars or len(out.text),
+                "output_chars": out.output_chars or len(out.text), "tool_call_id": tc.id,
+                "arguments": clip_arguments(tc.arguments),
             })
         return out
 
@@ -218,6 +227,10 @@ class EpisodeRecorder:
                 reward=None,
                 resolved=None,
             )
+            if self.episode["config"].get("interactive") is not None:
+                hints = [r for r in self.records["inbox"] if r["kind"] == "hint"]
+                self.episode.update(n_hints=len(hints),
+                                    n_hints_delivered=sum(1 for h in hints if h["t_delivered"] is not None))
             self._write_episode()
             return self.episode
 

@@ -17,6 +17,9 @@ from .pricing import DEFAULT_PRICING, load_prices
 SHOW = ["condition", "n", "n_valid", "n_resolved", "resolve_rate", "resolve_ci_lo", "resolve_ci_hi", "n_delegated",
         "cost_total_mean", "wall_clock_sec_mean"]
 SHOW_BUGS = ["n_bugs", "bugs_fixed", "bug_fix_rate", "n_regressed"]  # when a task reported its bugs (SWE-sweep)
+SHOW_INTERACTIVE = ["condition", "n_episodes", "n_hints", "busy_at_arrival_frac", "delivery_median_sec",
+                    "response_median_sec", "dispatch_median_sec", "touch_median_sec", "edit_median_sec",
+                    "touch_before_next", "hinted_fixed_frac"]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -40,6 +43,10 @@ def main(argv: list[str] | None = None) -> int:
     conds = tables["conditions"]
     print(conds[SHOW + (SHOW_BUGS if conds["n_bugs"].sum() else [])].to_string(index=False,
                                                                                 float_format=lambda x: f"{x:.3g}"))
+    inter = tables["interactivity"]
+    if len(inter):
+        print("\ninteractivity (seconds after each hint was sent; medians count a missing event as never):")
+        print(inter[SHOW_INTERACTIVE].to_string(index=False, float_format=lambda x: f"{x:.3g}"))
     print(f"\n{summ['n_valid']} of {summ['n_trials']} trials valid; invalid: {summ['invalid_reasons'] or 'none'}")
     cp = summ["critical_path"]
     overhead = "n/a" if cp["mean_overhead_sec"] is None else f"{cp['mean_overhead_sec']:.3g} s"

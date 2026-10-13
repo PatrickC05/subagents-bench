@@ -213,3 +213,103 @@ def debate_prompt(instruction: str, own: str, others: list[tuple[int, str]]) -> 
 def report_with_revision(original: str, revised: str) -> str:
     return (f"{original}\n\n[post-debate revision, written without tools after reading the other candidates' "
             f"reports; the report above is what was actually done]\n{revised}")
+
+
+# Interactive episodes (``interactive:`` in the config): a timed session in which the task's
+# subtasks arrive as user messages, with no step budget and no `finish`.
+INTERACTIVE = """\
+You are an autonomous agent working inside a Linux container, in a session with a user. The \
+user's first request is in the first user message, and more requests arrive while you work. \
+The user does not answer questions. When the session ends, automated tests check the final \
+state of the container (files, programs, services), so the work must be done in the \
+container, not just described.
+
+## Session
+The session lasts {minutes} minutes from the first message, then ends wherever you are. New \
+user messages{and_reports} are delivered between your steps: a step is one response with its \
+tool calls, and anything that arrives during a step waits until all of its tools have \
+finished. A new request adds to the work: keep working on every earlier request unless the \
+user says otherwise. A note after each step shows the time used{running}. When you have \
+nothing to do until {until}, call `wait`.
+
+## Tools
+{tools}
+Relative paths are resolved against your shell's current directory, which starts in {workdir}.
+"""
+WAIT_LINE = "- `wait`: pause until {until} (or timeout_sec passes); replying without a tool call also waits."
+BACKGROUND_SPAWN_LINE = ("- `spawn_subagents`: start subagents in the background (see Subagents below); "
+                         "it returns at once and each report arrives as a message.")
+SUBAGENTS_BACKGROUND = """
+## Subagents
+`spawn_subagents(instructions)` takes a list of instructions and starts one subagent per \
+instruction in the background; the call returns at once. Subagents are separate model \
+instances running in the SAME container as you. Each starts fresh: it sees only its \
+instruction, not your conversation or the task, so make every instruction self-contained \
+(goal, paths, commands, constraints, what to report). Each runs at most {max_steps} steps; its \
+written report arrives as a message when it finishes, and you keep working (or `wait`) \
+meanwhile. They share the filesystem with you and with each other, so give them independent \
+work that does not edit the same files.
+{hint}
+Scope: {scope}
+
+Limits: at most {max_concurrent} subagents run at once; instructions beyond the free slots are \
+not run. At most {max_dispatches} subagent runs per episode; the budget left is shown after each \
+step.
+"""
+INTERACTIVE_DELEGATION_HINT = ("\nYour attention is the scarce resource: while your own tools run, new requests "
+                               "wait until they finish. Subagents run in the background, so delegate long work "
+                               "(investigating and fixing a bug, running a test suite) and keep yourself free to "
+                               "respond to new requests and to combine reports.\n")
+FIRST_HINT = "{instruction}\n\nHint: {hint}"
+NEXT_HINT = "Another one, while you keep working on the earlier ones.\n\nHint: {hint}"
+USER_EVENT = "[{at} elapsed] Message from the user:\n{text}"
+REPORT_EVENT = "[{at} elapsed] Report from subagent {agent} ({status}, {steps} steps) on: {instruction}\n{report}"
+WAIT_RESULT = "[waited {sec:.0f}s]"
+
+
+def clock(sec: float) -> str:
+    sec = max(0, int(sec))
+    return f"{sec // 60}:{sec % 60:02d}"
+
+
+def interactive_prompt(cfg: ExperimentConfig, workdir: str) -> str:
+    b, s, i = cfg.budget, cfg.subagent, cfg.interactive
+    names = cfg.orchestrator_tools
+    subagents = cfg.topology == "subagents"
+    background = subagents and s.spawn_mode == "background"
+    until = "a subagent report or a new user message arrives" if background else "a new user message arrives"
+    lines = [TOOL_LINES[t].format(t=b.command_timeout_sec, tmax=b.max_command_timeout_sec) for t in names]
+    if subagents:
+        lines.append(BACKGROUND_SPAWN_LINE if background else SPAWN_LINE)
+    lines.append(WAIT_LINE.format(until=until))
+    if subagents and not {"bash", "edit_file"} & set(names):
+        lines.append(MANAGER_NOTE)
+    text = INTERACTIVE.format(minutes=f"{i.wall_clock_sec / 60:g}", and_reports=" and subagent reports" if background else "",
+                              running=" and the subagents running" if background else "", until=until,
+                              tools="\n".join(lines), workdir=workdir)
+    if not subagents:
+        return text
+    hint = INTERACTIVE_DELEGATION_HINT if s.delegation_hint else ""
+    if background:
+        return text + SUBAGENTS_BACKGROUND.format(max_steps=s.max_steps, hint=hint, scope=SCOPE[s.scope],
+                                                  max_concurrent=s.max_concurrent, max_dispatches=s.max_dispatches)
+    n = s.arbiter.n_candidates
+    arbiter, hard = s.strategy == "arbiter", s.scope == "hard"
+    return text + SUBAGENTS.format(
+        max_steps=s.max_steps, hint=hint,
+        strategy=STRATEGY[s.strategy].format(n=n, diffs=" (and their file changes)" if hard else "",
+                                             copy=ARBITER_COPY if hard else ""),
+        scope=SCOPE[s.scope],
+        per_call=max(1, s.max_concurrent // n) if arbiter else s.max_concurrent,
+        order=f", each by {n} candidates" if arbiter else " (in order)" if s.strategy == "sequential" else "",
+        max_dispatches=s.max_dispatches, per_run="; every candidate counts as one run" if arbiter else "",
+    )
+
+
+def interactive_note(elapsed: float, total: float, running: list[tuple[str, float]] | None,
+                     dispatches_left: int | None) -> str:
+    """``running``: (agent id, seconds running) of the live background subagents, or None."""
+    note = f"[{clock(elapsed)} of {clock(total)} elapsed"
+    if running is not None:
+        note += "; subagents running: " + (", ".join(f"{a} ({clock(t)})" for a, t in running) or "none")
+    return note + (f"; dispatch budget left: {dispatches_left}]" if dispatches_left is not None else "]")

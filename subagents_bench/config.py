@@ -13,6 +13,8 @@ import yaml
 TOPOLOGIES = ("single", "subagents")
 STRATEGIES = ("parallel", "sequential", "arbiter")
 SCOPES = ("easy", "medium", "hard")
+SPAWN_MODES = ("blocking", "background")
+HINT_DETAILS = ("files", "tests", "report")
 TOOL_NAMES = ("bash", "edit_file", "read_file", "list_dir", "search")
 
 
@@ -53,6 +55,9 @@ class SubagentConfig:
     max_steps: int = 8
     max_output_chars: int = 12000
     delegation_hint: bool = False  # tell the orchestrator its steps are scarce and subagents' steps free
+    # Interactive episodes only: `background` returns from spawn_subagents at once and delivers each
+    # report as a message when its subagent ends; `blocking` waits for all of them, as in batch episodes.
+    spawn_mode: str = "blocking"
     arbiter: ArbiterConfig = field(default_factory=ArbiterConfig)
 
 
@@ -70,6 +75,19 @@ class ToolsConfig:
 
 
 @dataclass
+class InteractiveConfig:
+    """A timed session: the task's subtasks arrive one by one as user messages (SWE-sweep)."""
+
+    wall_clock_sec: float = 3600.0  # the episode ends here, wherever it is
+    interval_sec: float = 300.0  # hint k (0-based) is sent at k * interval_sec
+    max_hints: int | None = None  # None: as many as fit in the wall clock (and the task has)
+    hint_detail: str = "tests"  # files | tests (+ the hidden tests' ids) | report (a generated bug report)
+    order_seed: int = 0  # the subtasks' order, shuffled per task with this seed (same for every condition)
+    end_when_idle: bool = True  # end once every hint was sent, nothing runs and the orchestrator waits
+    max_context_chars: int | None = None  # elide the oldest tool results beyond this (None: never)
+
+
+@dataclass
 class ExperimentConfig:
     name: str
     orchestrator: ModelConfig
@@ -77,6 +95,7 @@ class ExperimentConfig:
     subagent: SubagentConfig = field(default_factory=SubagentConfig)
     budget: BudgetConfig = field(default_factory=BudgetConfig)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
+    interactive: InteractiveConfig | None = None  # None: the batch episode (a step budget, `finish`)
 
     @property
     def subagent_model(self) -> ModelConfig:
@@ -96,6 +115,7 @@ _NESTED = {
     (ExperimentConfig, "subagent"): SubagentConfig,
     (ExperimentConfig, "budget"): BudgetConfig,
     (ExperimentConfig, "tools"): ToolsConfig,
+    (ExperimentConfig, "interactive"): InteractiveConfig,
     (SubagentConfig, "model"): ModelConfig,
     (SubagentConfig, "arbiter"): ArbiterConfig,
 }
@@ -133,7 +153,36 @@ def from_dict(raw: Any) -> ExperimentConfig:
     bad = sorted(set(cfg.tools.orchestrator_tools or []) - set(TOOL_NAMES))
     if bad:
         raise ConfigError(f"tools.orchestrator_tools: unknown tool(s) {bad}; choose from {list(TOOL_NAMES)}")
+    if cfg.subagent.spawn_mode not in SPAWN_MODES:
+        raise ConfigError(f"subagent.spawn_mode: {cfg.subagent.spawn_mode!r} is not one of {', '.join(SPAWN_MODES)}")
+    if cfg.interactive is not None:
+        _check_interactive(cfg)
+    elif cfg.subagent.spawn_mode != "blocking":
+        raise ConfigError("subagent.spawn_mode: background needs an `interactive` episode")
     return cfg
+
+
+def _check_interactive(cfg: ExperimentConfig) -> None:
+    i = cfg.interactive
+    if i.hint_detail not in HINT_DETAILS:
+        raise ConfigError(f"interactive.hint_detail: {i.hint_detail!r} is not one of {', '.join(HINT_DETAILS)}")
+    for name in ("wall_clock_sec", "interval_sec"):
+        v = getattr(i, name)
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or v <= 0:
+            raise ConfigError(f"interactive.{name}: expected a positive number, got {v!r}")
+    for name, v, lo in (("max_hints", i.max_hints, 1), ("max_context_chars", i.max_context_chars, 10000)):
+        if v is not None and (isinstance(v, bool) or not isinstance(v, int) or v < lo):
+            raise ConfigError(f"interactive.{name}: expected null or an integer >= {lo}, got {v!r}")
+    if isinstance(i.order_seed, bool) or not isinstance(i.order_seed, int):
+        raise ConfigError(f"interactive.order_seed: expected an integer, got {i.order_seed!r}")
+    if not isinstance(i.end_when_idle, bool):
+        raise ConfigError(f"interactive.end_when_idle: expected true or false, got {i.end_when_idle!r}")
+    if cfg.topology == "subagents" and cfg.subagent.spawn_mode == "background" and cfg.subagent.strategy != "parallel":
+        raise ConfigError("subagent.spawn_mode: background runs each instruction as its own subagent; "
+                          "it needs strategy parallel")
+    if cfg.topology == "subagents" and cfg.subagent.delegation_hint and cfg.subagent.spawn_mode != "background":
+        raise ConfigError("subagent.delegation_hint: in an interactive episode it says background subagents keep "
+                          "the orchestrator free, so it needs spawn_mode background")
 
 
 def load_config(path: str | os.PathLike) -> ExperimentConfig:
