@@ -1,0 +1,6 @@
+# Smoke: the pilot's 15 conditions on 2 easy tasks x 1 round = 15 harbor jobs, 30 episodes.
+#   scripts/run_experiment.sh configs/sweeps/smoke.yaml
+extends: configs/sweeps/pilot.yaml   # everything set here wins
+name: smoke
+tasks: [fix-git, prove-plus-comm]
+rounds: 1

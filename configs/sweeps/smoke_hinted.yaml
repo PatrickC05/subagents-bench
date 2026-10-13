@@ -1,0 +1,24 @@
+# Smoke of the delegation hint: the pilot's 10 all-tools subagent conditions with
+# `subagent.delegation_hint: true`, on the smoke's 2 tasks x 1 round = 10 harbor jobs, 20 episodes.
+# The same conditions with the neutral prompt are in the `smoke` sweep.
+#   scripts/run_experiment.sh configs/sweeps/smoke_hinted.yaml
+name: smoke_hinted
+base: configs/sail/base.yaml
+dataset: terminal-bench@2.0
+tasks: [fix-git, prove-plus-comm]
+rounds: 1
+order_seed: 0
+harbor: {n_concurrent: 4, agent_timeout_multiplier: 2.0}
+
+conditions:
+  hinted_parallel_easy: {subagent: {delegation_hint: true, strategy: parallel, scope: easy}}
+  hinted_parallel_medium: {subagent: {delegation_hint: true, strategy: parallel, scope: medium}}
+  hinted_parallel_hard: {subagent: {delegation_hint: true, strategy: parallel, scope: hard}}
+  hinted_sequential_easy: {subagent: {delegation_hint: true, strategy: sequential, scope: easy}}
+  hinted_sequential_medium: {subagent: {delegation_hint: true, strategy: sequential, scope: medium}}
+  hinted_sequential_hard: {subagent: {delegation_hint: true, strategy: sequential, scope: hard}}
+  hinted_arbiter_easy: {subagent: {delegation_hint: true, strategy: arbiter, scope: easy}}
+  hinted_arbiter_medium: {subagent: {delegation_hint: true, strategy: arbiter, scope: medium}}
+  hinted_arbiter_hard: {subagent: {delegation_hint: true, strategy: arbiter, scope: hard}}
+  # Same-model control of hinted_parallel_hard.
+  hinted_samemodel_parallel_hard: {subagent: {delegation_hint: true, model: null, strategy: parallel, scope: hard}}

@@ -1,0 +1,50 @@
+# Pilot: 15 conditions x 10 Terminal-Bench 2.0 tasks x 3 rounds = 45 harbor jobs, 450 episodes.
+#   scripts/run_experiment.sh configs/sweeps/pilot.yaml
+# Each condition is deep-merged onto `base` (mappings merge; lists, scalars and null replace)
+# and named after its key. Relative paths resolve against the repository root.
+name: pilot
+base: configs/sail/base.yaml
+dataset: terminal-bench@2.0
+tasks:
+  - fix-git                    # Terminal-Bench "easy"
+  - prove-plus-comm
+  - cobol-modernization
+  - overfull-hbox
+  - crack-7z-hash              # short "medium" (expert estimate <= 20 min)
+  - raman-fitting
+  - constraints-scheduling
+  - nginx-request-logging
+  - openssl-selfsigned-cert
+  - polyglot-c-py
+rounds: 3
+order_seed: 0                  # each round runs the conditions in its own shuffled order
+harbor:
+  n_concurrent: 4              # trials of a job at once
+  # x each task's agent timeout: 30 min for 8 of the 10 tasks (900 s), 25 min for overfull-hbox,
+  # 40 min for constraints-scheduling. The step budget is the real limit; this caps a stuck trial.
+  agent_timeout_multiplier: 2.0
+# jobs_dir: jobs/<name> unless set
+
+conditions:
+  # The orchestrator alone: the study's 5 steps, and 40 = 5 steps x 8 subagent steps.
+  single_5step: {topology: single}
+  single_matched: {topology: single, budget: {orchestrator_steps: 40}}
+  # Gemma-4-31B subagents (base.yaml): strategy x scope.
+  gemma31b_parallel_easy: {subagent: {strategy: parallel, scope: easy}}
+  gemma31b_parallel_medium: {subagent: {strategy: parallel, scope: medium}}
+  gemma31b_parallel_hard: {subagent: {strategy: parallel, scope: hard}}
+  gemma31b_sequential_easy: {subagent: {strategy: sequential, scope: easy}}
+  gemma31b_sequential_medium: {subagent: {strategy: sequential, scope: medium}}
+  gemma31b_sequential_hard: {subagent: {strategy: sequential, scope: hard}}
+  gemma31b_arbiter_easy: {subagent: {strategy: arbiter, scope: easy}}
+  gemma31b_arbiter_medium: {subagent: {strategy: arbiter, scope: medium}}
+  gemma31b_arbiter_hard: {subagent: {strategy: arbiter, scope: hard}}
+  # Same-model control: the subagents run the orchestrator's model.
+  samemodel_parallel_hard: {subagent: {model: null, strategy: parallel, scope: hard}}
+  # Manager: only read-only tools of its own, so every command and edit is delegated (with all
+  # tools the orchestrator delegated in 0 of 18 episodes of the first smoke run).
+  manager_parallel_hard:
+    subagent: {strategy: parallel, scope: hard}
+    tools: &manager {orchestrator_tools: [read_file, list_dir, search]}
+  manager_sequential_hard: {subagent: {strategy: sequential, scope: hard}, tools: *manager}
+  manager_arbiter_hard: {subagent: {strategy: arbiter, scope: hard}, tools: *manager}
