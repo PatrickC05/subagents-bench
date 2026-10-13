@@ -1,0 +1,15 @@
+# The delegation hint on harder tasks: gemma31b_parallel_hard with the neutral prompt and with
+# `subagent.delegation_hint: true`, on 3 of the pilot's Terminal-Bench "medium" tasks x 2 rounds
+# = 4 harbor jobs, 12 episodes. On the 2 easy smoke tasks neither prompt delegated (issue #7).
+#   scripts/run_experiment.sh configs/sweeps/hint_medium.yaml
+name: hint_medium
+base: configs/sail/base.yaml
+dataset: terminal-bench@2.0
+tasks: [raman-fitting, constraints-scheduling, polyglot-c-py]
+rounds: 2
+order_seed: 0
+harbor: {n_concurrent: 4, agent_timeout_multiplier: 2.0}
+
+conditions:
+  gemma31b_parallel_hard: {subagent: {strategy: parallel, scope: hard}}
+  hinted_parallel_hard: {subagent: {delegation_hint: true, strategy: parallel, scope: hard}}

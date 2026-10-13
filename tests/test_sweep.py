@@ -126,15 +126,18 @@ def test_pilot_and_smoke_specs(capsys):
         assert out.count(f"$ SUBAGENTS_BENCH_CONFIG=jobs/{s.name}/configs/") == len(sweep.plan(s))
 
 
-def test_hinted_smoke_spec_matches_the_pilot_but_for_the_hint():
-    pilot, hinted = sweep.load_spec(REPO / "configs/sweeps/pilot.yaml"), sweep.load_spec(REPO / "configs/sweeps/smoke_hinted.yaml")
+def test_hint_specs_match_the_pilot_but_for_the_hint():
+    pilot = sweep.load_spec(REPO / "configs/sweeps/pilot.yaml")
+    hinted, medium = (sweep.load_spec(REPO / f"configs/sweeps/{n}.yaml") for n in ("smoke_hinted", "hint_medium"))
     assert (hinted.tasks, hinted.rounds, len(sweep.plan(hinted))) == (TASKS, 1, 10)
-    assert (hinted.n_concurrent, hinted.timeout_multiplier) == (pilot.n_concurrent, pilot.timeout_multiplier)
-    for cond, cfg in hinted.configs.items():
-        twin = cond.replace("hinted_", "gemma31b_", 1) if "samemodel" not in cond else "samemodel_parallel_hard"
-        assert cfg.subagent.delegation_hint and not pilot.configs[twin].subagent.delegation_hint
-        cfg.subagent.delegation_hint = False
-        assert {**cfg.to_dict(), "name": twin} == pilot.configs[twin].to_dict()
+    assert set(medium.tasks) < set(pilot.tasks) and (medium.rounds, len(sweep.plan(medium))) == (2, 4)
+    for s in (hinted, medium):
+        assert (s.n_concurrent, s.timeout_multiplier) == (pilot.n_concurrent, pilot.timeout_multiplier)
+        for cond, cfg in s.configs.items():
+            twin = cond.replace("hinted_", "gemma31b_", 1) if "samemodel" not in cond else "samemodel_parallel_hard"
+            assert cfg.subagent.delegation_hint == cond.startswith("hinted_") and not pilot.configs[twin].subagent.delegation_hint
+            cfg.subagent.delegation_hint = False
+            assert {**cfg.to_dict(), "name": twin} == pilot.configs[twin].to_dict()
 
 
 def test_dry_run_runs_and_writes_nothing(fake, spec, capsys):
