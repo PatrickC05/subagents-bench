@@ -152,6 +152,18 @@ metric; `resolved` keeps meaning every bug of the task fixed. Expect 5-20
 minutes and about ten times the tokens of a Terminal-Bench episode, and an
 image build of a few minutes per task the first time (1-2.5 GB each).
 
+The first agent run
+([`configs/sweeps/swe_hint.yaml`](configs/sweeps/swe_hint.yaml),
+2026-10-13: `gemma31b_parallel_hard` with the neutral and the hinted prompt
+on goawk, click and svgo x 2 rounds, 12 of 12 trials valid, $0.45) is the
+opposite of Terminal-Bench: the orchestrator delegated in every episode, 6
+of 6 with each prompt, but no agent changed a source file and no bug was
+fixed (0 of 152). The 82 Gemma subagents spent about two thirds of their
+8 steps reading code (one tool call per step, 80 used all 8), and the
+orchestrators delegated at step 3-5, with 0-2 steps left. There is no
+single-agent baseline on these repositories yet
+([issue #7](https://github.com/PatrickC05/subagents-bench/issues/7)).
+
 ## Where data and figures land
 
 ```
