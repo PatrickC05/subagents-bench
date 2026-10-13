@@ -138,9 +138,12 @@ behind them, in [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Findings so far
 
-Three smoke sweeps (2 easy tasks x 1 round each, so no resolve-rate claims yet).
-The first two ran on the earlier, larger harness; the third (2026-10-12) on
-this code: 30 of 30 trials valid, 21 solved, no reruns, $0.11, about 45 min.
+Four smoke sweeps (2 easy tasks x 1 round each, so no resolve-rate claims yet).
+The first two ran on the earlier, larger harness; the third and fourth
+(2026-10-12) on this code. The third ran all 15 conditions: 30 of 30 trials
+valid, 21 solved, no reruns, $0.11, about 45 min. The fourth (`smoke_hinted`)
+ran the 10 all-tools subagent conditions with the delegation hint: 20 of 20
+valid, 13 solved, no reruns, $0.019, about 15 min.
 
 - **An orchestrator with every tool does not delegate.** It spawned subagents
   in 0 of 18 Gemma-subagent episodes (and 0 of 2 same-model ones) in the first
@@ -149,6 +152,10 @@ this code: 30 of 30 trials valid, 21 solved, no reruns, $0.11, about 45 min.
   second and third sweeps, about 30 s and $0.0008 per episode, like the
   single-agent baselines (`single_5step` 1 of 2, then 2 of 2;
   `single_matched` 2 of 2 both times).
+- **Telling it to delegate did not help.** With `subagent.delegation_hint`
+  (its steps are scarce, subagent steps do not count) it still delegated in
+  0 of 20 episodes. It read the hint: in 8 episodes it weighed delegating and
+  each time judged the task too simple to need it (issue #7).
 - **The manager conditions do delegate**: 6 of 6 episodes in both sweeps.
   They solved 3 of 6 on the earlier harness and 5 of 6 on this one
   (parallel 2 of 2, sequential 2 of 2, arbiter 1 of 2), at about 7-9 min and

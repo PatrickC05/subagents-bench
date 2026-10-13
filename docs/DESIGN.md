@@ -173,15 +173,21 @@ running in the SAME container", so the same-model control reads the same
 text as the Gemma conditions. It states the accounting plainly: "One
 spawn_subagents call uses one of your steps", and the subagents' own steps
 do not count. The default (all-tools) prompt never asks the orchestrator to
-delegate.
+delegate. `subagent.delegation_hint: true` adds one paragraph that states the
+trade-off: its steps are scarce, subagent steps do not count, so delegate as
+much as the scope allows and keep its own steps for planning, combining
+reports and checking.
 
 **Delegation uptake and the manager conditions.** With every tool of its
 own, the orchestrator spawned subagents in 0 of 18 Gemma-subagent episodes
 on 2026-10-11 (and 0 of 2 same-model ones), and in 0 of 20 subagent-condition
 episodes of the complete 2026-10-12 smoke sweep: it solved the tasks itself,
-so those conditions measured only the orchestrator. The three `manager_*_hard`
-conditions give it only the read-only tools and add one line to its prompt:
-everything that runs a command or changes the container must be delegated.
+so those conditions measured only the orchestrator. With the delegation hint
+it still delegated in 0 of 20 (the `smoke_hinted` sweep, issue #7): in 8 of
+them it weighed delegating and judged the task too simple. The three
+`manager_*_hard` conditions give it only the read-only tools and add one line
+to its prompt: everything that runs a command or changes the container must
+be delegated.
 Only hard scope makes sense for a manager (otherwise nobody could edit). In
 that sweep the managers delegated in 6 of 6 episodes, at about 25 times the
 cost and 20 times the wall clock of an all-tools episode. The analysis
