@@ -150,8 +150,9 @@ def test_dry_run_runs_and_writes_nothing(fake, spec, capsys):
 # --- running and resuming ------------------------------------------------------------------------
 
 
-def test_sweep_runs_every_job_then_resume_skips_them(fake, spec):
+def test_sweep_runs_every_job_then_resume_skips_them(fake, spec, capsys):
     assert go(spec) == 0
+    assert capsys.readouterr().out.endswith("Sweep 't' complete\nNext: scripts/analyze.sh jobs/t\n")
     jobs = [sweep.job_name(spec, r, c) for r, c in sweep.plan(spec)]
     assert fake.jobs() == jobs
     for call, (_, cond) in zip(fake.calls(), sweep.plan(spec)):
