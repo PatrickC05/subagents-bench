@@ -159,6 +159,22 @@ def test_swe_sweep_spec(capsys):
     assert capsys.readouterr().out.count("$ SUBAGENTS_BENCH_CONFIG=jobs/swe_sweep/configs/") == 45
 
 
+def test_swe_hint_spec_matches_swe_sweep_but_for_the_hint():
+    s, full = sweep.load_spec(REPO / "configs/sweeps/swe_hint.yaml"), sweep.load_spec(REPO / "configs/sweeps/swe_sweep.yaml")
+    assert set(s.tasks) < set(full.tasks) and (s.rounds, len(sweep.plan(s))) == (2, 4)
+    assert (s.dataset_path, s.platform, s.n_concurrent, s.timeout_multiplier, s.extra_args) == (
+        full.dataset_path, full.platform, full.n_concurrent, full.timeout_multiplier, full.extra_args)
+    for cond, cfg in s.configs.items():
+        twin = cond.replace("hinted_", "gemma31b_", 1)
+        assert cfg.subagent.delegation_hint == cond.startswith("hinted_") and not full.configs[twin].subagent.delegation_hint
+        cfg.subagent.delegation_hint = False
+        assert {**cfg.to_dict(), "name": twin} == full.configs[twin].to_dict()
+    text = (REPO / "configs/sweeps/swe_hint.yaml").read_text()
+    if s.dataset_path.is_dir():
+        assert {t: int(re.search(rf"- {t} +# \w+, (\d+)\n", text)[1]) for t in s.tasks} == {
+            t: sweep.n_subtasks(s.dataset_path / t) for t in s.tasks}
+
+
 def test_swe_sweep_larger_budget_hint(tmp_path, monkeypatch):
     """swe_sweep.yaml's larger step budget, made as its comments say (orchestrator_steps and the
     commented conditions block): every condition gets it, single_matched it x 8 subagent steps."""
