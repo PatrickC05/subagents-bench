@@ -1,0 +1,46 @@
+# Base config of every condition (a sweep deep-merges each condition's
+# overrides onto this file and sets `name` to the condition name).
+name: base
+topology: subagents              # `single`: the orchestrator works alone
+
+# Large orchestrator on Sail's `balanced` tier (sent as X-Sail-Completion-Window).
+orchestrator:
+  model: deepseek-ai/DeepSeek-V4.1-Flash
+  completion_window: balanced
+  temperature: 0.7               # repeated trials are independent samples
+  # 8192 was too small: in the 2026-10-11 smoke runs the orchestrator reached
+  # 7976 output tokens and the judge (same model) hit the limit in 2 of 5 calls.
+  max_output_tokens: 32768
+  price_in: 0.07                 # USD per 1M tokens, Sail balanced tier
+  price_cache_read: 0.005
+  price_out: 0.22
+
+subagent:
+  model:                         # `model: null` = same-model control
+    model: nvidia/Gemma-4-31B-IT-NVFP4
+    completion_window: balanced
+    temperature: 0.7
+    max_output_tokens: 4096
+    price_in: 0.11
+    price_cache_read: 0.06
+    price_out: 0.32
+  strategy: parallel             # parallel | sequential | arbiter
+  scope: hard                    # easy (read) | medium (+bash) | hard (+edit_file)
+  max_concurrent: 3              # subagents live at once
+  max_dispatches: 15             # per episode; every arbiter candidate counts
+  max_steps: 8
+  max_output_chars: 12000
+  delegation_hint: false          # true: the prompt says its steps are scarce, subagents' free
+  arbiter:
+    n_candidates: 3
+    debate_rounds: 1
+    confidence_threshold: 0.8    # debate unless agreement and confidence >= this
+
+budget:
+  orchestrator_steps: 5
+  command_timeout_sec: 180       # default bash timeout
+  max_command_timeout_sec: 900   # the most a model may ask for
+
+tools:
+  max_output_chars: 12000
+  orchestrator_tools: null       # null = all; [read_file, list_dir, search] = manager

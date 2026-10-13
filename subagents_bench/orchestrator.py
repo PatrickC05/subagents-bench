@@ -1,233 +1,202 @@
-"""The orchestrator agent: a frontier model directing subagents.
+"""The orchestrator: up to ``orchestrator_steps`` steps of one LLM call plus its tool calls.
 
-The orchestrator runs a bounded tool loop (``budget.orchestrator_steps`` steps,
-fixed at 5 for the study). On top of the base tool kit it gets:
-
-* ``spawn_subagents`` -- dispatch one or more subagents, each with its own
-  instruction. Dispatches run concurrently (threads; the LLM calls are
-  I/O-bound) up to ``subagent.max_concurrent`` at a time, and are capped over
-  the episode by ``subagent.max_dispatches``. Every dispatch after the first is
-  counted as a re-dispatch for telemetry.
-* ``finish`` -- declare the issue resolved and end the episode.
-
-In the ``single`` topology the subagent tools are withheld, giving baseline 1
-(orchestrator working alone) for free.
-
-The loop also enforces the two hard budgets -- total token budget and wall-clock
-timeout -- ending the episode with the appropriate ``exit_reason`` when either
-is hit.
+Tools: its own (all five, or ``tools.orchestrator_tools`` for a manager), ``finish``, and with
+subagents ``spawn_subagents``. Exit reasons: finished, max_steps, no_tool_call, cancelled,
+provider_error, billing_error, error. A provider or billing failure of any role stops the
+episode at once (the recorder sets the stop event); ``run`` always finalizes the records.
 """
 
 from __future__ import annotations
 
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Callable
 
-from .config import ExperimentConfig, Topology
-from .environment import Environment
-from .llm import LLMClient, Message, ToolCall, ToolResult, ToolSpec, make_client
-from .prompts import orchestrator_system
-from .subagent import Subagent
-from .telemetry import CallEvent, Telemetry
-from .tools import BASE_SPECS, BASE_TOOLS
+from .arbiter import run_arbitration
+from .config import ExperimentConfig
+from .environment import AgentStopped
+from .llm import BillingError, LLMError, Message, SailClient, ToolCall, ToolResult, ToolSpec
+from .prompts import LENGTH_CUTOFF_NOTE, LENGTH_CUTOFF_REPLY, orchestrator_prompt, step_note
+from .records import EpisodeRecorder, Who
+from .subagent import Runtime, new_dispatch, run_dispatch
+from .tools import ToolContext, ToolOutput, run_tool, tool_specs, truncate
 
 SPAWN_SPEC = ToolSpec(
-    name="spawn_subagents",
-    description=(
-        "Dispatch one or more subagents to work in the shared sandbox, in "
-        "parallel. Provide a list of instructions; each becomes one subagent. "
-        "Returns each subagent's report."
-    ),
-    parameters={
-        "type": "object",
-        "properties": {
-            "instructions": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "One self-contained instruction per subagent to spawn.",
-            }
-        },
-        "required": ["instructions"],
-    },
+    "spawn_subagents",
+    "Delegate work to subagents in the same container; each instruction must be self-contained. Returns "
+    "their reports when all have finished. The system prompt describes the strategy, tools and limits.",
+    {"type": "object", "properties": {"instructions": {"type": "array", "items": {"type": "string"},
+                                                       "description": "One self-contained instruction per subagent."}},
+     "required": ["instructions"]},
 )
-
 FINISH_SPEC = ToolSpec(
-    name="finish",
-    description="Declare the issue resolved and end the session.",
-    parameters={
-        "type": "object",
-        "properties": {
-            "summary": {"type": "string", "description": "What you changed and why it resolves the issue."}
-        },
-        "required": [],
-    },
+    "finish",
+    "Declare the task complete and end the episode; the container is then graded by automated tests.",
+    {"type": "object", "properties": {"summary": {"type": "string", "description": "What you did and how you verified it."}},
+     "required": []},
 )
+MIN_REPORT_CHARS = 2000  # per report in a spawn result
 
 
 class Orchestrator:
-    def __init__(self, config: ExperimentConfig, env: Environment, telemetry: Telemetry):
-        self.config = config
-        self.env = env
-        self.telemetry = telemetry
-        self.client: LLMClient = make_client(config.orchestrator)
+    def __init__(self, config: ExperimentConfig, env: Any, rec: EpisodeRecorder, workdir: str,
+                 client_factory: Callable[[Any], Any] = SailClient):
+        self.cfg, self.env, self.rec, self.workdir = config, env, rec, workdir
+        env.stop_event = rec.stop_event
+        self.client_factory = client_factory
+        self.subagents = config.topology == "subagents"
+        self.own_tools = config.orchestrator_tools
+        self.specs = tool_specs(self.own_tools, config.budget) + ([SPAWN_SPEC] if self.subagents else []) + [FINISH_SPEC]
+        self.system = orchestrator_prompt(config, workdir)
+        b = config.budget
+        self.ctx = ToolContext(env, "orchestrator", workdir, config.tools.max_output_chars, b.command_timeout_sec,
+                               b.max_command_timeout_sec)
+        self.who = Who("orchestrator", "orchestrator")
+        self.dispatches_left = config.subagent.max_dispatches
+        self.messages: list[Message] = []
 
-        self.with_subagents = config.topology is Topology.SUBAGENTS
-        self._sub_client: LLMClient | None = None
-        if self.with_subagents:
-            self._sub_client = make_client(config.resolved_subagent_model())
-
-        self._dispatch_count = 0
-        self._sub_counter = 0
-        # Instruction-following log: requested vs. actually-spawned per call.
-        self.spawn_log: list[dict] = []
-
-    @property
-    def _max_dispatches(self) -> int:
-        cap = self.config.subagent.max_dispatches
-        if cap is not None:
-            return cap
-        return self.config.subagent.max_concurrent * self.config.budget.orchestrator_steps
-
-    def _specs(self) -> list[ToolSpec]:
-        specs = [*BASE_SPECS, FINISH_SPEC]
-        if self.with_subagents:
-            specs.insert(-1, SPAWN_SPEC)
-        return specs
-
-    def run(self, issue: str) -> str:
-        system = orchestrator_system(self.config.subtask_type, self.with_subagents)
-        messages: list[Message] = [Message(role="user", content=issue)]
-        specs = self._specs()
-        budget = self.config.budget
-        final_summary = ""
-        exit_reason = "max_steps"
-
-        self.telemetry.start_episode()
-        deadline = time.time() + budget.timeout_sec
-
-        for step in range(1, budget.orchestrator_steps + 1):
-            if time.time() > deadline:
-                exit_reason = "timeout"
-                break
-            if self.telemetry.total_tokens >= budget.total_token_budget:
-                exit_reason = "token_budget"
-                break
-
-            self.telemetry.record_orchestrator_step()
-            resp = self.client.complete(system, messages, specs)
-            self.telemetry.record_call(
-                CallEvent(
-                    role="orchestrator",
-                    model=self.client.cfg.model,
-                    agent_id="orchestrator",
-                    step=step,
-                    t_start=resp.t_start,
-                    t_end=resp.t_end,
-                    input_tokens=resp.usage.input_tokens,
-                    output_tokens=resp.usage.output_tokens,
-                    cache_read_tokens=resp.usage.cache_read_tokens,
-                    cost_usd=resp.cost_usd,
-                    n_tool_calls=len(resp.tool_calls),
-                )
-            )
-            messages.append(
-                Message(role="assistant", content=resp.text, tool_calls=resp.tool_calls)
-            )
-
-            if not resp.tool_calls:
-                # Model stopped without finishing; nudge once by ending.
-                exit_reason = "no_tool_call"
-                final_summary = resp.text
-                break
-
-            results: list[ToolResult] = []
-            finished = False
-            for tc in resp.tool_calls:
-                if tc.name == "finish":
-                    final_summary = tc.arguments.get("summary", resp.text)
-                    finished = True
-                    exit_reason = "finished"
-                    results.append(ToolResult(call_id=tc.id, content="Session ended."))
-                    continue
-                results.append(self._dispatch_tool(tc, step))
-            messages.append(Message(role="tool", tool_results=results))
-            if finished:
-                break
-
-        self.telemetry.end_episode(exit_reason)
-        self.telemetry.spawn_log = self.spawn_log
-        return final_summary
-
-    # ---- tool dispatch -----------------------------------------------------
-
-    def _dispatch_tool(self, tc: ToolCall, step: int) -> ToolResult:
-        if tc.name == "spawn_subagents":
-            return self._spawn(tc, step)
-        fn = BASE_TOOLS.get(tc.name)
-        if fn is None:
-            return ToolResult(call_id=tc.id, content=f"[error] unknown tool: {tc.name}", is_error=True)
+    def run(self, instruction: str) -> str:
+        """Run the episode, finalize its records and return the exit reason."""
+        clients: list[Any] = []
+        exit_reason, error = "max_steps", None
         try:
-            return ToolResult(call_id=tc.id, content=fn(self.env, tc.arguments))
-        except Exception as e:  # noqa: BLE001
-            return ToolResult(call_id=tc.id, content=f"[error] {type(e).__name__}: {e}", is_error=True)
+            clients.append(self.client_factory(self.cfg.orchestrator))
+            if self.subagents:
+                clients.append(self.client_factory(self.cfg.subagent_model))
+            self.rt = Runtime(self.cfg, self.env, self.rec, self.workdir, *clients)
+            self.rec.transcript(self.who, Message("system", self.system))
+            self._add(Message("user", instruction))
+            for step in range(1, self.cfg.budget.orchestrator_steps + 1):
+                outcome = self._step(step)
+                if outcome:
+                    exit_reason = outcome
+                    break
+        except (AgentStopped, LLMError) as e:
+            failure = self.rec.failure
+            if isinstance(failure, BillingError):
+                exit_reason = "billing_error"
+            elif failure is not None:
+                exit_reason = "provider_error"
+            else:
+                exit_reason = "cancelled" if isinstance(e, AgentStopped) else "error"  # e.g. ContextLengthError
+            cause = failure or e
+            error = None if exit_reason == "cancelled" else f"{type(cause).__name__}: {cause}"
+        except BaseException:
+            self.rec.finalize("error", traceback.format_exc()[-4000:])
+            raise
+        finally:
+            for c in clients:
+                c.close()
+        self.rec.finalize(exit_reason, error)
+        return exit_reason
 
-    def _spawn(self, tc: ToolCall, step: int) -> ToolResult:
-        if not self.with_subagents:
-            return ToolResult(call_id=tc.id, content="[error] subagents disabled in this config.", is_error=True)
+    def _add(self, m: Message, call_id: str | None = None) -> None:
+        self.messages.append(m)
+        self.rec.transcript(self.who, m, call_id)
 
-        requested = list(tc.arguments.get("instructions", []))
-        remaining = self._max_dispatches - self._dispatch_count
-        if remaining <= 0:
-            return ToolResult(
-                call_id=tc.id,
-                content=f"[error] subagent dispatch cap reached ({self._max_dispatches}).",
-                is_error=True,
-            )
-        granted = requested[: min(remaining, self.config.subagent.max_concurrent)]
+    def _note(self, step: int) -> str:
+        return step_note(step, self.cfg.budget.orchestrator_steps, self.dispatches_left if self.subagents else None)
 
-        self.spawn_log.append(
-            {"step": step, "requested": len(requested), "granted": len(granted)}
-        )
+    def _step(self, step: int) -> str | None:
+        """One step -> an exit reason, or None to go on. Its step record is written in any case."""
+        t_start = time.time()
+        t_llm_end = call_id = None
+        names: list[str] = []
+        groups: list[str] = []
+        finished = False
+        try:
+            try:
+                r, call_id = self.rec.llm(self.who, self.rt.orch_client, self.system, self.messages, self.specs, step)
+            finally:
+                t_llm_end = time.time()
+            cut_off = not r.tool_calls and r.finish_reason == "length"
+            self._add(Message("assistant", r.text or (LENGTH_CUTOFF_REPLY if cut_off else ""), r.tool_calls,
+                              reasoning=r.reasoning or None), call_id)
+            if not r.tool_calls:
+                if not cut_off:
+                    return "no_tool_call"
+                self._add(Message("user", f"{LENGTH_CUTOFF_NOTE}\n\n{self._note(step)}"))
+                return None
+            results: list[ToolResult] = []
+            for tc in r.tool_calls:
+                names.append(tc.name)
+                if finished:
+                    results.append(ToolResult(tc.id, "[not run: finish was called earlier in this step]", True))
+                    continue
+                out = self._tool(tc, step, call_id, groups)
+                finished = tc.name == "finish"
+                results.append(ToolResult(tc.id, out.text, out.is_error))
+                if self.rec.stop_event.is_set():
+                    raise AgentStopped("episode stopped")
+            last = results[-1]
+            results[-1] = ToolResult(last.call_id, f"{last.content}\n\n{self._note(step)}", last.is_error)
+            self._add(Message("tool", tool_results=results))
+            return "finished" if finished else None
+        finally:
+            self.rec.write("steps", {
+                "step": step, "call_id": call_id, "t_start": t_start, "t_llm_end": t_llm_end, "t_end": time.time(),
+                "tool_names": names, "group_ids": groups, "finished": finished,
+            })
 
-        results = self._run_subagents_parallel(granted)
+    def _tool(self, tc: ToolCall, step: int, call_id: str, groups: list[str]) -> ToolOutput:
+        def record(run: Callable[[], ToolOutput], who: Who = self.who) -> ToolOutput:
+            return self.rec.tool(who, step, call_id, tc, run)
 
-        for r in results:
-            is_redispatch = self._dispatch_count > 0
-            self._dispatch_count += 1
-            self.telemetry.record_dispatch(is_redispatch=is_redispatch, n_steps=r.steps_used)
+        if tc.name == "finish":
+            return record(lambda: ToolOutput("Episode finished."))
+        if tc.name == "spawn_subagents" and self.subagents:
+            instructions = tc.arguments.get("instructions")
+            if isinstance(instructions, str):
+                instructions = [instructions]
+            if not isinstance(instructions, list) or not instructions or not all(
+                    isinstance(x, str) and x.strip() for x in instructions):
+                return record(lambda: ToolOutput("[error] 'instructions' must be a non-empty list of strings", True))
+            group_id = self.rec.new_id("group")
+            groups.append(group_id)
+            return record(lambda: self._spawn(instructions, step, group_id), self.who.with_group(group_id))
+        if tc.name in self.own_tools:
+            return record(lambda: run_tool(self.ctx, tc.name, tc.arguments))
+        msg = f"[error] unknown tool {tc.name!r}; available: {', '.join(s.name for s in self.specs)}"
+        return record(lambda: ToolOutput(msg, is_error=True))
 
-        report = "\n\n".join(
-            f"### Subagent {r.agent_id} "
-            f"({'done' if r.completed else 'incomplete'}, {r.steps_used} steps)\n{r.report}"
-            for r in results
-        )
-        if len(granted) < len(requested):
-            report = (
-                f"[note] requested {len(requested)} subagents; granted {len(granted)} "
-                f"(concurrency/budget cap).\n\n" + report
-            )
-        return ToolResult(call_id=tc.id, content=report)
-
-    # ------------------------------------------------------------------
-
-    def _run_subagents_parallel(self, instructions: list[str]):
-        assert self._sub_client is not None
-        subagents = []
-        for instr in instructions:
-            self._sub_counter += 1
-            sa = Subagent(
-                agent_id=f"sub-{self._sub_counter}",
-                client=self._sub_client,
-                env=self.env,
-                telemetry=self.telemetry,
-                max_steps=self.config.subagent.max_steps,
-            )
-            subagents.append((sa, instr))
-
-        if len(subagents) == 1:
-            sa, instr = subagents[0]
-            return [sa.run(instr)]
-
-        with ThreadPoolExecutor(max_workers=len(subagents)) as pool:
-            futures = [pool.submit(sa.run, instr) for sa, instr in subagents]
-            return [f.result() for f in futures]
+    def _spawn(self, instructions: list[str], step: int, group_id: str) -> ToolOutput:
+        """Grant min(requested, per-call limit, budget) instructions and run them by strategy."""
+        s = self.cfg.subagent
+        per = s.arbiter.n_candidates if s.strategy == "arbiter" else 1
+        per_call = max(1, s.max_concurrent // per) if per > 1 else s.max_concurrent
+        granted = min(len(instructions), per_call, self.dispatches_left // per)
+        self.dispatches_left -= granted * per
+        t_start = time.time()
+        dispatch_ids: list[str] = []
+        arbitration_ids: list[str] = []
+        sections: list[tuple[str, str]] = []
+        try:
+            if s.strategy == "arbiter":
+                for i, text in enumerate(instructions[:granted]):
+                    outcome = run_arbitration(self.rt, text, i, group_id, step, dispatch_ids, arbitration_ids)
+                    sections.append(outcome)
+            else:
+                ds = [new_dispatch(self.rt, text, i, group_id, step) for i, text in enumerate(instructions[:granted])]
+                dispatch_ids += [d.dispatch_id for d in ds]
+                if s.strategy == "parallel" and len(ds) > 1:
+                    with ThreadPoolExecutor(len(ds)) as pool:
+                        results = list(pool.map(lambda d: run_dispatch(self.rt, d), ds))
+                else:
+                    results = [run_dispatch(self.rt, d) for d in ds]
+                sections = [(f"{d.agent_id}: {r.status}, {r.steps_used} steps", r.report) for d, r in zip(ds, results)]
+        finally:
+            self.rec.write("spawns", {
+                "group_id": group_id, "step": step, "strategy": s.strategy, "scope": s.scope,
+                "requested": len(instructions), "granted": granted, "dispatch_ids": dispatch_ids,
+                "arbitration_ids": arbitration_ids, "t_start": t_start, "t_end": time.time(),
+            })
+        parts = [f"[spawn_subagents: {s.strategy}, scope {s.scope}; ran {granted} of {len(instructions)} "
+                 f"instruction(s); dispatch budget left: {self.dispatches_left}]"]
+        if granted < len(instructions):
+            parts.append(f"[note: instruction(s) {granted + 1}-{len(instructions)} were NOT run: the per-call "
+                         "limit or the episode's dispatch budget]")
+        cap = max(MIN_REPORT_CHARS, self.cfg.tools.max_output_chars // max(granted, 1))
+        parts += [f"### Instruction {i + 1} ({head})\n{truncate(report, cap)}" for i, (head, report) in enumerate(sections)]
+        text = "\n\n".join(parts)
+        return ToolOutput(text, output_chars=len(text))
