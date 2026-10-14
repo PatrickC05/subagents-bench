@@ -21,6 +21,7 @@ import yaml
 from fake_harbor import write_job, write_trial
 from subagents_bench import cli, sweep
 from subagents_bench.config import ConfigError, load_config
+from subagents_bench.hints import n_slots
 
 REPO = Path(__file__).resolve().parents[1]
 FAKE = Path(__file__).with_name("fake_harbor.py")
@@ -173,6 +174,24 @@ def test_swe_hint_spec_matches_swe_sweep_but_for_the_hint():
     if s.dataset_path.is_dir():
         assert {t: int(re.search(rf"- {t} +# \w+, (\d+)\n", text)[1]) for t in s.tasks} == {
             t: sweep.n_subtasks(s.dataset_path / t) for t in s.tasks}
+
+
+def test_swe_interactive_smoke_is_the_full_spec_shortened():
+    """swe_interactive_smoke.yaml: swe_interactive.yaml's 4 conditions on 2 of its repositories x 1
+    round, in 15-minute sessions with a hint every 3 minutes (5 hints), under a timeout that fits."""
+    s, full = (sweep.load_spec(REPO / f"configs/sweeps/{n}.yaml") for n in ("swe_interactive_smoke", "swe_interactive"))
+    assert set(s.tasks) < set(full.tasks) and (s.rounds, len(sweep.plan(s))) == (1, 4)
+    assert (s.dataset_path, s.platform, s.n_concurrent, s.extra_args) == (
+        full.dataset_path, full.platform, full.n_concurrent, full.extra_args)
+    assert 900 + sweep.SESSION_GRACE_SEC <= 43200 * s.timeout_multiplier < 43200 * full.timeout_multiplier
+    if s.dataset_path.is_dir():
+        assert sweep.check_interactive(s) == []
+    assert set(s.configs) == set(full.configs)
+    for cond, cfg in s.configs.items():
+        i, f = cfg.interactive, full.configs[cond].interactive
+        assert (i.wall_clock_sec, i.interval_sec, n_slots(i)) == (900, 180, 5)
+        i.wall_clock_sec, i.interval_sec = f.wall_clock_sec, f.interval_sec
+        assert cfg.to_dict() == full.configs[cond].to_dict()
 
 
 def test_swe_sweep_larger_budget_hint(tmp_path, monkeypatch):
