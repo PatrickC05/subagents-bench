@@ -1,0 +1,56 @@
+# Experiment 1: does the single agent fall behind when its own commands are slow?
+# In the managers smoke (swe_interactive_managers_smoke.yaml) the single agent was the most
+# responsive (median 9 s to receive a new bug, against 25 s for background managers) because its
+# commands never ran longer than 10 s: nothing held a hint back. Here both conditions must test
+# each fix before moving on (`session_note`), on pint and isort, whose suites run for minutes under
+# amd64 emulation. If waiting behind one's own commands is what background subagents avoid, the
+# single agent's `blocked_sec` and `delivery_sec` (hints.csv) grow with its command time
+# (episodes.csv `orch_bash_median_sec`, `orch_bash_max_sec`) and the background manager's do not.
+# 2 conditions x 2 repositories x 2 rounds = 4 harbor jobs, 8 thirty-minute sessions (10 bugs).
+#   scripts/run_experiment.sh configs/sweeps/swe_interactive_slow.yaml
+# Everything but the tasks, the session and the conditions is swe_interactive.yaml's;
+# tests/test_sweep.py checks that.
+name: swe_interactive_slow
+base: configs/sail/base.yaml
+dataset_path: ../class-6-swe-sweep/swe-sweep/tasks
+platform: linux/amd64
+tasks:                               # language, bugs
+  - swe-sweep__pint                  # Python, 13 (numpy-heavy suite)
+  - swe-sweep__isort                 # Python, 11
+rounds: 2
+order_seed: 0
+
+overrides:
+  interactive:
+    wall_clock_sec: 1800             # 10 bugs, one every 3 minutes
+    interval_sec: 180
+    hint_detail: tests
+    order_seed: 0
+    vary_order_by_round: true
+    scope: reported
+    end_when_idle: true
+    max_context_chars: 400000
+    session_note: >-
+      Before you move on from a bug, run the existing tests that cover the files you changed
+      (the test module for that file, or the whole suite if you are unsure) and check that
+      they pass.
+  budget:
+    orchestrator_steps: 2000
+    command_timeout_sec: 600
+    max_command_timeout_sec: 1800
+  subagent:
+    max_dispatches: 60
+    max_concurrent: 3
+    max_steps: 20
+
+harbor:
+  n_concurrent: 4
+  # x the tasks' 43200 s agent timeout = 2160 s: the 1800 s session plus preflight's 120 s grace.
+  agent_timeout_multiplier: 0.05
+  extra_args: [--override-cpus, "3", --override-memory-mb, "7000"]
+
+conditions:
+  single_interactive: {topology: single}
+  manager_background:
+    subagent: {strategy: parallel, scope: hard, spawn_mode: background}
+    tools: {orchestrator_tools: [read_file, list_dir, search]}

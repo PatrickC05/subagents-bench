@@ -215,6 +215,25 @@ Two 15-minute smokes (echo and click, a bug every 3 minutes, 5 bugs, 1 round;
   commands never ran longer than 10 s, so it was never stuck behind them,
   while managing subagents made the orchestrator's own calls longer.
 
+Next, two experiments look for where background subagents should pay off, the
+single agent against a background manager in each:
+- [`swe_interactive_slow.yaml`](configs/sweeps/swe_interactive_slow.yaml)
+  (**slow commands**): both must test each fix before moving on
+  (`interactive.session_note`), on pint and isort, whose suites run for
+  minutes under emulation; 30-minute sessions, 10 bugs, 2 rounds (8
+  sessions). Read `blocked_sec` and `delivery_sec` (hints.csv) against
+  `orch_bash_median_sec` (episodes.csv).
+- [`swe_interactive_rate.yaml`](configs/sweeps/swe_interactive_rate.yaml)
+  (**faster arrivals**): the same 10 bugs every 60, 180 or 300 s on click and
+  pint, each session 10 minutes past its last bug, 2 rounds (24 sessions).
+  Read `edit_median_sec` by `hint_index` (hint_positions.csv) and bugs fixed.
+
+The analysis also records what each hint waited behind (`blocked_by`,
+`blocked_sec`), the orchestrator's own command and call times, and flags
+commands that may break SWE-sweep's fairplay rules (git history, network,
+installed copies: `fairplay` in tools.csv, `[WARN]` in the output); the first
+smoke's stuck single agent ran `git cat-file --batch-all-objects`.
+
 ## Where data and figures land
 
 ```

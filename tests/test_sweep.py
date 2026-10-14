@@ -212,6 +212,64 @@ def test_swe_interactive_managers_smoke_differs_only_in_the_manager_conditions()
     assert {**twin.to_dict(), "name": "manager_background"} == background.to_dict()
 
 
+def _same_as_full_spec(s, full, keep):
+    """``s`` runs swe_interactive.yaml's settings but for its tasks, rounds, session (``keep``: the
+    interactive fields it sets itself) and conditions: each condition equals the full spec's twin."""
+    assert (s.dataset_path, s.platform, s.n_concurrent, s.extra_args) == (
+        full.dataset_path, full.platform, full.n_concurrent, full.extra_args)
+    assert set(s.tasks) <= set(full.tasks) | {"swe-sweep__pint", "swe-sweep__isort", "swe-sweep__click"}
+    if s.dataset_path.is_dir():
+        assert sweep.check_interactive(s) == []
+    single, background = full.configs["single_interactive"], full.configs["background_interactive"]
+    for cond, cfg in s.configs.items():
+        twin = single if cfg.topology == "single" else background
+        assert cfg.subagent.spawn_mode == twin.subagent.spawn_mode
+        d, t = cfg.to_dict(), twin.to_dict()
+        for k in ("name", "tools"):
+            d.pop(k), t.pop(k)
+        for k in keep:
+            d["interactive"].pop(k), t["interactive"].pop(k)
+        assert d == t, cond
+
+
+def test_swe_interactive_slow_spec():
+    """Experiment 1: the single agent and a background manager, both told to test each fix, on two
+    slow-suite repositories in 30-minute sessions (10 bugs, one every 3 minutes)."""
+    s, full = (sweep.load_spec(REPO / f"configs/sweeps/{n}.yaml") for n in ("swe_interactive_slow", "swe_interactive"))
+    assert (s.tasks, s.rounds, len(sweep.plan(s))) == (["swe-sweep__pint", "swe-sweep__isort"], 2, 4)
+    assert 1800 + sweep.SESSION_GRACE_SEC <= 43200 * s.timeout_multiplier
+    _same_as_full_spec(s, full, keep=("wall_clock_sec", "interval_sec", "session_note"))
+    single, manager = s.configs["single_interactive"], s.configs["manager_background"]
+    assert manager.orchestrator_tools == ["read_file", "list_dir", "search"] and manager.subagent.spawn_mode == "background"
+    for cfg in (single, manager):
+        i = cfg.interactive
+        assert (i.wall_clock_sec, i.interval_sec, n_slots(i)) == (1800, 180, 10)
+        assert "run the existing tests that cover the files you changed" in i.session_note
+    assert single.interactive == manager.interactive
+
+
+def test_swe_interactive_rate_spec():
+    """Experiment 2: the same 10 bugs every 60, 180 or 300 s, each session 10 minutes past its last
+    bug, for the single agent and a background manager; nothing else differs between intervals."""
+    s, full = (sweep.load_spec(REPO / f"configs/sweeps/{n}.yaml") for n in ("swe_interactive_rate", "swe_interactive"))
+    assert (s.tasks, s.rounds, len(sweep.plan(s))) == (["swe-sweep__click", "swe-sweep__pint"], 2, 12)
+    assert 3600 + sweep.SESSION_GRACE_SEC <= 43200 * s.timeout_multiplier
+    _same_as_full_spec(s, full, keep=("wall_clock_sec", "interval_sec", "max_hints"))
+    for cond, cfg in s.configs.items():
+        i = cfg.interactive
+        every = int(cond.rsplit("every", 1)[1])
+        assert (i.interval_sec, i.wall_clock_sec, i.max_hints) == (every, 10 * every + 600, 10)
+        assert cfg.topology == ("single" if cond.startswith("single") else "subagents")
+        if cfg.topology == "subagents":
+            assert cfg.orchestrator_tools == ["read_file", "list_dir", "search"]
+    for mode in ("single", "manager_background"):
+        dicts = [s.configs[f"{mode}_every{k}"].to_dict() for k in (60, 180, 300)]
+        for d in dicts:
+            d.pop("name")
+            d["interactive"].pop("interval_sec"), d["interactive"].pop("wall_clock_sec")
+        assert dicts[0] == dicts[1] == dicts[2]
+
+
 def test_swe_sweep_larger_budget_hint(tmp_path, monkeypatch):
     """swe_sweep.yaml's larger step budget, made as its comments say (orchestrator_steps and the
     commented conditions block): every condition gets it, single_matched it x 8 subagent steps."""

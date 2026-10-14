@@ -269,6 +269,8 @@ Every per-trial and per-record table starts with the **keys**: `sweep`,
 | `interactive`, `n_hints`, `n_hints_delivered` | 1 for an interactive session, else 0; its hints scheduled and delivered (empty in batch episodes) |
 | `steps`, `spawns`, `dispatches`, `arbitrations` | record counts |
 | `delegated` | 1 if the orchestrator spawned at least once |
+| `orch_bash_n`, `orch_bash_median_sec`, `orch_bash_max_sec`, `orch_llm_median_sec` | the orchestrator's own bash commands (count, median and longest duration) and the median duration of its successful LLM calls: what a message waits behind between its steps |
+| `n_fairplay_flags`, `fairplay_kinds` | tool calls of any agent matching a fairplay pattern, and their categories joined with `;` (`git_history`, `network`, `installed_copy`; analysis/fairplay.py): to review, not verdicts |
 | `n_provider_errors`, `n_stream_repairs` | from the episode and its calls |
 | `{orch,sub,arb,deb}_{prompt,cached,completion,reasoning}_tokens` | token sums per role (`arb` = judge, `deb` = debate) |
 | `cost_{orch,sub,arb,deb}`, `cost_total` | USD per role and in all |
@@ -285,7 +287,7 @@ Each row is one record of a trial plus the keys and `valid`:
 | Table | Columns after the keys and `valid` |
 |---|---|
 | `calls.csv` | every `calls.jsonl` field, `cost` |
-| `tools.csv` | every `tools.jsonl` field except `arguments` |
+| `tools.csv` | every `tools.jsonl` field except `arguments`, `fairplay` (the fairplay categories its arguments match, `;`-joined) |
 | `dispatches.csv` | `strategy`, `scope`, every `dispatches.jsonl` field except `files_modified` and `instruction`, `n_files_modified` |
 | `arbitrations.csv` | every `arbitrations.jsonl` field except `rounds` (`candidate_dispatch_ids` joined with `;`), `n_rounds`, `n_judge_calls`, `n_debate_calls`, `all_parsed` (every round parsed) |
 
@@ -297,6 +299,7 @@ Each row is one record of a trial plus the keys and `valid`:
 | `n`, `n_valid`, `n_resolved` | trials, valid trials, solved valid trials |
 | `resolve_rate`, `resolve_ci_lo`, `resolve_ci_hi` | n_resolved / n_valid with its Wilson 95% interval |
 | `n_delegated`, `delegated_frac` | valid episodes that spawned at least once |
+| `n_fairplay_flagged` | valid episodes with at least one fairplay flag |
 | `n_bugs`, `bugs_fixed`, `bug_fix_rate`, `n_regressed`, `reward_mean` | over the valid trials, a trial without a reward counting as reward 0 with no bug fixed: bugs in their tasks, bugs fixed, their ratio (SWE-sweep's micro-average; NaN without bugs), trials with a regression, and the mean reward |
 | `{cost_total,wall_clock_sec,total_tokens}_{mean,ci_lo,ci_hi}` | mean per valid episode with a seeded percentile bootstrap 95% interval (2000 resamples; no interval for one episode; NaN if any value is NaN) |
 | `cost_per_solve` | total cost of the valid episodes / n_resolved (NaN without a solve) |
@@ -321,6 +324,7 @@ heuristic (docs/DESIGN.md).
 | `shares_any` | one of its target files is a target of any other hint's subtask |
 | `t_ready_sec` | when it was sent, after the session start |
 | `delivered` | it reached the orchestrator before the session ended |
+| `blocked_by`, `blocked_sec` | when `busy_at_arrival` is `llm`, `tool` or `spawn`: the call (`llm`) or tool it waited behind, and how long that still ran after the hint was sent (`delivery_sec` adds the rest of the step) |
 | `busy_at_arrival` | what the orchestrator was doing when it was sent: `llm` (a call), `tool` (its own tool), `spawn` (a blocking spawn), `wait` (a `wait` call, or the implicit wait after a reply without a tool call), `idle` (between steps: delivery and bookkeeping between an LLM call and its tools), `start` (hint 0) |
 | `delivery_sec` | until it entered the conversation |
 | `response_sec` | until the first orchestrator LLM call that saw it returned |
@@ -343,6 +347,7 @@ task, while the agent starts up; it has the `first_*` columns).
 | `delivered_frac` | later hints delivered before the session ended |
 | `busy_at_arrival_frac` | later hints that arrived while the orchestrator was in an LLM call, its own tool or a blocking spawn |
 | `pre_edited_frac` | later hints whose files were edited before they were sent; left out of the touch and edit columns |
+| `blocked_median_sec` | median `blocked_sec` over the later hints that arrived while the orchestrator was busy |
 | `first_{response,touch,edit}_median_sec` | hint 0's medians (censored as below) |
 | `{m}_frac`, `{m}_median_sec`, `{m}_mean_sec`, `{m}_mean_ci_lo`, `{m}_mean_ci_hi`, `{m}_before_next` | for m in `delivery`, `response`, `dispatch`, `touch`, `edit`: the share of hints where it happened; the median counting a missing one as infinitely late (NaN when more than half are missing); the mean (bootstrap 95% interval) over those where it happened; the share where it happened within one `interval_sec` (before the next hint) |
 | `{touch,edit}_median_sec_unshared`, `{touch,edit}_before_next_unshared` | the same over hints without `shared_files` |
@@ -363,6 +368,7 @@ reaction slows as requests pile up.
 | `jobs_dirs`, `pricing` | inputs: the jobs dirs and `{file, scheme}` |
 | `n_trials`, `n_valid`, `invalid_reasons` | trial counts and `{reason: n}` |
 | `critical_path` | `{n_valid_episodes, n_over_wall_clock, mean_overhead_sec, mean_overhead_frac}`: valid episodes whose critical path exceeds the wall clock by more than 1 ms (should be 0) and the mean overhead |
+| `fairplay` | `{n_flagged_episodes, trials}`: episodes with a fairplay flag (the analysis prints a `[WARN]`) |
 | `delegation_gate` | `{ok, never_delegated, no_valid_episodes}`: subagent conditions with valid episodes of which none delegated (the analysis exits 3 when any), and conditions without a valid episode |
 
 ## Figures (`figures/<sweep>/`)

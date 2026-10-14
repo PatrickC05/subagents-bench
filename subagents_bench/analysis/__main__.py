@@ -54,6 +54,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"critical path > wall clock in {cp['n_over_wall_clock']} of {cp['n_valid_episodes']} valid episodes; "
           f"mean overhead {overhead}")
     print(f"tables: {args.out}/")
+    fp = summ["fairplay"]
+    if fp["n_flagged_episodes"]:
+        print(f"[WARN] fairplay: {fp['n_flagged_episodes']} episode(s) ran commands to review (tools.csv `fairplay`, "
+              "episodes.csv `fairplay_kinds`)")
     gate = summ["delegation_gate"]
     for cond in gate["never_delegated"]:
         print(f"[FAIL] delegation gate: {cond} never delegated in any valid episode")

@@ -275,12 +275,12 @@ INTERACTIVE_DELEGATION_HINT = ("\nYour attention is the scarce resource: while y
                                "wait until they finish. Subagents run in the background, so delegate long work "
                                "(investigating and fixing a bug, running a test suite) and keep yourself free to "
                                "respond to new requests and to combine reports.\n")
-FIRST_HINT = "{instruction}\n\nHint: {hint}"
+FIRST_HINT = "{instruction}{note}\n\nHint: {hint}"
 # interactive.scope "reported": the task's own goal (SWE-sweep: find and fix every bug) is set aside,
 # so a bug the agent fixes before it is sent cannot pass for one it never started.
 REPORTED_SCOPE = ("{instruction}\n\n---\nIn this session you do not search the repository for bugs on your "
                   "own: the user points you to the bugs to fix, one message at a time. Fix the bugs the user "
-                  "reports; every rule above still applies.\n\nHint: {hint}")
+                  "reports; every rule above still applies.{note}\n\nHint: {hint}")
 NEXT_HINT = "Another one, while you keep working on the earlier ones.\n\nHint: {hint}"
 USER_EVENT = "[{at} elapsed] Message from the user:\n{text}"
 REPORT_EVENT = "[{at} elapsed] Report from subagent {agent} ({status}, {steps} steps) on: {instruction}\n{report}"

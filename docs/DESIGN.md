@@ -292,6 +292,19 @@ task message or the newest message); `n_elided_results` counts them. The
 orchestrator's own messages and tool-call arguments are kept, so the limit
 is a target, not a hard bound.
 
+**Session note.** `interactive.session_note` adds a paragraph to the
+first message, before hint 0, the same in every condition; the slow-command
+experiment uses it to make every agent test each fix, so its own commands
+run for minutes.
+
+**Fairplay flags.** SWE-sweep forbids learning a fix from the code's
+"future" or the network. `analysis/fairplay.py` flags tool calls of any
+agent that probe git objects or refs beyond the working tree, use the
+network, or read other installed copies; the analysis warns and reports them
+per tool, episode and condition. A flag is for review: the task images'
+git holds only the `baseline` commit, so the first smoke's `git cat-file
+--batch-all-objects` found nothing.
+
 **Checks.** `preflight` fails an interactive sweep when a task has no
 subtasks, when `report` hints are missing, or when harbor's agent timeout
 (the task's 43200 s x `agent_timeout_multiplier`) is below the session plus

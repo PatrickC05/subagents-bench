@@ -648,3 +648,54 @@ def test_status_at_next_and_ambiguous_basenames():
                    "python3 -c \"\nimport re\np='src/m1.py'\nopen(p,'w').write('')\n\""):
         assert bash(quoted) == (True, True), quoted  # separators inside quotes do not split the command
     assert bash("cat src/m1.py | head && echo done") == (True, False)
+
+
+
+# --- experiment instrumentation -----------------------------------------------------------------------
+
+
+def test_session_note_goes_before_the_first_hint(tmp_path):
+    _, _, f, _, _ = session(tmp_path, {ORCH: [Reply("", [tc("wait")])]}, n_hints=1, topology="single",
+                            interactive={"session_note": "Run the tests before moving on."})
+    first = f[ORCH].requests[0]["messages"][0].content
+    assert "every rule above still applies.\n\nRun the tests before moving on.\n\nHint: There is a bug" in first
+    with pytest.raises(ConfigError, match="session_note: expected null or non-empty text"):
+        make_config(interactive={"session_note": "  "})
+
+
+def test_fairplay_flags():
+    from subagents_bench.analysis.fairplay import tool_flags
+    bash = lambda c: tool_flags({"name": "bash", "arguments": {"command": c}})  # noqa: E731
+    assert bash("cd /click && git cat-file --batch-all-objects --batch-check") == ["git_history"]
+    assert bash("git log --oneline --all | head") == ["git_history"] and bash("git -C /src reflog") == ["git_history"]
+    assert bash("curl -s https://pypi.org/simple/click/") == ["network"] and bash("pip download click==8.1") == [
+        "network", "installed_copy"]
+    assert bash("ls /usr/lib/python3/dist-packages/click") == ["installed_copy"]
+    assert tool_flags({"name": "read_file", "arguments": {"path": "/usr/local/lib/python3.9/site-packages/x.py"}}) == [
+        "installed_copy"]
+    assert bash("cd /x && wget -q http://example.com") == ["network"] and bash("x=$(curl -s y)") == ["network"]
+    for ok in ("git diff", "git log --oneline -5", "git status", "grep -rn curl src/", "pytest tests/test_core.py"):
+        assert bash(ok) == [], ok
+
+
+def test_what_a_hint_waited_behind_and_command_timing(interactive_jobs, tmp_path):
+    from subagents_bench.analysis.aggregate import command_timing
+    _, jobs, out = interactive_jobs
+    solo = pd.DataFrame(hint_rows(load_trial(out["solo"][0]), {"condition": "solo", "trial_name": "x"}, True))
+    later = solo[solo["hint_index"] > 0]
+    assert later["blocked_by"].eq("bash").all() and (later["blocked_sec"] > 0).all()
+    assert (later["blocked_sec"] <= later["delivery_sec"] + 1e-6).all()  # delivery waits for the rest of the step
+    assert solo["blocked_sec"].iloc[0] is None or pd.isna(solo["blocked_sec"].iloc[0])
+    recs = load_trial(out["solo"][0]).records
+    n_bash = sum(1 for x in recs["tools"] if x["name"] == "bash")  # hints that arrive together share a command
+    timing = command_timing(recs)
+    assert timing["orch_bash_n"] == n_bash >= 3 and 0.6 < timing["orch_bash_median_sec"] < 2
+    assert timing["orch_bash_max_sec"] >= timing["orch_bash_median_sec"] and timing["orch_llm_median_sec"] >= 0
+    res = tmp_path / "a"
+    assert analyze([str(jobs), "--out", str(res)]) == 0
+    eps = pd.read_csv(res / "episodes.csv").set_index("condition")
+    assert eps.loc["solo", "orch_bash_n"] == n_bash and eps.loc["solo", "n_fairplay_flags"] == 0
+    inter = pd.read_csv(res / "interactivity.csv").set_index("condition")
+    assert inter.loc["solo", "blocked_median_sec"] > 0
+    assert "fairplay" in pd.read_csv(res / "tools.csv").columns
+    assert json.loads((res / "summary.json").read_text())["fairplay"]["n_flagged_episodes"] == 0

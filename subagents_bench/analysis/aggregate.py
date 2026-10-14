@@ -9,9 +9,11 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from ..config import SCOPES, STRATEGIES
+from .fairplay import tool_flags
 from .interactivity import condition_table as interactivity_table
 from .interactivity import hint_rows, position_table
 from .latency import PARTS, critical_path
@@ -54,10 +56,26 @@ def episode_row(t: Trial, prices: dict) -> dict[str, Any]:
         row[f"cost_{short}"] = sum(call_cost(c, prices) for c in mine)
     row["total_tokens"] = sum(row[f"{s}_{k}_tokens"] for s in ROLE_SHORT.values() for k in ("prompt", "completion"))
     row["cost_total"] = sum(row[f"cost_{s}"] for s in ROLE_SHORT.values())
+    row.update(command_timing(recs))
+    flags = [f for x in recs["tools"] for f in tool_flags(x)]
+    row.update(n_fairplay_flags=len(flags), fairplay_kinds=";".join(sorted(set(flags))))
     cp = critical_path(recs)
     row.update({f"cp_{p}_sec": cp[p] for p in PARTS}, cp_total_sec=sum(cp.values()))
     row["overhead_sec"] = row["wall_clock_sec"] - row["cp_total_sec"] if row["wall_clock_sec"] is not None else None
     return row
+
+
+def _median(xs: list[float]) -> float:
+    return float(np.median(xs)) if xs else math.nan
+
+
+def command_timing(recs: dict[str, list[dict]]) -> dict[str, Any]:
+    """How long the orchestrator's own bash commands and LLM calls took: what a message waits
+    behind between its steps."""
+    bash = [x["t_end"] - x["t_start"] for x in recs["tools"] if x["role"] == "orchestrator" and x["name"] == "bash"]
+    llm = [c["t_end"] - c["t_start"] for c in recs["calls"] if c["role"] == "orchestrator" and c["error"] is None]
+    return {"orch_bash_n": len(bash), "orch_bash_median_sec": _median(bash),
+            "orch_bash_max_sec": max(bash) if bash else math.nan, "orch_llm_median_sec": _median(llm)}
 
 
 def record_rows(t: Trial, valid: bool, prices: dict) -> dict[str, list[dict]]:
@@ -67,7 +85,8 @@ def record_rows(t: Trial, valid: bool, prices: dict) -> dict[str, list[dict]]:
     r = t.records
     return {
         "calls": [{**key, **c, "cost": call_cost(c, prices)} for c in r["calls"]],
-        "tools": [{**key, **{k: v for k, v in x.items() if k != "arguments"}} for x in r["tools"]],
+        "tools": [{**key, **{k: v for k, v in x.items() if k != "arguments"}, "fairplay": ";".join(tool_flags(x))}
+                  for x in r["tools"]],
         "dispatches": [{**key, **design, **{k: v for k, v in d.items() if k not in ("files_modified", "instruction")},
                         "n_files_modified": len(d["files_modified"])} for d in r["dispatches"]],
         "arbitrations": [{**key, **{k: v for k, v in a.items() if k != "rounds"}, "n_rounds": len(a["rounds"]),
@@ -105,6 +124,7 @@ def condition_table(episodes: pd.DataFrame) -> pd.DataFrame:
                "n_bugs": bugs, "bugs_fixed": float(v["bugs_fixed"].sum()) if n else 0.0,
                "bug_fix_rate": float(v["bugs_fixed"].sum()) / bugs if bugs else math.nan,
                "n_regressed": int(v["regressed"].sum()) if n else 0,
+               "n_fairplay_flagged": int((v["n_fairplay_flags"].fillna(0) > 0).sum()) if n and "n_fairplay_flags" in v else 0,
                "reward_mean": float(v["reward"].mean()) if n else math.nan}
         for m in MEAN_METRICS:
             row[f"{m}_mean"], row[f"{m}_ci_lo"], row[f"{m}_ci_hi"] = bootstrap_mean(v[m] if n else [])
@@ -145,6 +165,7 @@ def summary(tables: dict[str, pd.DataFrame], jobs_dirs: list[str], pricing: dict
     valid = eps[eps["valid"]]
     over = valid["cp_total_sec"] - valid["wall_clock_sec"]
     failed = delegation_gate(conds)
+    flagged = eps[eps.get("n_fairplay_flags", pd.Series(dtype=float)).fillna(0) > 0] if len(eps) else eps
     return {
         "jobs_dirs": jobs_dirs, "pricing": pricing, "n_trials": len(eps), "n_valid": int(eps["valid"].sum()),
         "invalid_reasons": dict(Counter(eps["invalid_reason"].dropna())),
@@ -153,6 +174,8 @@ def summary(tables: dict[str, pd.DataFrame], jobs_dirs: list[str], pricing: dict
             "mean_overhead_sec": _none(float(valid["overhead_sec"].mean())),
             "mean_overhead_frac": _none(float((valid["overhead_sec"] / valid["wall_clock_sec"]).mean())),
         },
+        "fairplay": {"n_flagged_episodes": len(flagged),
+                     "trials": [str(x) for x in flagged.get("trial_dir", pd.Series(dtype=str))]},
         "delegation_gate": {"ok": not failed, "never_delegated": failed,
                             "no_valid_episodes": list(conds.loc[conds["n_valid"] == 0, "condition"])},
     }

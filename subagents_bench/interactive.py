@@ -100,7 +100,9 @@ class InteractiveOrchestrator(Orchestrator):
             timer.start()
             self.rec.transcript(self.who, Message("system", self.system))
             template = REPORTED_SCOPE if self.icfg.scope == "reported" else FIRST_HINT
-            first = template.format(instruction=instruction, hint=self.hints[0].text) if self.hints else instruction
+            note = f"\n\n{self.icfg.session_note.strip()}" if self.icfg.session_note else ""
+            first = (template.format(instruction=instruction, note=note, hint=self.hints[0].text) if self.hints
+                     else instruction + note)
             if self.hints:
                 self._hint_record(self.hints[0], self.t0, 1)
                 self.next_hint = 1

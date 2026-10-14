@@ -86,6 +86,7 @@ class InteractiveConfig:
     order_seed: int = 0  # the subtasks' order, shuffled per task with this seed (same for every condition)
     vary_order_by_round: bool = True  # round k of a sweep uses order_seed + k - 1 (each round its own order)
     scope: str = "reported"  # reported: fix the bugs the user sends (the task's "fix all bugs" is set aside); all
+    session_note: str | None = None  # a paragraph for the first message, before hint 0 (e.g. a testing rule)
     end_when_idle: bool = True  # end once every hint was sent, nothing runs and the orchestrator waits
     max_context_chars: int | None = None  # beyond this, elide old tool output and reports, drop old reasoning
 
@@ -167,6 +168,8 @@ def from_dict(raw: Any) -> ExperimentConfig:
 
 def _check_interactive(cfg: ExperimentConfig) -> None:
     i = cfg.interactive
+    if i.session_note is not None and not (isinstance(i.session_note, str) and i.session_note.strip()):
+        raise ConfigError(f"interactive.session_note: expected null or non-empty text, got {i.session_note!r}")
     if i.scope not in SESSION_SCOPES:
         raise ConfigError(f"interactive.scope: {i.scope!r} is not one of {', '.join(SESSION_SCOPES)}")
     if i.hint_detail not in HINT_DETAILS:
