@@ -431,7 +431,7 @@ def test_censored_medians_status_and_unshared_touches():
                 "interval_sec": 300.0, "hint_index": k, "delivered": True, "busy_at_arrival": "tool" if k else "start",
                 "shared_files": shared, "shares_any": shared, "delivery_sec": 1.0, "response_sec": 5.0,
                 "dispatch_sec": None, "touch_sec": touch, "edit_sec": None, "pre_edited": pre_edited,
-                "status_at_next": status, "counted": counted}
+                "status_at_next": status, "counted": counted, "graded": counted is not None}
     hints = pd.DataFrame([row(0, 10.0, status="continued", counted=True), row(1, None, status="not_started"),
                           row(2, 400.0, shared=True, status="continued"), row(3, 20.0, status="stopped", counted=True),
                           row(4, 1.0, pre_edited=True, counted=False)])
@@ -442,7 +442,7 @@ def test_censored_medians_status_and_unshared_touches():
     assert c["touch_before_next"] == 1 / 3
     assert pd.isna(c["touch_median_sec_unshared"]) and c["touch_before_next_unshared"] == 0.5  # [never, 20]
     assert c["n_status_unshared"] == 3 and c["continued_at_next_frac"] == 1 / 3 and c["stopped_fixed_frac"] == 1.0
-    assert c["not_started_at_next_frac"] == 1 / 3 and c["hinted_fixed_frac"] == 2 / 3
+    assert c["not_started_at_next_frac"] == 1 / 3 and c["hinted_fixed_frac"] == 2 / 3 and c["n_graded"] == 3
     assert pd.isna(c["edit_median_sec"]) and c["busy_at_arrival_frac"] == 1.0
     assert list(position_table(hints)["hint_index"]) == [0, 1, 2, 3, 4]
     invalid = pd.DataFrame([row(0, 1.0, valid=False)])
@@ -642,3 +642,9 @@ def test_status_at_next_and_ambiguous_basenames():
     assert touches(cd, f) == (True, False) and touches(cd, f, basename_ok=set()) == (False, False)
     seg = {"name": "bash", "arguments": {"command": "grep core.py src/core.py; sed -i 's/a/b/' parser.py"}}
     assert touches(seg, ["src/core.py"]) == (True, False)  # the write is to another file
+    bash = lambda c: touches({"name": "bash", "arguments": {"command": c}}, ["src/m1.py"])  # noqa: E731
+    for quoted in ("sed -i 's/a; b/c/' src/m1.py", "sed -i 's/a\\|b/c/g' src/m1.py", "echo 'a;b' > src/m1.py",
+                   "python3 -c \"p='src/m1.py'; s=open(p).read(); open(p,'w').write(s)\"",
+                   "python3 -c \"\nimport re\np='src/m1.py'\nopen(p,'w').write('')\n\""):
+        assert bash(quoted) == (True, True), quoted  # separators inside quotes do not split the command
+    assert bash("cat src/m1.py | head && echo done") == (True, False)

@@ -321,16 +321,16 @@ heuristic (docs/DESIGN.md).
 | `shares_any` | one of its target files is a target of any other hint's subtask |
 | `t_ready_sec` | when it was sent, after the session start |
 | `delivered` | it reached the orchestrator before the session ended |
-| `busy_at_arrival` | what the orchestrator was doing when it was sent: `llm` (a call), `tool` (its own tool), `spawn` (a blocking spawn), `wait`, `idle` (between steps or waiting after a reply without a tool), `start` (hint 0) |
+| `busy_at_arrival` | what the orchestrator was doing when it was sent: `llm` (a call), `tool` (its own tool), `spawn` (a blocking spawn), `wait` (a `wait` call, or the implicit wait after a reply without a tool call), `idle` (between steps: delivery and bookkeeping between an LLM call and its tools), `start` (hint 0) |
 | `delivery_sec` | until it entered the conversation |
 | `response_sec` | until the first orchestrator LLM call that saw it returned |
 | `dispatch_sec` | until a subagent started whose instruction names a target file or one of the hidden tests' names |
 | `touch_sec`, `touch_by` | until any agent's tool call named a target file (`read_file`/`edit_file`/`list_dir`/`search` path, or a `bash` command), and that agent's role. A bare basename counts only when no other hinted target file shares it |
-| `edit_sec` | until an edit of a target file: `edit_file` on it, or a `bash` command segment (split at `;`, `&&`, `\|\|`, `\|`, newlines; a command with a heredoc is one segment) naming it that writes (`sed -i`/`--in-place`, `perl -i`, a redirection or `tee` to it, `patch`, `git apply`, `gofmt -w`, `cp`/`mv`/`install` onto it, a Python write) |
+| `edit_sec` | until an edit of a target file: `edit_file` on it, or a `bash` command segment (split at unquoted `;`, `&&`, `\|\|`, `\|`, newlines; a command with a heredoc is one segment) naming it that writes (`sed -i`/`--in-place`, `perl -i`, a redirection or `tee` to it, `patch`, `git apply`, `gofmt -w`, `cp`/`mv`/`install` onto it, a Python write) |
 | `pre_touched`, `pre_edited` | a target file was named, or edited, before the hint was sent (the agent got to the bug early; with `scope: reported` it was not asked to) |
 | `status_at_next` | when the next hint was sent: `not_started` (no touch since this hint was sent), `continued` (touched before and again after), `stopped` (touched before, never after); empty for the last hint |
 | `continued_after_next` | `status_at_next` is `continued` (empty when not started or the last hint) |
-| `graded`, `resolved`, `partial`, `counted` | the grader reported a verdict for the subtask; its verdict; resolved with no visible regression (what the reward counts). In a valid trial a subtask without a verdict (no `eval.json`, or a patch that broke the build, for which the grader lists no subtasks) is unfixed: false; in an invalid trial empty |
+| `graded`, `resolved`, `partial`, `counted` | the grader reported a verdict for the subtask; its verdict; the grader's `partial` flag (some of the subtask's hidden tests pass, none of its other tests broke); resolved with no visible regression (what the reward counts). In a valid trial a subtask without a verdict (no `eval.json`, or a patch that broke the build, for which the grader lists no subtasks) is unfixed: false; in an invalid trial empty |
 
 ### `interactivity.csv`: one row per interactive condition (valid trials only)
 
@@ -348,7 +348,7 @@ task, while the agent starts up; it has the `first_*` columns).
 | `{touch,edit}_median_sec_unshared`, `{touch,edit}_before_next_unshared` | the same over hints without `shared_files` |
 | `n_status_unshared`, `{not_started,continued,stopped}_at_next_frac` | over hints (hint 0 included, the last excluded) that share no file with any other hint: their `status_at_next` |
 | `stopped_fixed_frac` | of those stopped, the share counted fixed in the end (finished, not dropped) |
-| `n_graded`, `hinted_fixed_frac` | hints (all) with a verdict, and the share counted fixed |
+| `n_graded`, `hinted_fixed_frac` | hints (all) with a grader verdict, and the share of all hints counted fixed (a hint without a verdict in a valid trial counts as unfixed) |
 
 ### `hint_positions.csv`: one row per interactive condition and hint position
 
@@ -377,5 +377,7 @@ and overhead per condition), `token_composition` (tokens and cost by role),
 debate rate, isolation violations) `timeline` (Gantt of the calls and
 tools of one delegating episode per strategy) and `interactivity` (median
 minutes from a hint to the orchestrator's answer, the first touch and the
-first edit of its files per condition, and the share touched before the next
-hint by hint position; a placeholder without interactive episodes).
+first edit of its files per condition, over the hints after the first and,
+for touch and edit, without pre-edited hints (`interactivity.csv`); and the
+share touched before the next hint by hint position, hint 0 included; a
+placeholder without interactive episodes).

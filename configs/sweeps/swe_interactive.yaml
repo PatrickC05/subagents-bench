@@ -32,7 +32,7 @@ overrides:
     vary_order_by_round: true        # and round k uses seed k - 1, so the rounds sample different orders
     scope: reported                  # fix the bugs the user sends; SWE-sweep's "fix all bugs" is set aside
     end_when_idle: true
-    max_context_chars: 400000        # about 100k tokens: elide the oldest tool output beyond it
+    max_context_chars: 400000        # about 100k tokens: beyond it, elide old tool output and reports
   budget:
     orchestrator_steps: 2000         # a safety cap only (waits are steps too): the deadline ends the session
     command_timeout_sec: 600         # test suites run for minutes under amd64 emulation

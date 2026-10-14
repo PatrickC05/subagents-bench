@@ -48,7 +48,6 @@ from .stats import bootstrap_mean
 LATENCIES = ("delivery", "response", "dispatch", "touch", "edit")
 STATUSES = ("not_started", "continued", "stopped")
 PATH_ARGS = {"read_file": "path", "edit_file": "path", "list_dir": "path", "search": "path"}
-SEGMENT_RE = re.compile(r"\|\||&&|;|\||\n")
 WRITE_RE = re.compile(r"\bsed\b[^\n]*(?:\s-[a-zA-Z]*i|--in-place)|\bperl\s+-[a-zA-Z]*i|\bpatch\b|\bgit\s+apply\b|"
                       r"\b(?:gofmt|goimports)\b[^\n]*\s-w\b|write_text\(|(?<!stdout)(?<!stderr)\.write\(|"
                       r"open\([^)]*['\"][wa]b?\+?['\"]")
@@ -70,6 +69,36 @@ def names_file(text: str, path: str, basename_ok: bool = True) -> bool:
     if any(re.search(rf"(?<![\w.\-]){re.escape(x)}{end}", text) for x in subs):
         return True
     return basename_ok and re.search(rf"(?<![\w.\-/]){re.escape(base)}{end}", text) is not None
+
+
+def segments(cmd: str) -> list[str]:
+    """``cmd`` split at unquoted ``;``, ``&&``, ``||``, ``|`` and newlines; a command with a heredoc
+    stays whole (its body belongs to it)."""
+    if "<<" in cmd:
+        return [cmd]
+    out, cur, quote, i = [], [], None, 0
+    while i < len(cmd):
+        c = cmd[i]
+        if quote:
+            if c == "\\" and quote == '"' and i + 1 < len(cmd):
+                cur.append(cmd[i:i + 2])
+                i += 2
+                continue
+            quote = None if c == quote else quote
+        elif c in "'\"":
+            quote = c
+        elif c in ";|\n" or cmd.startswith("&&", i):
+            out.append("".join(cur))
+            cur = []
+            i += 2 if cmd.startswith(("&&", "||"), i) else 1
+            continue
+        elif c == "\\" and i + 1 < len(cmd):
+            cur.append(cmd[i:i + 2])
+            i += 2
+            continue
+        cur.append(c)
+        i += 1
+    return [x for x in out + ["".join(cur)] if x.strip()]
 
 
 def _writes(segment: str, path: str, basename_ok: bool) -> bool:
@@ -102,7 +131,7 @@ def tool_touches(tool: dict, files: list[str], basename_ok: set[str] | None = No
         if not isinstance(cmd, str):
             return False, False
         touched = edited = False
-        for seg in [cmd] if "<<" in cmd else SEGMENT_RE.split(cmd):  # a heredoc's body belongs to its command
+        for seg in segments(cmd):
             named = [f for f in files if names_file(seg, f, ok(f))]
             if named:
                 touched = True
@@ -280,9 +309,9 @@ def condition_table(hints: pd.DataFrame) -> pd.DataFrame:
         stopped = alone[alone["status_at_next"] == "stopped"]
         counted = stopped["counted"].dropna()
         row["stopped_fixed_frac"] = _frac(counted) if len(counted) else math.nan
-        graded = all_g["counted"].dropna()
-        row["n_graded"] = len(graded)
-        row["hinted_fixed_frac"] = _frac(graded) if len(graded) else math.nan
+        counted = all_g["counted"].dropna()  # every hint of a valid trial: no verdict counts as unfixed
+        row["n_graded"] = int(_flag(all_g, "graded").sum())
+        row["hinted_fixed_frac"] = _frac(counted) if len(counted) else math.nan
         rows.append(row)
     return pd.DataFrame(rows)
 

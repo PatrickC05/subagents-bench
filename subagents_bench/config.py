@@ -87,7 +87,7 @@ class InteractiveConfig:
     vary_order_by_round: bool = True  # round k of a sweep uses order_seed + k - 1 (each round its own order)
     scope: str = "reported"  # reported: fix the bugs the user sends (the task's "fix all bugs" is set aside); all
     end_when_idle: bool = True  # end once every hint was sent, nothing runs and the orchestrator waits
-    max_context_chars: int | None = None  # elide the oldest tool results beyond this (None: never)
+    max_context_chars: int | None = None  # beyond this, elide old tool output and reports, drop old reasoning
 
 
 @dataclass
