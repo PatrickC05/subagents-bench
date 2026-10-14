@@ -200,6 +200,21 @@ docs/DESIGN.md, *Interactive sessions*; columns: docs/DATA.md. 4 conditions x
 scripts/run_experiment.sh configs/sweeps/swe_interactive.yaml
 ```
 
+Two 15-minute smokes (echo and click, a bug every 3 minutes, 5 bugs, 1 round;
+2026-10-14) came first:
+- [`swe_interactive_smoke.yaml`](configs/sweeps/swe_interactive_smoke.yaml),
+  the 4 conditions above: 8 of 8 trials valid, $0.22. The orchestrator fixed
+  the bugs itself: 1 of the 6 sessions with subagents delegated, so the
+  conditions mostly measured the same single agent.
+- [`swe_interactive_managers_smoke.yaml`](configs/sweeps/swe_interactive_managers_smoke.yaml)
+  adds managers (read-only orchestrators, so every edit and test goes through
+  a subagent), blocking and background: 8 of 8 valid, $0.42. Both delegated
+  in every session and background beat blocking, but the single agent was
+  the most responsive (median 9 s to receive a new bug, against 25 s and
+  53 s) and fixed the most (5 of 10 bugs sent, against 3 and 3). Its own
+  commands never ran longer than 10 s, so it was never stuck behind them,
+  while managing subagents made the orchestrator's own calls longer.
+
 ## Where data and figures land
 
 ```
