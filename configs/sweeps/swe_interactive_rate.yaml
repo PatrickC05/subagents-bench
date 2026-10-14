@@ -35,6 +35,9 @@ overrides:
     max_dispatches: 60
     max_concurrent: 3
     max_steps: 20
+    model:                           # Sail's Gemma fails ~0.7% of calls ("upstream chat completion failed"),
+      max_retries: 8                 # and one failure ends the session: retry 8 times within 5 minutes
+      retry_budget_sec: 300          # instead of 4 within 2 (2026-10-14, the rate sweep's first manager job)
 
 harbor:
   n_concurrent: 4

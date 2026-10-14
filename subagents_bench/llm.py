@@ -71,6 +71,7 @@ class LLMResponse:
     n_attempts: int = 1
     backoff_sec: float = 0.0
     stream_repairs: int = 0
+    one_call_retry: bool = False  # answered by a retry that asked for exactly one tool call (ONE_CALL_NOTE)
 
 
 class LLMError(Exception):
@@ -96,9 +97,20 @@ class ContextLengthError(LLMError):
 
 
 class _Retry(Exception):
-    def __init__(self, message: str, status: int | None = None):
+    def __init__(self, message: str, status: int | None = None, after_tool_call: bool = False):
         super().__init__(message)
         self.status = status
+        self.after_tool_call = after_tool_call  # a stream error once a tool call had started streaming
+
+
+# Sail's tool-call parsing for Gemma-4-31B fails when a reply holds more than one tool call: it
+# streams the first (sometimes under index 3) and then an `upstream_error` "chat completion failed"
+# chunk (2026-10-14: 3 of the 4 two-call replies in the interactive sweeps, every one of them again on
+# replay; 415 one-call replies never failed). The same request fails the same way on every retry, so
+# a retry after a stream error that came once a tool call had started adds this note to the system
+# prompt, and the model answers with one call; that call records ``one_call_retry``.
+ONE_CALL_NOTE = ("\n\n[Note: your previous reply to this request could not be delivered because it held more than "
+                 "one tool call. Reply with exactly one tool call.]")
 
 
 def _classify(status: int, text: str) -> LLMError | None:
@@ -292,7 +304,8 @@ class SailClient:
                             break
                         chunk = json.loads(data)
                         if chunk.get("error"):
-                            raise _Retry(f"stream error: {str(chunk['error'])[:300]}", 200)
+                            raise _Retry(f"stream error: {str(chunk['error'])[:300]}", 200,
+                                         after_tool_call=any(s.name or s.args for s in acc.slots.values()))
                         carried = acc.feed(chunk)
                     if carried:
                         t_first, last = t_first or now, now
@@ -314,13 +327,16 @@ class SailClient:
         headers = {"Authorization": f"Bearer {key}", "X-Sail-Completion-Window": self.cfg.completion_window}
         body = self._body(system, messages, tools)
         t_start = time.time()
-        attempts, backoff = 0, 0.0
+        attempts, backoff, one_call = 0, 0.0, False
         while True:
             attempts += 1
             try:
                 acc, t_first = self._attempt(body, headers)
                 break
             except _Retry as e:
+                if e.after_tool_call and tools and not one_call:
+                    one_call = True
+                    body = self._body(system + ONE_CALL_NOTE, messages, tools)
                 delay = self._rng.uniform(0.0, min(BACKOFF_MAX_SEC, BACKOFF_BASE_SEC * 2 ** (attempts - 1)))
                 if attempts > self.cfg.max_retries or time.time() + delay - t_start > self.cfg.retry_budget_sec:
                     raise ProviderError(
@@ -349,4 +365,5 @@ class SailClient:
             n_attempts=attempts,
             backoff_sec=backoff,
             stream_repairs=acc.stream_repairs,
+            one_call_retry=one_call,
         )

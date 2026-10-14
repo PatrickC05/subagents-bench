@@ -92,6 +92,19 @@ explicit context-length phrase, vLLM's "maximum model length" included.
 Neither is retried. Anything else that survives the retries is a
 `ProviderError`.
 
+**Several tool calls in one Gemma reply.** Sail's tool-call parsing for
+Gemma-4-31B fails when a reply holds more than one tool call. It streams the
+first call, sometimes under index 3, then an `upstream_error` chunk ("chat
+completion failed"). The same request fails the same way on every retry, so
+the provider fail-fast ended the session. In the interactive sweeps of
+2026-10-14 this happened on 3 of Gemma's 4 two-call replies, and on all 12
+replays of them; its 415 one-call replies never failed, and
+`parallel_tool_calls: false` is ignored. When a stream error comes once a tool
+call has started, the client retries with a note at the end of the system
+prompt ("Reply with exactly one tool call"). The model then answers with one
+call: 9 of 9 replays succeeded on that retry. The call records
+`one_call_retry`. Every other request is sent unchanged.
+
 ## Runtime
 
 ### Environment and tools (`environment.py`, `tools.py`)

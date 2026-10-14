@@ -74,6 +74,7 @@ still unwinding after harbor's cancel) are dropped.
 | `n_attempts` | HTTP attempts (1 = no retry); 0 when the call was abandoned on a stop |
 | `backoff_sec` | seconds slept between attempts |
 | `stream_repairs` | re-sent or clashing tool calls repaired in the stream (docs/DESIGN.md) |
+| `one_call_retry` | the reply came from a retry that asked for exactly one tool call, after a stream error once a tool call had started (Sail's Gemma-4 parsing of several tool calls in one reply; docs/DESIGN.md) |
 | `error` | null; `cancelled` (the episode stopped during the call); else `<ErrorClass>: <message>` (`ProviderError`, `BillingError`, `ContextLengthError`, ...) |
 
 ### `tools.jsonl`: one tool call
