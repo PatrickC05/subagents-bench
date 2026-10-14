@@ -194,6 +194,24 @@ def test_swe_interactive_smoke_is_the_full_spec_shortened():
         assert cfg.to_dict() == full.configs[cond].to_dict()
 
 
+def test_swe_interactive_managers_smoke_differs_only_in_the_manager_conditions():
+    """The managers have read-only tools and differ from each other only in the spawn mode; the
+    parent's conditions are unchanged."""
+    s, smoke = (sweep.load_spec(REPO / f"configs/sweeps/{n}.yaml") for n in ("swe_interactive_managers_smoke", "swe_interactive_smoke"))
+    assert (s.tasks, s.rounds) == (smoke.tasks, smoke.rounds)
+    assert set(s.configs) == set(smoke.configs) | {"manager_blocking", "manager_background"}
+    for cond, cfg in smoke.configs.items():
+        assert {**s.configs[cond].to_dict(), "name": cond} == cfg.to_dict()
+    blocking, background = s.configs["manager_blocking"], s.configs["manager_background"]
+    assert blocking.orchestrator_tools == background.orchestrator_tools == ["read_file", "list_dir", "search"]
+    assert (blocking.subagent.spawn_mode, background.subagent.spawn_mode) == ("blocking", "background")
+    blocking.subagent.spawn_mode = "background"
+    assert {**blocking.to_dict(), "name": "manager_background"} == background.to_dict()
+    twin = s.configs["background_interactive"]
+    twin.tools.orchestrator_tools = background.tools.orchestrator_tools
+    assert {**twin.to_dict(), "name": "manager_background"} == background.to_dict()
+
+
 def test_swe_sweep_larger_budget_hint(tmp_path, monkeypatch):
     """swe_sweep.yaml's larger step budget, made as its comments say (orchestrator_steps and the
     commented conditions block): every condition gets it, single_matched it x 8 subagent steps."""
