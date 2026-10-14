@@ -29,8 +29,8 @@ from .environment import AgentStopped
 from .hints import Hint
 from .llm import BillingError, LLMError, Message, SailClient, ToolCall, ToolResult, ToolSpec
 from .orchestrator import SPAWN_SPEC, Orchestrator
-from .prompts import (FIRST_HINT, NEXT_HINT, REPORT_EVENT, USER_EVENT, WAIT_RESULT, clock, interactive_note,
-                      interactive_prompt)
+from .prompts import (FIRST_HINT, NEXT_HINT, REPORT_EVENT, REPORTED_SCOPE, USER_EVENT, WAIT_RESULT, clock,
+                      interactive_note, interactive_prompt)
 from .records import EpisodeRecorder
 from .subagent import Dispatch, DispatchResult, Runtime, new_dispatch, run_dispatch
 from .tools import ToolOutput, truncate
@@ -52,6 +52,7 @@ BACKGROUND_SPAWN_SPEC = ToolSpec(
 POLL_SEC = 0.5  # a wait also wakes this often to notice the stop event
 JOIN_SEC = 30.0  # for the background subagents to unwind after a stop
 ELIDED = "[elided to keep the conversation within its size limit: {n} characters of older tool output]"
+ELIDED_REPORT = "[elided to keep the conversation within its size limit: {n} characters of an older report]"
 ELIDE_MIN_CHARS = 200
 ELIDE_TO = 0.75  # elide down to this fraction of max_context_chars, so the prompt prefix changes rarely
 
@@ -78,6 +79,7 @@ class InteractiveOrchestrator(Orchestrator):
         self.t0 = 0.0
         self.deadline_hit = self.idle = False
         self.n_elided = 0
+        self.report_bodies: list[str] = []  # delivered report texts, for elision
 
     # -- the session -------------------------------------------------------------------------
 
@@ -97,20 +99,22 @@ class InteractiveOrchestrator(Orchestrator):
             self.rec.update(session_t0=self.t0)
             timer.start()
             self.rec.transcript(self.who, Message("system", self.system))
-            first = FIRST_HINT.format(instruction=instruction, hint=self.hints[0].text) if self.hints else instruction
+            template = REPORTED_SCOPE if self.icfg.scope == "reported" else FIRST_HINT
+            first = template.format(instruction=instruction, hint=self.hints[0].text) if self.hints else instruction
             if self.hints:
                 self._hint_record(self.hints[0], self.t0, 1)
                 self.next_hint = 1
             self._add(Message("user", first))
             for step in range(1, self.cfg.budget.orchestrator_steps + 1):
+                if step > 1:  # never after the last step: what arrives then stays undelivered
+                    self._deliver(step)
                 self._elide()
-                outcome = self._step(step)
-                if outcome == "no_tool_call" and self._wait(None) == "idle":
-                    self.idle = True
-                if self.idle:
+                if self._step(step) == "no_tool_call":
+                    self._implicit_wait(step)
+                if self.idle and self._nothing_left():
                     exit_reason = "idle"
                     break
-                self._deliver(step + 1)
+                self.idle = False  # a later tool of the same step started work after `wait` found none
         except (AgentStopped, LLMError) as e:
             failure = self.rec.failure
             if isinstance(failure, BillingError):
@@ -158,11 +162,34 @@ class InteractiveOrchestrator(Orchestrator):
         concurrent.futures.wait(self.futures, timeout=JOIN_SEC)
 
     def _finish_records(self) -> None:
-        """Hints never delivered (the session ended first) get their inbox record too."""
+        """Hints and reports never delivered (the session ended first) get their inbox record too."""
         for h in self.hints[self.next_hint:]:
             self._hint_record(h, None, None)
         self.next_hint = len(self.hints)
+        with self.cv:
+            done, self.done = self.done, []
+        for d, r, t_end in done:
+            self._report_record(d, r, t_end, None, None)
         self.rec.update(n_elided_results=self.n_elided)
+
+    def _nothing_left(self) -> bool:
+        with self.cv:
+            return self.next_hint >= len(self.hints) and not self.live and not self.done
+
+    def _implicit_wait(self, step: int) -> None:
+        """A reply without a tool call ends the turn: wait for the next event, recorded as a
+        ``wait`` tool of that step (so the critical path and busy-at-arrival count it as waiting)."""
+        t = time.time()
+        steps = self.rec.records["steps"]
+        try:
+            if self._wait(None) == "idle":
+                self.idle = True
+        finally:
+            self.rec.write("tools", {
+                **self.who.fields(), "step": step, "call_id": steps[-1]["call_id"] if steps else None, "name": "wait",
+                "t_start": t, "t_end": time.time(), "exit_code": None, "timed_out": False, "is_error": False,
+                "output_chars": 0, "tool_call_id": None, "arguments": {"implicit": True},
+            })
 
     # -- the inbox ---------------------------------------------------------------------------
 
@@ -185,14 +212,12 @@ class InteractiveOrchestrator(Orchestrator):
             parts.append((t_ready, USER_EVENT.format(at=clock(t_ready - self.t0), text=NEXT_HINT.format(hint=h.text))))
         cap = max(2000, self.cfg.tools.max_output_chars // max(len(done), 1))
         for d, r, t_end in done:
-            self.rec.write("inbox", {
-                "kind": "report", "t_ready": t_end, "t_delivered": now, "step": step, "hint_index": None,
-                "subtask_id": None, "target_files": None, "f2p": None, "dispatch_id": d.dispatch_id,
-                "agent_id": d.agent_id, "status": r.status, "chars": len(r.report),
-            })
+            self._report_record(d, r, t_end, now, step)
+            body = truncate(r.report, cap)
+            self.report_bodies.append(body)
             parts.append((t_end, REPORT_EVENT.format(at=clock(t_end - self.t0), agent=d.agent_id, status=r.status,
                                                      steps=r.steps_used, instruction=truncate(d.instruction, 300),
-                                                     report=truncate(r.report, cap))))
+                                                     report=body)))
         text = "\n\n".join(p for _, p in sorted(parts, key=lambda x: x[0]))
         if self.messages and self.messages[-1].role == "user":  # keep user/assistant turns alternating
             prev = self.messages[-1]
@@ -200,6 +225,14 @@ class InteractiveOrchestrator(Orchestrator):
             self.rec.transcript(self.who, Message("user", text))
         else:
             self._add(Message("user", text))
+
+    def _report_record(self, d: Dispatch, r: DispatchResult, t_end: float, t_delivered: float | None,
+                       step: int | None) -> None:
+        self.rec.write("inbox", {
+            "kind": "report", "t_ready": t_end, "t_delivered": t_delivered, "step": step, "hint_index": None,
+            "subtask_id": None, "target_files": None, "f2p": None, "dispatch_id": d.dispatch_id,
+            "agent_id": d.agent_id, "status": r.status, "chars": len(r.report),
+        })
 
     def _hint_record(self, h: Hint, t_delivered: float | None, step: int | None) -> None:
         self.rec.write("inbox", {
@@ -209,8 +242,10 @@ class InteractiveOrchestrator(Orchestrator):
         })
 
     def _wait(self, timeout: float | None) -> str:
-        """Block until something arrives (``event``), ``timeout`` passes, or, with ``end_when_idle``,
-        the session has nothing left (``idle``); raises AgentStopped on a stop (the deadline)."""
+        """Block until something arrives (``event``) or ``timeout`` passes; an untimed wait (the end of a
+        turn) also returns ``idle`` when, with ``end_when_idle``, the session has nothing left. A timed
+        wait runs its course: the agent may be waiting on its own background commands. Raises
+        AgentStopped on a stop (the deadline)."""
         t_end = None if timeout is None else time.time() + max(0.0, timeout)
         with self.cv:
             while True:
@@ -220,7 +255,7 @@ class InteractiveOrchestrator(Orchestrator):
                 if self.done or self._due(now):
                     return "event"
                 left = self.hints[self.next_hint:]
-                if not left and not self.live and self.icfg.end_when_idle:
+                if timeout is None and not left and not self.live and self.icfg.end_when_idle:
                     return "idle"
                 if t_end is not None and now >= t_end:
                     return "timeout"
@@ -245,8 +280,7 @@ class InteractiveOrchestrator(Orchestrator):
             return super()._tool(tc, step, call_id, groups)
 
         def wait() -> ToolOutput:
-            raw = tc.arguments.get("timeout_sec")
-            timeout = float(raw) if isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw > 0 else None
+            timeout = wait_timeout(tc.arguments.get("timeout_sec"), self.icfg.wall_clock_sec)
             t = time.time()
             if self._wait(timeout) == "idle":
                 self.idle = True
@@ -303,27 +337,55 @@ class InteractiveOrchestrator(Orchestrator):
     # -- context size ------------------------------------------------------------------------
 
     def _elide(self) -> None:
-        """Replace the oldest tool outputs with a marker while the conversation is over its limit."""
+        """While the conversation is over its limit, replace, oldest message first, tool outputs and
+        subagent reports with a marker and drop old reasoning (never the task message or the newest
+        message)."""
         limit = self.icfg.max_context_chars
         if limit is None:
             return
         size = sum(_chars(m) for m in self.messages)
         if size <= limit:
             return
-        for m in self.messages[1:-1]:  # never the task message or the newest results
+        for m in self.messages[1:-1]:
             if size <= ELIDE_TO * limit:
                 break
-            if m.role != "tool":
-                continue
-            results = []
-            for r in m.tool_results:
-                if len(r.content) > ELIDE_MIN_CHARS and not r.content.startswith("[elided"):
-                    marker = ELIDED.format(n=len(r.content))
-                    size -= len(r.content) - len(marker)
-                    r = ToolResult(r.call_id, marker, r.is_error)
-                    self.n_elided += 1
-                results.append(r)
-            m.tool_results = results
+            if m.role == "tool":
+                results = []
+                for r in m.tool_results:
+                    if len(r.content) > ELIDE_MIN_CHARS and not r.content.startswith("[elided"):
+                        marker = ELIDED.format(n=len(r.content))
+                        size -= len(r.content) - len(marker)
+                        r = ToolResult(r.call_id, marker, r.is_error)
+                        self.n_elided += 1
+                    results.append(r)
+                m.tool_results = results
+            elif m.role == "user":
+                for body in self.report_bodies:
+                    if len(body) > ELIDE_MIN_CHARS and body in (m.content or ""):
+                        marker = ELIDED_REPORT.format(n=len(body))
+                        m.content = m.content.replace(body, marker, 1)
+                        size -= len(body) - len(marker)
+                        self.n_elided += 1
+            elif m.role == "assistant" and m.reasoning:
+                size -= len(m.reasoning)
+                m.reasoning = None
+                self.n_elided += 1
+
+
+def wait_timeout(raw: Any, cap: float) -> float | None:
+    """``wait``'s timeout_sec: None (absent or unreadable) waits for an event; 0 or less checks
+    once; anything else is capped at the session length."""
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        t = float(raw)
+    except OverflowError:  # an integer beyond a float: as long as possible
+        return cap
+    except (TypeError, ValueError):
+        return None
+    if t != t:  # NaN
+        return None
+    return min(max(t, 0.0), cap)
 
 
 def _chars(m: Message) -> int:

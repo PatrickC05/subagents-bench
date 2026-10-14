@@ -98,11 +98,13 @@ def hint_text(subtask: Subtask, detail: str, report: str | None = None) -> str:
         return where
     more = f" (and {len(labels) - MAX_TESTS_SHOWN} more)" if len(labels) > MAX_TESTS_SHOWN else ""
     tests = _code_list(labels[:MAX_TESTS_SHOWN]) + more
+    # Some hidden tests extend a test the repository already has (echo's TestContext_Scheme gains
+    # cases): "the version that checks it" holds for both.
     if len(labels) == 1:
-        return (f"{where} Once it is fixed, the test {tests} should pass; it is not in the repository yet, so its "
-                "name only describes the expected behaviour.")
-    return (f"{where} Once it is fixed, the tests {tests} should pass; they are not in the repository yet, so their "
-            "names only describe the expected behaviour.")
+        return (f"{where} Once it is fixed, the test {tests} should pass; the version of it that checks this is not "
+                "in the repository, so its name only describes the expected behaviour.")
+    return (f"{where} Once it is fixed, the tests {tests} should pass; the versions of them that check this are not "
+            "in the repository, so their names only describe the expected behaviour.")
 
 
 def n_slots(cfg: InteractiveConfig) -> int:
@@ -110,10 +112,16 @@ def n_slots(cfg: InteractiveConfig) -> int:
     return max(1, math.ceil(cfg.wall_clock_sec / cfg.interval_sec - 1e-9))
 
 
+def order_seed(cfg: InteractiveConfig, round_: int | None) -> int:
+    """The seed of a sweep round's order: ``order_seed + round - 1`` with ``vary_order_by_round``, so
+    the conditions of a round share an order and rounds sample different ones."""
+    return cfg.order_seed + (round_ - 1 if cfg.vary_order_by_round and round_ else 0)
+
+
 def schedule(cfg: InteractiveConfig, task_dir: str | Path, task_name: str, hints_dir: str | Path | None = None,
-             ) -> list[Hint]:
+             round_: int | None = None) -> list[Hint]:
     """The episode's hints: the ordered subtasks, as many as fit (and ``max_hints``)."""
-    subtasks = ordered(load_subtasks(task_dir), task_name, cfg.order_seed)
+    subtasks = ordered(load_subtasks(task_dir), task_name, order_seed(cfg, round_))
     n = min(len(subtasks), n_slots(cfg), cfg.max_hints or len(subtasks))
     reports = load_reports(hints_dir, task_name) if cfg.hint_detail == "report" else {}
     return [Hint(k, k * cfg.interval_sec, s, hint_text(s, cfg.hint_detail, reports.get(s.id)))

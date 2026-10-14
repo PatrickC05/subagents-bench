@@ -101,7 +101,9 @@ def test_background_session_delivers_hints_and_reports_while_subagents_run(tmp_p
     exit_reason, r, f, hints, _ = session(tmp_path, delegating(), subagent={"spawn_mode": "background"})
     assert exit_reason == "idle"
     first = f[ORCH].requests[0]
-    assert first["messages"][0].content.startswith("Fix every bug.\n\nHint: There is a bug in `src/m")
+    assert first["messages"][0].content.startswith("Fix every bug.\n\n---\nIn this session you do not search the "
+                                                   "repository for bugs on your own")
+    assert "every rule above still applies.\n\nHint: There is a bug in `src/m" in first["messages"][0].content
     assert "wait" in first["tools"] and "finish" not in first["tools"] and "spawn_subagents" in first["tools"]
     assert "starts one subagent per instruction in the background" in first["system"]
     hs = hints_in(r)
@@ -249,8 +251,9 @@ def test_schedule_order_slots_and_texts(tmp_path):
     b0 = subs[0]
     assert hint_text(b0, "files") == "There is a bug in `src/m0.py`."
     assert hint_text(b0, "tests") == ("There is a bug in `src/m0.py`. Once it is fixed, the test "
-                                      "`tests.test_m::test_bug_number_0` should pass; it is not in the repository "
-                                      "yet, so its name only describes the expected behaviour.")
+                                      "`tests.test_m::test_bug_number_0` should pass; the version of it that checks "
+                                      "this is not in the repository, so its name only describes the expected "
+                                      "behaviour.")
     many = Subtask("x", tuple(f"t::test_{i}" for i in range(5)), ("a/x.py", "b/y.py"))
     assert hint_text(many, "tests").startswith("There is a bug whose fix touches `a/x.py` and `b/y.py`. Once it is "
                                                "fixed, the tests `t::test_0`, `t::test_1` and `t::test_2` (and 2 more)")
@@ -396,7 +399,8 @@ def test_hint_rows_measure_each_reaction(interactive_jobs):
     assert not rows["shared_files"].any() and rows["continued_after_next"].iloc[:3].notna().all()
     solo = pd.DataFrame(hint_rows(load_trial(out["solo"][0]), {"condition": "solo", "trial_name": "x"}, True))
     # each hint waits for the previous hint's 0.7 s command: delivered late, touched by the orchestrator itself
-    assert (solo["delivery_sec"].iloc[1:] > 0.05).all() and solo["touch_by"].eq("orchestrator").all()
+    assert (solo["delivery_sec"].iloc[1:] > 0).all() and solo["delivery_sec"].iloc[1] > 0.1
+    assert solo["touch_by"].eq("orchestrator").all()
     assert solo["dispatch_sec"].isna().all()
     assert (solo["busy_at_arrival"].iloc[1:] == "tool").all()
 
@@ -421,18 +425,28 @@ def test_interactivity_tables_and_figure(interactive_jobs, tmp_path):
     assert (figs / "interactivity.png").stat().st_size > 10_000
 
 
-def test_censored_medians_and_unshared_touches():
-    def row(k, touch, shared=False, trial="t1"):
-        return {"condition": "c", "trial_name": trial, "valid": True, "topology": "single", "spawn_mode": None,
+def test_censored_medians_status_and_unshared_touches():
+    def row(k, touch, shared=False, status=None, counted=None, pre_edited=False, valid=True):
+        return {"condition": "c", "trial_name": "t1", "valid": valid, "topology": "single", "spawn_mode": None,
                 "interval_sec": 300.0, "hint_index": k, "delivered": True, "busy_at_arrival": "tool" if k else "start",
-                "shared_files": shared, "delivery_sec": 1.0, "response_sec": 5.0, "dispatch_sec": None,
-                "touch_sec": touch, "edit_sec": None, "continued_after_next": None, "counted": None}
-    hints = pd.DataFrame([row(0, 10.0), row(1, None), row(2, 400.0, shared=True), row(3, 20.0)])
+                "shared_files": shared, "shares_any": shared, "delivery_sec": 1.0, "response_sec": 5.0,
+                "dispatch_sec": None, "touch_sec": touch, "edit_sec": None, "pre_edited": pre_edited,
+                "status_at_next": status, "counted": counted}
+    hints = pd.DataFrame([row(0, 10.0, status="continued", counted=True), row(1, None, status="not_started"),
+                          row(2, 400.0, shared=True, status="continued"), row(3, 20.0, status="stopped", counted=True),
+                          row(4, 1.0, pre_edited=True, counted=False)])
     c = condition_table(hints).iloc[0]
-    assert c["touch_frac"] == 0.75 and c["touch_median_sec"] == 210.0  # (20 + 400) / 2; the missing one sorts last
-    assert c["touch_before_next"] == 0.5 and c["touch_median_sec_unshared"] == 20.0
-    assert pd.isna(c["edit_median_sec"]) and pd.isna(c["hinted_fixed_frac"]) and c["busy_at_arrival_frac"] == 1.0
-    assert list(position_table(hints)["hint_index"]) == [0, 1, 2, 3]
+    assert (c["n_hints"], c["n_later_hints"]) == (5, 4) and c["first_touch_median_sec"] == 10.0
+    assert c["pre_edited_frac"] == 0.25  # hint 4 was edited before it was sent: left out of touch and edit
+    assert c["touch_frac"] == 2 / 3 and c["touch_median_sec"] == 400.0  # [20, 400, never]
+    assert c["touch_before_next"] == 1 / 3
+    assert pd.isna(c["touch_median_sec_unshared"]) and c["touch_before_next_unshared"] == 0.5  # [never, 20]
+    assert c["n_status_unshared"] == 3 and c["continued_at_next_frac"] == 1 / 3 and c["stopped_fixed_frac"] == 1.0
+    assert c["not_started_at_next_frac"] == 1 / 3 and c["hinted_fixed_frac"] == 2 / 3
+    assert pd.isna(c["edit_median_sec"]) and c["busy_at_arrival_frac"] == 1.0
+    assert list(position_table(hints)["hint_index"]) == [0, 1, 2, 3, 4]
+    invalid = pd.DataFrame([row(0, 1.0, valid=False)])
+    assert condition_table(invalid).empty and position_table(invalid).empty  # no crash without valid hints
 
 
 # --- harbor agent and sweep ---------------------------------------------------------------------------
@@ -460,6 +474,7 @@ def test_harbor_agent_runs_an_interactive_session(tmp_path, monkeypatch):
     assert r["episode"]["exit_reason"] == "idle" and r["episode"]["n_hints_delivered"] == 2
     assert r["episode"]["end_kill"] == {"ok": True, "n_killed": 0, "error": None}
     assert ctx.metadata["n_hints"] == 2 and r["inbox"][0]["subtask_id"] in {"b0", "b1"}
+    assert ctx.metadata["end_kill"]["ok"] and ctx.metadata["hint_order_seed"] == 0  # round 1 of the job name
     (trial / "config.json").write_text(json.dumps({"task": {}}))
     with pytest.raises(Exception, match="names no task path"):
         asyncio.run(agent.run("x", FakeHarborEnv(work), None))
@@ -516,3 +531,114 @@ def test_sweep_generates_reports_and_passes_the_hints_dir(tmp_path, monkeypatch,
     monkeypatch.setattr(sweep, "ping", fake.ping)
     assert sweep.run(spec, sweep.plan(spec)) == 0
     assert fake.calls()[0]["hints_dir"] == str(sweep.hints_dir(spec))
+
+
+# --- regressions from review ---------------------------------------------------------------------------
+
+
+def test_nothing_is_delivered_after_the_last_step(tmp_path):
+    scripts = {ORCH: [Reply("", [tc("bash", command="sleep 0.7")])] * 2}
+    exit_reason, r, f, _, _ = session(tmp_path, scripts, n_hints=3, topology="single", budget={"orchestrator_steps": 2})
+    assert exit_reason == "max_steps" and len(f[ORCH].requests) == 2
+    assert [(h["hint_index"], h["step"]) for h in hints_in(r)] == [(0, 1), (1, 2), (2, None)]
+    assert r["episode"]["n_hints_delivered"] == 2
+
+
+def test_wait_timeouts():
+    from subagents_bench.interactive import wait_timeout
+    assert [wait_timeout(x, 3600) for x in (None, True, "soon", float("nan"))] == [None] * 4
+    assert [wait_timeout(x, 3600) for x in (0, -5, "60", 12.5, 10 ** 400, float("inf"))] == [0.0, 0.0, 60.0, 12.5, 3600, 3600]
+
+
+def test_wait_zero_checks_once_and_a_timed_wait_does_not_end_the_session(tmp_path):
+    script = [Reply("", [tc("wait", timeout_sec=0)]), Reply("", [tc("wait", timeout_sec=1)]), Reply("", [tc("wait")])]
+    exit_reason, r, f, _, sec = session(tmp_path, {ORCH: script}, n_hints=1, topology="single")
+    waits = [x for x in r["tools"] if x["name"] == "wait"]
+    assert exit_reason == "idle" and len(waits) == 3
+    assert waits[0]["t_end"] - waits[0]["t_start"] < 0.2  # wait(0): a check, not a block
+    assert waits[1]["t_end"] - waits[1]["t_start"] >= 0.9  # timed: runs its course though nothing is left
+
+
+def test_wait_then_spawn_in_one_step_keeps_the_session(tmp_path):
+    def orch(system, messages, tools):
+        if sum(1 for m in messages if m.role == "assistant") == 0:
+            return Reply("", [tc("wait"), tc("spawn_subagents", instructions=["late work"])])
+        return Reply("", [tc("wait")])
+
+    sub = [Reply("", [tc("bash", command="sleep 0.3")]), Reply("", [tc("submit", report="done")])]
+    exit_reason, r, _, _, _ = session(tmp_path, {ORCH: orch, SUB: sub}, n_hints=1, subagent={"spawn_mode": "background"})
+    assert exit_reason == "idle" and r["dispatches"][0]["status"] == "submitted"
+    assert [x["kind"] for x in r["inbox"]] == ["hint", "report"]
+
+
+def test_implicit_waits_are_recorded_as_wait_tools(tmp_path):
+    _, r, _, _, _ = session(tmp_path, {ORCH: [Reply("ok"), Reply("ok")]}, n_hints=2, topology="single")
+    waits = [x for x in r["tools"] if x["name"] == "wait"]
+    assert len(waits) == 2 and waits[0]["arguments"] == {"implicit": True} and waits[0]["call_id"] == r["steps"][0]["call_id"]
+    assert waits[0]["t_end"] - waits[0]["t_start"] >= 0.4  # until hint 1, at 0.5 s
+    assert critical_path(r)["tool"] >= 0.4
+
+
+def test_old_reports_and_reasoning_are_elided_too(tmp_path):
+    def orch(system, messages, tools):  # one job at a time: each report is its own, older message
+        n = sum(1 for m in messages if m.role == "assistant" and m.tool_calls[0].name == "spawn_subagents")
+        if n < 4 and messages[-1].role == "user":
+            return Reply("", [tc("spawn_subagents", instructions=[f"job {n}"])], reasoning="r" * 3000)
+        return Reply("", [tc("wait")])
+
+    sub = lambda system, messages, tools: Reply("", [tc("submit", report="R" * 5000)])  # noqa: E731
+    _, r, f, _, _ = session(tmp_path, {ORCH: orch, SUB: sub}, n_hints=1, subagent={"spawn_mode": "background"},
+                            interactive={"max_context_chars": 10000})
+    users = [m.content for req in f[ORCH].requests for m in req["messages"][1:] if m.role == "user"]
+    assert any("characters of an older report]" in u for u in users) and r["episode"]["n_elided_results"] >= 2
+    assert f[ORCH].requests[-1]["messages"][1].reasoning is None
+
+
+def test_scope_all_keeps_the_task_goal_and_rounds_vary_the_order(tmp_path):
+    from subagents_bench.hints import order_seed
+    _, _, f, _, _ = session(tmp_path, {ORCH: [Reply("", [tc("wait")])]}, n_hints=1, topology="single",
+                            interactive={"scope": "all"})
+    assert f[ORCH].requests[0]["messages"][0].content.startswith("Fix every bug.\n\nHint: ")
+    cfg = make_config(interactive={"order_seed": 5}).interactive
+    assert [order_seed(cfg, k) for k in (None, 1, 2, 3)] == [5, 5, 6, 7]
+    assert order_seed(make_config(interactive={"order_seed": 5, "vary_order_by_round": False}).interactive, 3) == 5
+    task = make_task(tmp_path / "t", 12)
+    orders = {tuple(h.subtask.id for h in schedule(cfg, task, "task-1", round_=k)) for k in (1, 2, 3)}
+    assert len(orders) == 3
+    with pytest.raises(ConfigError, match="scope: 'some' is not one of"):
+        make_config(interactive={"scope": "some"})
+
+
+def test_blocking_prompt_has_no_step_budget_wording():
+    blocking = interactive_prompt(make_config(interactive={}), "/w")
+    assert "uses one of your steps" not in blocking and "returns when all of them have finished" in blocking
+    assert "at most 3 instruction(s) per call are run" in blocking
+
+
+def test_unfixed_and_pre_hint_work_in_hint_rows(tmp_path):
+    def orch(system, messages, tools):
+        if sum(1 for m in messages if m.role == "assistant") == 0:  # works on every file up front
+            writes = "; ".join(f"echo x > src/m{i}.py" for i in range(3))
+            return Reply("", [tc("bash", command=f"mkdir -p src; {writes}")])
+        return Reply("", [tc("wait")])
+
+    base = tmp_path / "e"
+    _, _, _, hints, _ = session(base, {ORCH: orch}, n_hints=3, topology="single", interactive={"scope": "all"})
+    d = tmp_path / "jobs" / "s__r1__c" / "task-1__x"
+    (d / "verifier").mkdir(parents=True)
+    os.replace(base / "ep", d / "agent")
+    (d / "config.json").write_text(json.dumps({"task": {"path": "task-1"}}))
+    (d / "verifier" / "eval.json").write_text(json.dumps({"visible_ok": False, "agent_build_ok": False, "subtasks": []}))
+    rows = pd.DataFrame(hint_rows(load_trial(d), {"condition": "c", "trial_name": d.name}, True))
+    assert list(rows["pre_edited"]) == [False, True, True] and rows["touch_sec"].iloc[1:].isna().all()
+    assert list(rows["counted"]) == [False] * 3 and list(rows["graded"]) == [False] * 3  # the build broke: unfixed
+    assert list(pd.DataFrame(hint_rows(load_trial(d), {}, False))["counted"]) == [None] * 3  # invalid: unknown
+
+
+def test_status_at_next_and_ambiguous_basenames():
+    from subagents_bench.analysis.interactivity import tool_touches as touches
+    f = ["pint/facets/plain/quantity.py"]
+    cd = {"name": "bash", "arguments": {"command": "cd pint && grep -n x quantity.py"}}
+    assert touches(cd, f) == (True, False) and touches(cd, f, basename_ok=set()) == (False, False)
+    seg = {"name": "bash", "arguments": {"command": "grep core.py src/core.py; sed -i 's/a/b/' parser.py"}}
+    assert touches(seg, ["src/core.py"]) == (True, False)  # the write is to another file

@@ -212,15 +212,26 @@ is a new area of the same codebase rather than a fresh context.
 `tests/`), shuffles the subtasks with a seed per task (`order_seed`, the same
 order in every condition, so conditions are compared on the same sequence)
 and sends subtask k as a hint at `k x interval_sec` (300 s), as many as fit
-in `wall_clock_sec` (3600 s: 12) and the task has. The first user message
-is the task instruction plus `Hint: <hint 0>` (SWE-sweep's instruction
-already allows a `Hint:` section in the first message); later ones say
-"Another one, while you keep working on the earlier ones." A hint names the
+in `wall_clock_sec` (3600 s: 12) and the task has. With
+`vary_order_by_round` (the default) round k of a sweep uses seed
+`order_seed + k - 1`: the conditions of a round see the same order, and the
+rounds sample different ones, so hint position is not tied to one subtask.
+The first user message is the task instruction plus `Hint: <hint 0>`
+(SWE-sweep's instruction already allows a `Hint:` section in the first
+message); later ones say "Another one, while you keep working on the earlier
+ones." SWE-sweep's instruction asks for every bug in the repository; with
+`scope: reported` (the default) the first message adds that in this session
+the user points out the bugs and the agent fixes those, the rules still
+applying. Otherwise a bug the agent found and fixed before its hint would
+look like a hint it never started (the analysis also records such work as
+`pre_touched`/`pre_edited` rather than crediting it). A hint names the
 files the reference fix changes (`files`) and by default the hidden tests'
 ids (`tests`). Those ids describe the behaviour in most repositories
 (`test_symlink_resolution`), not in goawk (`interp::TestInterp`) or libexpat
 (`runtests`), which is why `swe_interactive.yaml` uses click, pint, isort
-and echo. `report` instead sends a one-to-three-sentence bug report written
+and echo. Some hidden tests extend a test the repository has (echo's
+`TestContext_Scheme` gains cases), so the hint says "the version of it that
+checks this is not in the repository" rather than that the test is new. `report` instead sends a one-to-three-sentence bug report written
 beforehand from the hidden test patch by `subagents-bench hints` (the first
 interactive condition's orchestrator model, told not to describe the fix),
 read from `jobs/<sweep>/hints/<task>.json`. A scripted, timed user rather
@@ -239,12 +250,18 @@ subagents. There is no `finish` (a call to it is an unknown tool), and the
 note after each step is `[m:ss of 60:00 elapsed; subagents running: sub-3
 (2:10), ...; dispatch budget left: D]`. `wait(timeout_sec?)` blocks until a
 hint is due, a report is ready or the timeout passes; a reply without a
-tool call waits the same way (the end of a chat turn). The session ends at
-`wall_clock_sec` (a timer sets the recorder's stop event, every agent
-unwinds as on harbor's cancel, exit `deadline`) or, with `end_when_idle`,
-when every hint was sent, nothing runs and the orchestrator waits (exit
-`idle`). `budget.orchestrator_steps` is only a safety cap (400 in the
-sweep). Afterwards the harbor agent runs the cancel's kill script, since
+tool call waits the same way (the end of a chat turn), recorded as a `wait`
+tool with `{"implicit": true}`. `timeout_sec` 0 or less checks once,
+numeric strings are read, and anything longer than the session is capped.
+The session ends at `wall_clock_sec` (a timer sets the recorder's stop
+event, every agent unwinds as on harbor's cancel, exit `deadline`) or, with
+`end_when_idle`, when every hint was sent, nothing runs and the orchestrator
+waits without a timeout (exit `idle`): a timed `wait` runs its course, since
+the agent may be waiting on its own background command, and a `wait` that
+found nothing left does not end the session when a later tool of the same
+step started a subagent. Nothing is delivered after the last step: what is
+pending then is recorded undelivered. `budget.orchestrator_steps` is only a
+safety cap (2000 in the sweep: every wait is a step). Afterwards the harbor agent runs the cancel's kill script, since
 commands of stopped subagents keep running in the container, and records
 `end_kill`.
 
@@ -258,14 +275,22 @@ separate where a hint waits: behind the agent's own commands (single),
 behind its subagents (blocking), or nowhere but the LLM call (background).
 `delegation_hint` in an interactive episode needs background mode and says
 that delegating keeps the orchestrator free to respond; the batch hint's
-step argument does not apply without a step budget. The dispatch budget is
-60 in the sweep (the batch study's 15 would run out within minutes).
+step argument does not apply without a step budget. For the parallel
+strategy, the blocking and background prompts share their Subagents text
+apart from when the call returns (the batch text's "one spawn_subagents call
+uses one of your steps" would frame delegation differently). The dispatch
+budget is 60 in the sweep (the batch study's 15 would run out within
+minutes), and subagents get 20 steps: 8 rarely suffice to investigate, fix
+and test one bug under emulation.
 
 **Context.** A one-hour single agent can outgrow the model's context.
-`max_context_chars` (400000 in the sweep, about 100k tokens) replaces the
-oldest tool outputs (never the task message or the newest results) with a
-marker once the conversation is over the limit, down to 75% of it, so the
-cached prompt prefix changes rarely; `n_elided_results` counts them.
+`max_context_chars` (400000 in the sweep, about 100k tokens) works oldest
+message first once the conversation is over the limit, down to 75% of it so
+the cached prompt prefix changes rarely: tool outputs and delivered
+subagent reports become a marker and old reasoning is dropped (never the
+task message or the newest message); `n_elided_results` counts them. The
+orchestrator's own messages and tool-call arguments are kept, so the limit
+is a target, not a hard bound.
 
 **Checks.** `preflight` fails an interactive sweep when a task has no
 subtasks, when `report` hints are missing, or when harbor's agent timeout
@@ -531,23 +556,31 @@ interactive episode into a row of latencies after the hint was sent:
 delivery (into the conversation), response (the first orchestrator call that
 saw it returned), dispatch (a subagent started whose instruction names a
 target file or a hidden test's name), touch (any tool call naming a target
-file) and edit (an `edit_file` on one, or a bash command naming one that
-writes), plus what the orchestrator was doing when it arrived and the
-grader's verdict for the subtask from `verifier/eval.json`. Tool records
+file) and edit (an `edit_file` on one, or a bash command segment naming one
+that writes), plus what the orchestrator was doing when it arrived, what
+had happened to it when the next hint arrived (not started, continued,
+stopped; a stopped hint later counted fixed was finished, otherwise
+dropped), and the grader's verdict for the subtask from
+`verifier/eval.json` (a valid trial without a verdict, e.g. a patch that
+broke the build, counts it unfixed, as the reward does). Summaries leave out
+hint 0, which arrives with the task. Tool records
 keep their arguments (strings cut to 2000 characters) and dispatches their
 instruction for this. File matching is textual: a path or its last two
 components, or a bare basename not inside another path (an agent that `cd`s
-into the package). It is a heuristic in two ways. Subtasks share files:
-2231 of SWE-sweep's 4068 subtasks share a target file with another subtask
-of their task, so work on an earlier hint's bug can register as touching a
-later one; the rows flag `shared_files` and the summary reports touch and
-edit for unshared hints too (echo's 6 bugs are in 6 files). And `search`
+into the package), only when no other hinted target file has that basename
+(pint has three `quantity.py`). It is a heuristic in two ways. Subtasks
+share files: 2231 of SWE-sweep's 4068 subtasks share a target file with
+another subtask of their task, so work on an earlier hint's bug can register
+as touching a later one; the rows flag `shared_files` (an earlier hint) and
+`shares_any` (any other), the summary reports touch and edit for unshared
+hints too, and the status at the next hint only over hints that share no
+file (echo's 6 bugs are in 6 files). And `search`
 over the whole repository is not a touch. Missing events (never happened
 before the session ended) count as infinitely late in the medians, and
 `*_before_next` is the share within one interval, before the next request.
 For a background spawn the critical path counts only starting it (its
 subagents run off the orchestrator's chain), so it stays below the wall
-clock.
+clock; waits, explicit and implicit, are tool time.
 
 **Statistics.** Resolve rates with Wilson 95% intervals; mean cost, wall
 clock and tokens with a seeded percentile bootstrap (2000 resamples).

@@ -28,16 +28,19 @@ overrides:
     wall_clock_sec: 3600
     interval_sec: 300
     hint_detail: tests               # files | tests | report (run `subagents-bench hints` first)
-    order_seed: 0                    # the bugs' order per task, the same in every condition
+    order_seed: 0                    # the bugs' order per task: the same for every condition of a round,
+    vary_order_by_round: true        # and round k uses seed k - 1, so the rounds sample different orders
+    scope: reported                  # fix the bugs the user sends; SWE-sweep's "fix all bugs" is set aside
     end_when_idle: true
     max_context_chars: 400000        # about 100k tokens: elide the oldest tool output beyond it
   budget:
-    orchestrator_steps: 400          # a safety cap only: the session ends at its deadline
+    orchestrator_steps: 2000         # a safety cap only (waits are steps too): the deadline ends the session
     command_timeout_sec: 600         # test suites run for minutes under amd64 emulation
     max_command_timeout_sec: 1800
   subagent:
     max_dispatches: 60               # 12 hints in an hour need far more than the batch study's 15
     max_concurrent: 3
+    max_steps: 20                    # 8 is too few to investigate, fix and test one bug under emulation
 
 harbor:
   n_concurrent: 4

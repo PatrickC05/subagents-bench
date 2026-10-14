@@ -84,7 +84,7 @@ still unwinding after harbor's cancel) are dropped.
 | `group_id` | the spawn group of a subagent's tool, or of the orchestrator's `spawn_subagents` call |
 | `step` | the agent's step |
 | `call_id` | the LLM call that asked for the tool |
-| `name` | `bash`, `edit_file`, `read_file`, `list_dir`, `search`, `finish`, `spawn_subagents`, `wait` (interactive), `submit`, or an unknown name the model used |
+| `name` | `bash`, `edit_file`, `read_file`, `list_dir`, `search`, `finish`, `spawn_subagents`, `wait` (interactive; also written, with `arguments` `{"implicit": true}` and no `tool_call_id`, for the wait after a reply without a tool call), `submit`, or an unknown name the model used |
 | `t_start`, `t_end` | the tool's run; for a blocking `spawn_subagents` the whole spawn, for a background one only starting it |
 | `exit_code` | shell exit status of `bash`, `read_file`, `list_dir`, `search`; null for the others |
 | `timed_out` | the command hit its timeout and was killed |
@@ -169,14 +169,14 @@ the subagents still running, dispatch budget left).
 ### `inbox.jsonl`: one delivery to the orchestrator (interactive episodes)
 
 Empty in batch episodes. One line per hint (user message) and per background
-subagent report, written when it is delivered, plus one per hint never
-delivered (the session ended first), written when the episode ends.
+subagent report, written when it is delivered, plus one per hint or report
+never delivered (the session ended first), written when the episode ends.
 
 | Field | Meaning |
 |---|---|
 | `kind` | `hint` or `report` |
 | `t_ready` | a hint: when it was sent (session start + `hint_index` x `interval_sec`); a report: when its subagent ended |
-| `t_delivered` | when it entered the orchestrator's conversation (between steps); null for a hint never delivered |
+| `t_delivered` | when it entered the orchestrator's conversation (before a step's LLM call, never after the last step); null if never delivered |
 | `step` | the orchestrator step whose LLM call saw it first (1 for hint 0, in the first message); null if never delivered |
 | `hint_index`, `subtask_id`, `target_files`, `f2p` | a hint's position and its SWE-sweep subtask: id, the files the reference fix changes, the hidden tests that fail before it (null for a report) |
 | `dispatch_id`, `agent_id`, `status` | a report's subagent and its dispatch status (null for a hint) |
@@ -212,8 +212,9 @@ Interactive episodes add:
 | Field | Meaning |
 |---|---|
 | `session_t0` | the session's start: hint k is sent at `session_t0` + k x `interval_sec` |
+| `hint_order_seed` | the seed of the subtasks' order: `order_seed` + round - 1 with `vary_order_by_round` (harbor runs) |
 | `n_hints`, `n_hints_delivered` | hints scheduled, and delivered before the session ended |
-| `n_elided_results` | older tool outputs replaced by a marker to stay within `max_context_chars` |
+| `n_elided_results` | older tool outputs, subagent reports and reasoning replaced or dropped to stay within `max_context_chars` |
 | `end_kill` | `{ok, n_killed, error}` of killing the commands left running when the session ended (harbor runs only) |
 
 ## Sweep files
@@ -265,7 +266,7 @@ Every per-trial and per-record table starts with the **keys**: `sweep`,
 | `reward`, `resolved` | the verifier's reward (Terminal-Bench: 1 or 0; SWE-sweep: the fraction of the task's bugs fixed, 0 on a regression); resolved = 1 if reward >= 1, else 0. A valid trial without a reward (a verifier in the agent's container failed after it started) has reward 0 and resolved 0 (and on SWE-sweep bugs_fixed 0); an invalid one without a reward has both empty |
 | `n_subtasks`, `bugs_fixed`, `regressed` | SWE-sweep only (else empty): the task's bugs (from `tasks.json`, so a trial whose patch breaks the build, which the grader reports as 0 subtasks, keeps them), the grader's `n_resolved` (0 if a visible test regressed, as SWE-sweep's scoring counts it; reward x n_subtasks would carry the reward's rounding to 4 places), and 1 if a visible test regressed (`visible_ok` 0) |
 | `t_start`, `wall_clock_sec` | the episode's |
-| `interactive`, `n_hints`, `n_hints_delivered` | 1 for an interactive session, and its hints scheduled and delivered (empty in batch episodes) |
+| `interactive`, `n_hints`, `n_hints_delivered` | 1 for an interactive session, else 0; its hints scheduled and delivered (empty in batch episodes) |
 | `steps`, `spawns`, `dispatches`, `arbitrations` | record counts |
 | `delegated` | 1 if the orchestrator spawned at least once |
 | `n_provider_errors`, `n_stream_repairs` | from the episode and its calls |
@@ -315,29 +316,39 @@ heuristic (docs/DESIGN.md).
 |---|---|
 | keys, `valid`, `topology`, `spawn_mode`, `hint_detail`, `interval_sec` | the trial and its design (`spawn_mode` empty for a single agent) |
 | `hint_index`, `subtask_id`, `target_files` (`;`-joined), `n_target_files` | the hint and its subtask |
+| `scope` | `interactive.scope`: `reported` (the session fixes the bugs the user sends) or `all` |
 | `shared_files` | one of its target files is also a target of an earlier hint's subtask (its touch and edit latencies can come from that subtask's work) |
+| `shares_any` | one of its target files is a target of any other hint's subtask |
 | `t_ready_sec` | when it was sent, after the session start |
 | `delivered` | it reached the orchestrator before the session ended |
 | `busy_at_arrival` | what the orchestrator was doing when it was sent: `llm` (a call), `tool` (its own tool), `spawn` (a blocking spawn), `wait`, `idle` (between steps or waiting after a reply without a tool), `start` (hint 0) |
 | `delivery_sec` | until it entered the conversation |
 | `response_sec` | until the first orchestrator LLM call that saw it returned |
 | `dispatch_sec` | until a subagent started whose instruction names a target file or one of the hidden tests' names |
-| `touch_sec`, `touch_by` | until any agent's tool call named a target file (`read_file`/`edit_file`/`list_dir`/`search` path, or a `bash` command), and that agent's role |
-| `edit_sec` | until an edit of a target file: `edit_file` on it, or a `bash` command naming it that writes (`sed -i`, `perl -i`, a redirection or `tee` to it, `patch`, `git apply`, a Python write) |
-| `continued_after_next` | a target file was named again after the next hint was sent (empty for the last hint) |
-| `resolved`, `partial`, `counted` | the grader's verdict for the subtask, and resolved with no visible regression (what the reward counts); empty without `eval.json` |
+| `touch_sec`, `touch_by` | until any agent's tool call named a target file (`read_file`/`edit_file`/`list_dir`/`search` path, or a `bash` command), and that agent's role. A bare basename counts only when no other hinted target file shares it |
+| `edit_sec` | until an edit of a target file: `edit_file` on it, or a `bash` command segment (split at `;`, `&&`, `\|\|`, `\|`, newlines; a command with a heredoc is one segment) naming it that writes (`sed -i`/`--in-place`, `perl -i`, a redirection or `tee` to it, `patch`, `git apply`, `gofmt -w`, `cp`/`mv`/`install` onto it, a Python write) |
+| `pre_touched`, `pre_edited` | a target file was named, or edited, before the hint was sent (the agent got to the bug early; with `scope: reported` it was not asked to) |
+| `status_at_next` | when the next hint was sent: `not_started` (no touch since this hint was sent), `continued` (touched before and again after), `stopped` (touched before, never after); empty for the last hint |
+| `continued_after_next` | `status_at_next` is `continued` (empty when not started or the last hint) |
+| `graded`, `resolved`, `partial`, `counted` | the grader reported a verdict for the subtask; its verdict; resolved with no visible regression (what the reward counts). In a valid trial a subtask without a verdict (no `eval.json`, or a patch that broke the build, for which the grader lists no subtasks) is unfixed: false; in an invalid trial empty |
 
 ### `interactivity.csv`: one row per interactive condition (valid trials only)
 
+Latency columns are over the hints after the first (hint 0 arrives with the
+task, while the agent starts up; it has the `first_*` columns).
+
 | Columns | Meaning |
 |---|---|
-| `condition`, `topology`, `spawn_mode`, `n_episodes`, `n_hints` | the design and the counts |
-| `delivered_frac` | hints delivered before the session ended |
-| `busy_at_arrival_frac` | hints after the first that arrived while the orchestrator was in an LLM call, its own tool or a blocking spawn |
+| `condition`, `topology`, `spawn_mode`, `n_episodes`, `n_hints`, `n_later_hints` | the design and the counts (all hints, hints after the first) |
+| `delivered_frac` | later hints delivered before the session ended |
+| `busy_at_arrival_frac` | later hints that arrived while the orchestrator was in an LLM call, its own tool or a blocking spawn |
+| `pre_edited_frac` | later hints whose files were edited before they were sent; left out of the touch and edit columns |
+| `first_{response,touch,edit}_median_sec` | hint 0's medians (censored as below) |
 | `{m}_frac`, `{m}_median_sec`, `{m}_mean_sec`, `{m}_mean_ci_lo`, `{m}_mean_ci_hi`, `{m}_before_next` | for m in `delivery`, `response`, `dispatch`, `touch`, `edit`: the share of hints where it happened; the median counting a missing one as infinitely late (NaN when more than half are missing); the mean (bootstrap 95% interval) over those where it happened; the share where it happened within one `interval_sec` (before the next hint) |
 | `{touch,edit}_median_sec_unshared`, `{touch,edit}_before_next_unshared` | the same over hints without `shared_files` |
-| `continued_after_next_frac` | hints whose files were named again after the next hint was sent |
-| `n_graded`, `hinted_fixed_frac` | hints with a grader verdict, and the share counted fixed |
+| `n_status_unshared`, `{not_started,continued,stopped}_at_next_frac` | over hints (hint 0 included, the last excluded) that share no file with any other hint: their `status_at_next` |
+| `stopped_fixed_frac` | of those stopped, the share counted fixed in the end (finished, not dropped) |
+| `n_graded`, `hinted_fixed_frac` | hints (all) with a verdict, and the share counted fixed |
 
 ### `hint_positions.csv`: one row per interactive condition and hint position
 

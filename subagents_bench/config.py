@@ -15,6 +15,7 @@ STRATEGIES = ("parallel", "sequential", "arbiter")
 SCOPES = ("easy", "medium", "hard")
 SPAWN_MODES = ("blocking", "background")
 HINT_DETAILS = ("files", "tests", "report")
+SESSION_SCOPES = ("reported", "all")
 TOOL_NAMES = ("bash", "edit_file", "read_file", "list_dir", "search")
 
 
@@ -83,6 +84,8 @@ class InteractiveConfig:
     max_hints: int | None = None  # None: as many as fit in the wall clock (and the task has)
     hint_detail: str = "tests"  # files | tests (+ the hidden tests' ids) | report (a generated bug report)
     order_seed: int = 0  # the subtasks' order, shuffled per task with this seed (same for every condition)
+    vary_order_by_round: bool = True  # round k of a sweep uses order_seed + k - 1 (each round its own order)
+    scope: str = "reported"  # reported: fix the bugs the user sends (the task's "fix all bugs" is set aside); all
     end_when_idle: bool = True  # end once every hint was sent, nothing runs and the orchestrator waits
     max_context_chars: int | None = None  # elide the oldest tool results beyond this (None: never)
 
@@ -164,6 +167,8 @@ def from_dict(raw: Any) -> ExperimentConfig:
 
 def _check_interactive(cfg: ExperimentConfig) -> None:
     i = cfg.interactive
+    if i.scope not in SESSION_SCOPES:
+        raise ConfigError(f"interactive.scope: {i.scope!r} is not one of {', '.join(SESSION_SCOPES)}")
     if i.hint_detail not in HINT_DETAILS:
         raise ConfigError(f"interactive.hint_detail: {i.hint_detail!r} is not one of {', '.join(HINT_DETAILS)}")
     for name in ("wall_clock_sec", "interval_sec"):
@@ -175,8 +180,9 @@ def _check_interactive(cfg: ExperimentConfig) -> None:
             raise ConfigError(f"interactive.{name}: expected null or an integer >= {lo}, got {v!r}")
     if isinstance(i.order_seed, bool) or not isinstance(i.order_seed, int):
         raise ConfigError(f"interactive.order_seed: expected an integer, got {i.order_seed!r}")
-    if not isinstance(i.end_when_idle, bool):
-        raise ConfigError(f"interactive.end_when_idle: expected true or false, got {i.end_when_idle!r}")
+    for name in ("end_when_idle", "vary_order_by_round"):
+        if not isinstance(getattr(i, name), bool):
+            raise ConfigError(f"interactive.{name}: expected true or false, got {getattr(i, name)!r}")
     if cfg.topology == "subagents" and cfg.subagent.spawn_mode == "background" and cfg.subagent.strategy != "parallel":
         raise ConfigError("subagent.spawn_mode: background runs each instruction as its own subagent; "
                           "it needs strategy parallel")

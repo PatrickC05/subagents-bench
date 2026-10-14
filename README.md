@@ -170,9 +170,11 @@ single-agent baseline on these repositories yet
 turns an episode into a 60-minute session. The first user message is the task
 plus one bug as a hint; every 5 minutes the user sends another bug of the same
 repository ("Another one, while you keep working on the earlier ones"), up to
-12. There is no step budget and no `finish`; the agent can `wait` for the next
-message. The question is how long each new request waits before work on it
-starts, and whether the earlier ones keep going:
+12. The session is about the bugs the user sends (SWE-sweep's "fix every bug"
+is set aside, `interactive.scope: reported`), each round sends them in its own
+order, there is no step budget and no `finish`, and the agent can `wait` for
+the next message. The question is how long each new request waits before work
+on it starts, and whether the earlier ones keep going:
 
 | Condition | Where a new request waits |
 |---|---|
@@ -186,8 +188,10 @@ Hints name the files the bug's reference fix changes and its hidden tests' ids
 subtask by `subagents-bench hints configs/sweeps/swe_interactive.yaml`. The
 analysis adds `hints.csv` (per hint: delivery, response, dispatch, first touch
 and first edit of its files, in seconds after it was sent, and whether the
-grader counts it fixed), `interactivity.csv` (per condition: censored medians
-and the share started before the next hint) and `hint_positions.csv`, plus the
+grader counts it fixed; and whether it was not started, continued or stopped
+when the next one arrived), `interactivity.csv` (per condition: censored
+medians, the share started before the next hint, and continued/stopped/not
+started at the next hint) and `hint_positions.csv`, plus the
 `interactivity` figure. Design and caveats (shared files, path matching):
 docs/DESIGN.md, *Interactive sessions*; columns: docs/DATA.md. 4 conditions x
 4 repositories x 2 rounds = 32 one-hour episodes, about 8 hours at 4 at once.

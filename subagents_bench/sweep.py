@@ -470,7 +470,8 @@ def run(spec: Spec, jobs: list[tuple[int, str]], dry_run: bool = False) -> int:
             job = job_name(spec, r, cond)
             state, why = job_state(spec.jobs_dir / job)
             say(f"  [{i}] {job}: {({'complete': 'skip', 'absent': 'run'}).get(state, 'move aside, rerun')} ({why})")
-            say(f"      $ SUBAGENTS_BENCH_CONFIG={_rel(configs_dir / f'{cond}.yaml', spec.root)} "
+            hints_env = f"{HINTS_DIR_ENV}={_rel(hints_dir(spec), spec.root)} " if interactive(spec) else ""
+            say(f"      $ SUBAGENTS_BENCH_CONFIG={_rel(configs_dir / f'{cond}.yaml', spec.root)} {hints_env}"
                 f"{shlex.join(harbor_cmd(spec, job))}")
         return 0
     if harbor_bin() is None:

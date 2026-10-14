@@ -256,11 +256,31 @@ Limits: at most {max_concurrent} subagents run at once; instructions beyond the 
 not run. At most {max_dispatches} subagent runs per episode; the budget left is shown after each \
 step.
 """
+SUBAGENTS_BLOCKING = """
+## Subagents
+`spawn_subagents(instructions)` takes a list of instructions and starts one subagent per \
+instruction; the call returns when all of them have finished, with their reports. Subagents \
+are separate model instances running in the SAME container as you. Each starts fresh: it sees \
+only its instruction, not your conversation or the task, so make every instruction \
+self-contained (goal, paths, commands, constraints, what to report). Each runs at most \
+{max_steps} steps. They run at the same time and share the filesystem with you and with each \
+other, so give them independent work that does not edit the same files.
+
+Scope: {scope}
+
+Limits: at most {max_concurrent} instruction(s) per call are run; extra instructions are not \
+run. At most {max_dispatches} subagent runs per episode; the budget left is shown after each step.
+"""
 INTERACTIVE_DELEGATION_HINT = ("\nYour attention is the scarce resource: while your own tools run, new requests "
                                "wait until they finish. Subagents run in the background, so delegate long work "
                                "(investigating and fixing a bug, running a test suite) and keep yourself free to "
                                "respond to new requests and to combine reports.\n")
 FIRST_HINT = "{instruction}\n\nHint: {hint}"
+# interactive.scope "reported": the task's own goal (SWE-sweep: find and fix every bug) is set aside,
+# so a bug the agent fixes before it is sent cannot pass for one it never started.
+REPORTED_SCOPE = ("{instruction}\n\n---\nIn this session you do not search the repository for bugs on your "
+                  "own: the user points you to the bugs to fix, one message at a time. Fix the bugs the user "
+                  "reports; every rule above still applies.\n\nHint: {hint}")
 NEXT_HINT = "Another one, while you keep working on the earlier ones.\n\nHint: {hint}"
 USER_EVENT = "[{at} elapsed] Message from the user:\n{text}"
 REPORT_EVENT = "[{at} elapsed] Report from subagent {agent} ({status}, {steps} steps) on: {instruction}\n{report}"
@@ -289,14 +309,17 @@ def interactive_prompt(cfg: ExperimentConfig, workdir: str) -> str:
                               tools="\n".join(lines), workdir=workdir)
     if not subagents:
         return text
-    hint = INTERACTIVE_DELEGATION_HINT if s.delegation_hint else ""
     if background:
+        hint = INTERACTIVE_DELEGATION_HINT if s.delegation_hint else ""
         return text + SUBAGENTS_BACKGROUND.format(max_steps=s.max_steps, hint=hint, scope=SCOPE[s.scope],
                                                   max_concurrent=s.max_concurrent, max_dispatches=s.max_dispatches)
+    if s.strategy == "parallel":  # the background text but for the blocking return, so only that differs
+        return text + SUBAGENTS_BLOCKING.format(max_steps=s.max_steps, scope=SCOPE[s.scope],
+                                                max_concurrent=s.max_concurrent, max_dispatches=s.max_dispatches)
     n = s.arbiter.n_candidates
     arbiter, hard = s.strategy == "arbiter", s.scope == "hard"
     return text + SUBAGENTS.format(
-        max_steps=s.max_steps, hint=hint,
+        max_steps=s.max_steps, hint="",
         strategy=STRATEGY[s.strategy].format(n=n, diffs=" (and their file changes)" if hard else "",
                                              copy=ARBITER_COPY if hard else ""),
         scope=SCOPE[s.scope],

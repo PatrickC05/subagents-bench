@@ -29,7 +29,7 @@ from harbor.models.agent.context import AgentContext, ModelUsage
 from .. import __version__
 from ..config import load_config, load_dotenv
 from ..environment import HarborEnvironment
-from ..hints import HINTS_DIR_ENV, HintError, schedule
+from ..hints import HINTS_DIR_ENV, HintError, order_seed, schedule
 from ..interactive import InteractiveOrchestrator
 from ..llm import LLMError, SailClient
 from ..orchestrator import Orchestrator
@@ -74,6 +74,12 @@ def task_name(trial_dir: Path) -> str:
     return p.name if p is not None else trial_dir.name.rsplit("__", 1)[0]
 
 
+def sweep_round(trial_dir: Path) -> int | None:
+    """The sweep round of a trial, from its job dir ``<sweep>__r<k>__<condition>``; None outside a sweep."""
+    m = re.match(r"^.+__r(\d+)__.+$", trial_dir.parent.name)
+    return int(m.group(1)) if m else None
+
+
 class OrchestratorAgent(BaseAgent):
     CANCEL_GRACE_SEC = 30.0
     KILL_TIMEOUT_SEC = 30
@@ -112,11 +118,14 @@ class OrchestratorAgent(BaseAgent):
         if hints is None:
             orch = Orchestrator(self.config, env, rec, workdir, self.client_factory)
         else:
+            rec.update(hint_order_seed=order_seed(self.config.interactive, sweep_round(trial_dir)))
             orch = InteractiveOrchestrator(self.config, env, rec, workdir, hints, self.client_factory)
         fut = asyncio.ensure_future(asyncio.to_thread(orch.run, instruction))
+        cancelled = False
         try:
             await asyncio.shield(fut)
         except asyncio.CancelledError:
+            cancelled = True
             rec.stop_event.set()
             await asyncio.wait({fut}, timeout=self.CANCEL_GRACE_SEC)
             kill = await self._kill(environment, env.state_root)
@@ -124,9 +133,9 @@ class OrchestratorAgent(BaseAgent):
             rec.update(cancel_kill=kill)
             raise
         finally:
+            if hints is not None and not cancelled:  # stopped background subagents leave commands running
+                rec.update(end_kill=await self._kill(environment, env.state_root))
             self._fill_context(context)
-        if hints is not None:  # stopped background subagents leave their commands running in the container
-            rec.update(end_kill=await self._kill(environment, env.state_root))
         if fut.result() == "billing_error":
             raise rec.failure
         if fut.result() == "provider_error":
@@ -139,7 +148,7 @@ class OrchestratorAgent(BaseAgent):
         path = task_path(trial_dir)
         if path is None:
             raise HintError(f"{trial_dir}/config.json names no task path: an interactive episode needs the task dir")
-        return schedule(self.config.interactive, path, path.name, os.environ.get(HINTS_DIR_ENV))
+        return schedule(self.config.interactive, path, path.name, os.environ.get(HINTS_DIR_ENV), sweep_round(trial_dir))
 
     async def _kill(self, environment: Any, state_root: str) -> dict[str, Any]:
         """SIGKILL the agent commands still running; returns the episode's ``cancel_kill``."""
