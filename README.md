@@ -228,6 +228,27 @@ single agent against a background manager in each:
   pint, each session 10 minutes past its last bug, 2 rounds (24 sessions).
   Read `edit_median_sec` by `hint_index` (hint_positions.csv) and bugs fixed.
 
+First run of both (2026-10-14/15, one Mac, 2 sessions at a time; all 32
+sessions valid, $4.56; tables and notes in PR #10's results comment):
+- New bugs waited behind the orchestrator's own LLM calls, not its commands:
+  86-98% of the bugs that arrived while it was busy arrived during a model
+  call. The single agent's commands ran 0.3 s at the median and 25 s at most,
+  even with the test-each-fix rule, so experiment 1 could not test slow
+  commands (pint's and isort's suites run in 16-25 s).
+- The single agent was more responsive (a new bug received after a median
+  19-21 s, against 36-41 s for the background manager) and fixed as many bugs
+  for a third of the cost: 36 of 156 at $0.08 a session, against 31 of 156 at
+  $0.22 (experiment 2; in experiment 1 both fixed 1 of 48).
+- Faster arrivals hurt the manager more: the single agent fixed 25% of the
+  bugs sent at 60, 180 and 300 s alike, the manager 11%, 36% and 28%.
+- The manager's subagents broke a passing test, which scores a session 0, in
+  5 of its 16 sessions; the single agent in none. The single agent probed git
+  history in 19 commands (nothing to find: the images' git holds only
+  `baseline`).
+- Sail's tool-call parsing for Gemma-4-31B fails on a reply with more than one
+  tool call; the client now retries such a reply asking for one call
+  (`one_call_retry`, docs/DESIGN.md).
+
 The analysis also records what each hint waited behind (`blocked_by`,
 `blocked_sec`), the orchestrator's own command and call times, and flags
 commands that may break SWE-sweep's fairplay rules (git history, network,
