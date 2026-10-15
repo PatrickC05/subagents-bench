@@ -473,3 +473,16 @@ first edit of its files per condition, over the hints after the first and,
 for touch and edit, without pre-edited hints (`interactivity.csv`); and the
 share touched before the next hint by hint position, hint 0 included; a
 placeholder without interactive episodes).
+
+## Monitor page (`OUT_DIR/`)
+
+Written by `python -m subagents_bench.monitor JOBS_DIR [--compare OTHER_JOBS_DIR] --out OUT_DIR`
+from the jobs dirs (read only; the design from `JOBS_DIR/sweep.json` or `--spec`). Run it from a
+checkout (or an editable install): costs come from the repo's `configs/pricing.yaml`, as for the
+rest of `analysis`. The page names the jobs dir by its folder name only, never its local path.
+
+| File | Contents |
+|---|---|
+| `index.html` | the page: per-condition requests table, controls against their twins, the comparison with `--compare` (when given), one card per session; costs from `configs/pricing.yaml`, `sail_balanced` |
+| `transcripts/<job>__<trial>.json` | one session's transcript for the page's viewer (not with `--no-transcripts`): `v` (format version), `job`, `trial`, `t0` (the episode's `session_t0`, else its `t_start`, else the first transcript row's `t`), `sys` (the orchestrator's system prompt), `msgs` (its thread: `t` seconds after `t0`, `r` role, `c` content, `k` reasoning, `tc` tool calls `[id, name, args]`, `tr` results `[call id, content, is_error]`), `subs` (each subagent run: `agent`, `dispatch`, `instruction`, `status`, `steps`, `t_start`, `t_end`, `files` changed without git/test side effects, `noise` their count, `after` the index in `msgs` of the spawn it follows, `msgs`), `urgent` (urgent message ids), `live`; a text over 30000 characters is cut with a marker |
+| `transcripts/manifest.json` | `files`: per transcript `file`, `job`, `trial`, `sig` (of its source records: an unchanged file is not rewritten), `bytes` |

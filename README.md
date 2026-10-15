@@ -321,6 +321,19 @@ scripts/analyze.sh jobs/swe_interactive_requests
 Design and caveats (question generation, the judge, the ETA metrics,
 censoring): docs/DESIGN.md, *Requests*; columns: docs/DATA.md.
 
+A monitor page follows the sweep while it runs and after (it only reads the
+jobs dir, so rerun it for a new snapshot):
+`.venv/bin/python -m subagents_bench.monitor jobs/swe_interactive_requests
+--compare jobs/swe_interactive_rate --out OUT_DIR` writes `OUT_DIR/index.html`
+and `OUT_DIR/transcripts/` (serve or publish the folder). It shows the
+per-condition table above, each control against its twin, the same bugs
+against the arrival-rate run (per condition, on the repository and round pairs
+it has graded, and bug by bug), and one card per session (live, grading or
+graded) with its timeline of messages, replies, estimates and subagent runs,
+its messages table, and its full transcript on request. The design comes from
+the jobs dir's `sweep.json` (`--spec` instead), so it works on any interactive
+sweep; files: docs/DATA.md, *Monitor page*.
+
 First run (2026-10-15, one Mac; all 20 sessions valid, $2.47; 4 sessions per
 condition, so these are directions, not effects; jobs 7-10, round 2's hinted,
 manager and both controls, ran two jobs at a time, `jobs_at_once` in the
@@ -511,6 +524,7 @@ subagents_bench/
   sweep.py, cli.py    sweep specs, preflight, harbor jobs; `subagents-bench`
   analysis/           validity, cost, critical path, tables, delegation gate; interactivity.py (hints),
                       requests.py (replies: answers, estimates, done claims)
+  monitor/            the HTML monitor of an interactive sweep (python -m subagents_bench.monitor)
   plots/              the nine figures
 configs/              sail/base.yaml, sweeps/{pilot,smoke,swe_sweep,swe_interactive*}.yaml, pricing.yaml
 scripts/              setup.sh, run_experiment.sh, analyze.sh

@@ -36,5 +36,8 @@ subagents-bench = "subagents_bench.cli:main"
 [tool.setuptools.packages.find]
 include = ["subagents_bench*"]
 
+[tool.setuptools.package-data]
+"subagents_bench.monitor" = ["*.html"]  # the page template and the transcript viewer
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
