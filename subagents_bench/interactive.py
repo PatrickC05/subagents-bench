@@ -13,6 +13,11 @@ returns at once; each report is delivered like a user message once its subagent 
 blocks until a hint is due, a report is ready, or its timeout; a reply without a tool call does
 the same. ``inbox.jsonl`` records every delivery (when it was ready, when the orchestrator got
 it); the deadline stops every agent through the recorder's stop event, like harbor's cancel.
+
+With ``interactive.replies`` the schedule also holds questions and status checks, every message
+has an id, and the orchestrator answers with ``reply`` (``replies.jsonl``: when, to which message,
+the text, an ETA in minutes, done). The user sees nothing else, so a reply's time is when the user
+got an answer, an estimate or a done.
 """
 
 from __future__ import annotations
@@ -29,8 +34,8 @@ from .environment import AgentStopped
 from .hints import Hint
 from .llm import BillingError, LLMError, Message, SailClient, ToolCall, ToolResult, ToolSpec
 from .orchestrator import SPAWN_SPEC, Orchestrator
-from .prompts import (FIRST_HINT, NEXT_HINT, REPORT_EVENT, REPORTED_SCOPE, USER_EVENT, WAIT_RESULT, clock,
-                      interactive_note, interactive_prompt)
+from .prompts import (FIRST_HINT, REPORT_EVENT, REPORTED_SCOPE, USER_EVENT, WAIT_RESULT, clock, interactive_note,
+                      interactive_prompt, request_text)
 from .records import EpisodeRecorder
 from .subagent import Dispatch, DispatchResult, Runtime, new_dispatch, run_dispatch
 from .tools import ToolOutput, truncate
@@ -48,6 +53,17 @@ BACKGROUND_SPAWN_SPEC = ToolSpec(
     "Start subagents in the background in the same container; each instruction must be self-contained. Returns at "
     "once; each subagent's report arrives as a message when it finishes. The system prompt describes the limits.",
     SPAWN_SPEC.parameters,
+)
+REPLY_SPEC = ToolSpec(
+    "reply",
+    "Send a message to the user about one of their requests: an answer, an estimate of when a bug will be "
+    "fixed, or that it is done. The user sees nothing else you write.",
+    {"type": "object", "properties": {
+        "to": {"type": "integer", "description": "The id of the user's message (the 3 of #3)."},
+        "text": {"type": "string", "description": "The message."},
+        "eta_min": {"type": "number", "description": "For a bug: minutes from now until it is fixed."},
+        "done": {"type": "boolean", "description": "For a bug: true once it is fixed and checked."}},
+     "required": ["to", "text"]},
 )
 POLL_SEC = 0.5  # a wait also wakes this often to notice the stop event
 JOIN_SEC = 30.0  # for the background subagents to unwind after a stop
@@ -68,7 +84,8 @@ class InteractiveOrchestrator(Orchestrator):
         specs = [s for s in self.specs if s.name != "finish"]
         if self.background:
             specs = [BACKGROUND_SPAWN_SPEC if s.name == "spawn_subagents" else s for s in specs]
-        self.specs = specs + [WAIT_SPEC]
+        self.specs = specs + [WAIT_SPEC] + ([REPLY_SPEC] if self.icfg.replies else [])
+        self.sent: dict[int, Hint] = {}  # delivered messages by id, for `reply`
         self.system = interactive_prompt(config, workdir)
         self.cv = threading.Condition()
         self.live: dict[str, tuple[Dispatch, float]] = {}  # running background dispatches -> (dispatch, t_start)
@@ -101,11 +118,14 @@ class InteractiveOrchestrator(Orchestrator):
             self.rec.transcript(self.who, Message("system", self.system))
             template = REPORTED_SCOPE if self.icfg.scope == "reported" else FIRST_HINT
             note = f"\n\n{self.icfg.session_note.strip()}" if self.icfg.session_note else ""
-            first = (template.format(instruction=instruction, note=note, hint=self.hints[0].text) if self.hints
-                     else instruction + note)
             if self.hints:
-                self._hint_record(self.hints[0], self.t0, 1)
+                h = self.hints[0]
+                first = template.format(instruction=instruction, note=note,
+                                        request=request_text(h.kind, h.msg_id, h.text, h.urgent, first=True))
+                self._hint_record(h, self.t0, 1)
                 self.next_hint = 1
+            else:
+                first = instruction + note
             self._add(Message("user", first))
             for step in range(1, self.cfg.budget.orchestrator_steps + 1):
                 if step > 1:  # never after the last step: what arrives then stays undelivered
@@ -211,7 +231,8 @@ class InteractiveOrchestrator(Orchestrator):
         for h in hints:
             t_ready = self.t0 + h.t_offset
             self._hint_record(h, now, step)
-            parts.append((t_ready, USER_EVENT.format(at=clock(t_ready - self.t0), text=NEXT_HINT.format(hint=h.text))))
+            parts.append((t_ready, USER_EVENT.format(at=clock(t_ready - self.t0),
+                                                     text=request_text(h.kind, h.msg_id, h.text, h.urgent))))
         cap = max(2000, self.cfg.tools.max_output_chars // max(len(done), 1))
         for d, r, t_end in done:
             self._report_record(d, r, t_end, now, step)
@@ -237,10 +258,17 @@ class InteractiveOrchestrator(Orchestrator):
         })
 
     def _hint_record(self, h: Hint, t_delivered: float | None, step: int | None) -> None:
+        """A bug's record keeps the kind ``hint``; questions and status checks have their own kinds."""
+        if t_delivered is not None and h.msg_id is not None:
+            self.sent[h.msg_id] = h
+        s, q = h.subtask, h.question
         self.rec.write("inbox", {
-            "kind": "hint", "t_ready": self.t0 + h.t_offset, "t_delivered": t_delivered, "step": step,
-            "hint_index": h.index, "subtask_id": h.subtask.id, "target_files": list(h.subtask.target_files),
-            "f2p": list(h.subtask.f2p), "dispatch_id": None, "agent_id": None, "status": None, "chars": len(h.text),
+            "kind": "hint" if h.kind == "bug" else h.kind, "t_ready": self.t0 + h.t_offset, "t_delivered": t_delivered,
+            "step": step, "hint_index": h.index, "subtask_id": s.id if s else None,
+            "target_files": list(s.target_files) if s else None, "f2p": list(s.f2p) if s else None,
+            "dispatch_id": None, "agent_id": None, "status": None, "chars": len(h.text), "msg_id": h.msg_id,
+            "urgent": h.urgent, "question_id": q.id if q else None, "question": q.question if q else None,
+            "reference": q.answer if q else None,
         })
 
     def _wait(self, timeout: float | None) -> str:
@@ -278,6 +306,8 @@ class InteractiveOrchestrator(Orchestrator):
                                 self.dispatches_left if self.subagents else None)
 
     def _tool(self, tc: ToolCall, step: int, call_id: str, groups: list[str]) -> ToolOutput:
+        if tc.name == "reply" and self.icfg.replies:
+            return self.rec.tool(self.who, step, call_id, tc, lambda: self._reply(tc.arguments, step))
         if tc.name != "wait":
             return super()._tool(tc, step, call_id, groups)
 
@@ -289,6 +319,30 @@ class InteractiveOrchestrator(Orchestrator):
             return ToolOutput(WAIT_RESULT.format(sec=time.time() - t))
 
         return self.rec.tool(self.who, step, call_id, tc, wait)
+
+    def _reply(self, args: dict, step: int) -> ToolOutput:
+        to, text = args.get("to"), args.get("text")
+        if isinstance(to, str) and to.strip().lstrip("#").isdigit():
+            to = int(to.strip().lstrip("#"))
+        if isinstance(to, bool) or not isinstance(to, int) or to not in self.sent:
+            known = ", ".join(f"#{i}" for i in sorted(self.sent)) or "none yet"
+            return ToolOutput(f"[error] `to` must be the id of a message you received ({known})", True)
+        if not isinstance(text, str) or not text.strip():
+            return ToolOutput("[error] `text` must be a non-empty message", True)
+        eta, done = args.get("eta_min"), args.get("done")
+        try:
+            eta = None if eta is None or isinstance(eta, bool) else float(eta)
+        except (TypeError, ValueError):
+            eta = None
+        if eta is not None and not (eta == eta and 0 <= eta < 1e6):
+            eta = None
+        h = self.sent[to]
+        self.rec.write("replies", {
+            "t": time.time(), "step": step, "to": to, "kind": h.kind, "hint_index": h.index,
+            "subtask_id": h.subtask.id if h.subtask else None, "question_id": h.question.id if h.question else None,
+            "text": text, "eta_min": eta, "done": done is True or str(done).lower() == "true",
+        })
+        return ToolOutput(f"[sent to the user, re #{to}]")
 
     def _spawn(self, instructions: list[str], step: int, group_id: str) -> ToolOutput:
         if not self.background:

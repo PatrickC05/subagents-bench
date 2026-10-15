@@ -16,6 +16,7 @@ from ..config import SCOPES, STRATEGIES
 from .fairplay import tool_flags
 from .interactivity import condition_table as interactivity_table
 from .interactivity import hint_rows, position_table
+from .requests import request_rows, request_table
 from .latency import PARTS, critical_path
 from .load import Trial
 from .pricing import call_cost
@@ -138,16 +139,19 @@ def build_tables(trials: list[Trial], prices: dict) -> dict[str, pd.DataFrame]:
     eps = [episode_row(t, prices) for t in trials]
     recs: dict[str, list[dict]] = {"calls": [], "tools": [], "dispatches": [], "arbitrations": []}
     hints: list[dict] = []
+    reqs: list[dict] = []
     for t, e in zip(trials, eps):
         for kind, rows in record_rows(t, e["valid"], prices).items():
             recs[kind] += rows
         hints += hint_rows(t, _keys(t), e["valid"])
+        reqs += request_rows(t, _keys(t), e["valid"])
     episodes = pd.DataFrame(eps)
     hint_table = pd.DataFrame(hints)
     return {"episodes": episodes, "conditions": condition_table(episodes),
             **{k: pd.DataFrame(v) for k, v in recs.items()},
             "hints": hint_table, "interactivity": interactivity_table(hint_table),
-            "hint_positions": position_table(hint_table)}
+            "hint_positions": position_table(hint_table), "messages": pd.DataFrame(reqs),
+            "requests": request_table(pd.DataFrame(reqs))}
 
 
 def delegation_gate(conditions: pd.DataFrame) -> list[str]:

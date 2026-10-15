@@ -208,7 +208,7 @@ def hint_rows(t: Trial, keys: dict[str, Any], valid: bool) -> list[dict[str, Any
         row = {**keys, "valid": valid, "topology": ep.get("topology"),
                "spawn_mode": sub.get("spawn_mode", "blocking") if ep.get("topology") == "subagents" else None,
                "hint_detail": icfg.get("hint_detail"), "scope": icfg.get("scope", "all"), "interval_sec": interval,
-               "hint_index": h["hint_index"], "subtask_id": h["subtask_id"], "target_files": ";".join(files),
+               "hint_index": h["hint_index"], "urgent": bool(h.get("urgent")), "subtask_id": h["subtask_id"], "target_files": ";".join(files),
                "n_target_files": len(files), "shared_files": bool(set(files) & earlier_files),
                "shares_any": any(file_hints[f] > 1 for f in files), "t_ready_sec": t0 - session_t0,
                "delivered": h["t_delivered"] is not None}

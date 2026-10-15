@@ -236,6 +236,19 @@ nothing to do until {until}, call `wait`.
 {tools}
 Relative paths are resolved against your shell's current directory, which starts in {workdir}.
 """
+REPLY_LINE = "- `reply`: send a message to the user about one of their requests (see Replying to the user below)."
+REPLIES = """
+## Replying to the user
+Every user message has an id (#3). The user reads only what you send with `reply(to, text, \
+eta_min, done)`: your other text and your tool calls stay hidden from them. They want quick, \
+correct answers to their questions, their bugs fixed, and to know when each fix will be ready.
+- A question: answer it with `reply` (to its id). Answer from the code; a short answer is fine.
+- A bug: as soon as you have planned it (or delegated it), reply with `eta_min`, your estimate of \
+the minutes from now until it is fixed. Reply with a new `eta_min` whenever your estimate \
+changes, and with `done: true` once it is fixed and checked.
+- A status check: reply to each open bug with an updated `eta_min`.
+- An urgent bug matters more than the earlier ones: fix it before them.
+"""
 WAIT_LINE = "- `wait`: pause until {until} (or timeout_sec passes); replying without a tool call also waits."
 BACKGROUND_SPAWN_LINE = ("- `spawn_subagents`: start subagents in the background (see Subagents below); "
                          "it returns at once and each report arrives as a message.")
@@ -275,13 +288,20 @@ INTERACTIVE_DELEGATION_HINT = ("\nYour attention is the scarce resource: while y
                                "wait until they finish. Subagents run in the background, so delegate long work "
                                "(investigating and fixing a bug, running a test suite) and keep yourself free to "
                                "respond to new requests and to combine reports.\n")
-FIRST_HINT = "{instruction}{note}\n\nHint: {hint}"
+FIRST_HINT = "{instruction}{note}\n\n{request}"
 # interactive.scope "reported": the task's own goal (SWE-sweep: find and fix every bug) is set aside,
 # so a bug the agent fixes before it is sent cannot pass for one it never started.
 REPORTED_SCOPE = ("{instruction}\n\n---\nIn this session you do not search the repository for bugs on your "
                   "own: the user points you to the bugs to fix, one message at a time. Fix the bugs the user "
-                  "reports; every rule above still applies.{note}\n\nHint: {hint}")
+                  "reports; every rule above still applies.{note}\n\n{request}")
 NEXT_HINT = "Another one, while you keep working on the earlier ones.\n\nHint: {hint}"
+# interactive.replies: every message carries its id
+FIRST_REQUEST = "Request #{id}: a bug.\n\nHint: {hint}"
+NEXT_REQUEST = "Request #{id}: another bug, while you keep working on the earlier ones.\n\nHint: {hint}"
+URGENT_REQUEST = "Request #{id}: another bug, and this one is urgent: fix it before the earlier ones.\n\nHint: {hint}"
+QUESTION_REQUEST = "Question #{id}: {question}"
+STATUS_REQUEST = ("Status check #{id}: how long until each of your open bug requests is fixed? Reply to each "
+                  "with an updated eta_min.")
 USER_EVENT = "[{at} elapsed] Message from the user:\n{text}"
 REPORT_EVENT = "[{at} elapsed] Report from subagent {agent} ({status}, {steps} steps) on: {instruction}\n{report}"
 WAIT_RESULT = "[waited {sec:.0f}s]"
@@ -302,11 +322,15 @@ def interactive_prompt(cfg: ExperimentConfig, workdir: str) -> str:
     if subagents:
         lines.append(BACKGROUND_SPAWN_LINE if background else SPAWN_LINE)
     lines.append(WAIT_LINE.format(until=until))
+    if i.replies:
+        lines.append(REPLY_LINE)
     if subagents and not {"bash", "edit_file"} & set(names):
         lines.append(MANAGER_NOTE)
     text = INTERACTIVE.format(minutes=f"{i.wall_clock_sec / 60:g}", and_reports=" and subagent reports" if background else "",
                               running=" and the subagents running" if background else "", until=until,
                               tools="\n".join(lines), workdir=workdir)
+    if i.replies:
+        text += REPLIES
     if not subagents:
         return text
     if background:
@@ -336,3 +360,14 @@ def interactive_note(elapsed: float, total: float, running: list[tuple[str, floa
     if running is not None:
         note += "; subagents running: " + (", ".join(f"{a} ({clock(t)})" for a, t in running) or "none")
     return note + (f"; dispatch budget left: {dispatches_left}]" if dispatches_left is not None else "]")
+
+
+def request_text(kind: str, msg_id: int | None, text: str, urgent: bool = False, first: bool = False) -> str:
+    """A scheduled user message as the agent reads it (after the elapsed-time header)."""
+    if msg_id is None:  # without interactive.replies: a bug, as before
+        return f"Hint: {text}" if first else NEXT_HINT.format(hint=text)
+    if kind == "question":
+        return QUESTION_REQUEST.format(id=msg_id, question=text)
+    if kind == "status":
+        return STATUS_REQUEST.format(id=msg_id)
+    return (FIRST_REQUEST if first else URGENT_REQUEST if urgent else NEXT_REQUEST).format(id=msg_id, hint=text)

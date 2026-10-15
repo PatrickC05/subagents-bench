@@ -20,6 +20,9 @@ SHOW_BUGS = ["n_bugs", "bugs_fixed", "bug_fix_rate", "n_regressed"]  # when a ta
 SHOW_INTERACTIVE = ["condition", "n_episodes", "n_later_hints", "busy_at_arrival_frac", "delivery_median_sec",
                     "response_median_sec", "dispatch_median_sec", "touch_median_sec", "edit_median_sec",
                     "touch_before_next", "continued_at_next_frac", "stopped_at_next_frac", "hinted_fixed_frac"]
+SHOW_REQUESTS = ["condition", "n_episodes", "n_questions", "answer_median_sec", "answered_60s", "correct_frac",
+                 "n_bugs", "fixed_frac", "eta_given_frac", "eta_abs_log2_median", "on_time_frac", "claim_precision",
+                 "status_reply_median_sec", "urgent_first_frac"]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -48,6 +51,10 @@ def main(argv: list[str] | None = None) -> int:
         print("\ninteractivity (hints after the first; seconds after each was sent; medians count a missing "
               "event as never):")
         print(inter[SHOW_INTERACTIVE].to_string(index=False, float_format=lambda x: f"{x:.3g}"))
+    reqs = tables["requests"]
+    if len(reqs):
+        print("\nrequests (questions, estimates and done claims; seconds after each message was sent):")
+        print(reqs[SHOW_REQUESTS].to_string(index=False, float_format=lambda x: f"{x:.3g}"))
     print(f"\n{summ['n_valid']} of {summ['n_trials']} trials valid; invalid: {summ['invalid_reasons'] or 'none'}")
     cp = summ["critical_path"]
     overhead = "n/a" if cp["mean_overhead_sec"] is None else f"{cp['mean_overhead_sec']:.3g} s"

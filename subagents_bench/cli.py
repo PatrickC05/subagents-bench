@@ -1,4 +1,4 @@
-"""Command line: ``subagents-bench validate|preflight|sweep|hints`` (exit codes in :mod:`subagents_bench.sweep`)."""
+"""Command line: ``subagents-bench validate|preflight|sweep|hints|questions|grade-answers`` (exit codes in :mod:`subagents_bench.sweep`)."""
 
 from __future__ import annotations
 
@@ -36,6 +36,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("hints", help="write the bug reports of an interactive sweep (hint_detail: report)")
     p.add_argument("spec", help="sweep spec (configs/sweeps/*.yaml)")
     p.add_argument("--force", action="store_true", help="rewrite reports that already exist")
+    p = sub.add_parser("questions", help="write the code questions of an interactive sweep (questions_per_interval)")
+    p.add_argument("spec", help="sweep spec (configs/sweeps/*.yaml)")
+    p.add_argument("--per-task", type=int, help="questions per task (default: the most one session asks)")
+    p.add_argument("--force", action="store_true", help="rewrite questions that already exist")
+    p = sub.add_parser("grade-answers", help="judge the answers to the questions of a sweep's finished trials")
+    p.add_argument("spec", help="sweep spec (configs/sweeps/*.yaml)")
+    p.add_argument("--force", action="store_true", help="grade again trials that already have answers.json")
     return parser
 
 
@@ -69,6 +76,10 @@ def main(argv: list[str] | None = None) -> int:
             return sweep.preflight(spec, oracle=args.oracle)
         if args.cmd == "hints":
             return sweep.make_hints(spec, force=args.force)
+        if args.cmd == "questions":
+            return sweep.make_questions(spec, per_task=args.per_task, force=args.force)
+        if args.cmd == "grade-answers":
+            return sweep.grade_answers(spec, force=args.force)
         return sweep.run(spec, jobs, dry_run=args.dry_run)
     except KeyboardInterrupt:
         return 130

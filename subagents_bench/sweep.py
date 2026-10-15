@@ -33,7 +33,8 @@ from typing import Any, Callable
 import yaml
 
 from .config import ConfigError, ExperimentConfig, ModelConfig, from_dict
-from .hints import HINTS_DIR_ENV, HintError, generate_reports, load_reports, load_subtasks, schedule, write_reports
+from .hints import (HINTS_DIR_ENV, HintError, fetch_source, generate_questions, generate_reports, judge_answer,
+                    load_questions, load_reports, load_subtasks, n_slots, schedule, write_questions, write_reports)
 from .llm import Message, SailClient
 from .records import git_commit
 
@@ -159,7 +160,7 @@ def check_interactive(spec: Spec) -> list[str]:
         try:
             load_subtasks(task)
             for c, cfg in conds.items():
-                if cfg.interactive.hint_detail == "report":
+                if cfg.interactive.hint_detail == "report" or cfg.interactive.replies:
                     schedule(cfg.interactive, task, t, hints_dir(spec))
         except HintError as e:
             problems.append(f"{t}: {e}")
@@ -172,6 +173,90 @@ def check_interactive(spec: Spec) -> list[str]:
             problems.append(f"{t}: harbor's agent timeout {timeout:.0f}s ({spec.timeout_multiplier} x the task's) "
                             f"would cancel a {longest:.0f}s session: raise harbor.agent_timeout_multiplier")
     return problems
+
+
+def questions_needed(spec: Spec) -> int:
+    """The most questions one session of the sweep asks (every round draws from the same pool)."""
+    n = 0
+    for cfg in interactive(spec).values():
+        i = cfg.interactive
+        if i.replies and i.questions_per_interval:
+            bugs = min(n_slots(i), i.max_hints or n_slots(i))
+            n = max(n, bugs * i.questions_per_interval)
+    return n
+
+
+def make_questions(spec: Spec, per_task: int | None = None, force: bool = False) -> int:
+    """Write questions about each task's source (``questions_per_interval``) with the orchestrator's
+    model of the first interactive condition, from a clone of the task's repository at its ref in
+    ``<jobs_dir>/src``. Existing questions are kept unless ``force``. 0 if every task has enough."""
+    need = per_task or questions_needed(spec)
+    if not need:
+        say(f"sweep {spec.name!r} asks no questions (interactive.questions_per_interval): nothing to generate")
+        return 0
+    model = next(iter(interactive(spec).values())).orchestrator
+    client, failed = SailClient(model), 0
+    try:
+        for t in spec.tasks:
+            try:
+                existing = [] if force else load_questions(hints_dir(spec), t)
+            except HintError:
+                existing = []
+            try:
+                src = fetch_source(spec.dataset_path / t, spec.jobs_dir / "src" / t)
+                qs = generate_questions(spec.dataset_path / t, src, client, need, existing)
+            except Exception as e:  # one task's failure does not lose the others'
+                say(f"  [FAIL] {t}: {type(e).__name__}: {str(e)[:300]}")
+                failed += 1
+                continue
+            path = write_questions(hints_dir(spec), t, model.model, qs)
+            say(f"  [OK] {t}: {len(qs)} questions ({len(qs) - len(existing)} new) -> {_rel(path, spec.root)}")
+    finally:
+        client.close()
+    return 1 if failed else 0
+
+
+def grade_answers(spec: Spec, force: bool = False) -> int:
+    """Judge the first reply to every question of every finished trial of the sweep against its
+    reference answer, with the orchestrator's model of the first interactive condition; writes
+    ``<trial>/agent/answers.json``. 0 when every answer got a verdict, else 1."""
+    conds = interactive(spec)
+    if not conds:
+        say(f"sweep {spec.name!r} has no interactive condition: nothing to grade")
+        return 0
+    model = next(iter(conds.values())).orchestrator
+    client, unread = SailClient(model), 0
+    try:
+        for trial in sorted(spec.jobs_dir.glob("*/*/agent")):
+            if trial.parent.parent.name.startswith(("_", ".")) or not (trial.parent / "result.json").is_file():
+                continue
+            out = trial / "answers.json"
+            if out.is_file() and not force:
+                continue
+            inbox = [json.loads(x) for x in (trial / "inbox.jsonl").read_text().splitlines() if x.strip()] \
+                if (trial / "inbox.jsonl").is_file() else []
+            questions = {r["msg_id"]: r for r in inbox if r.get("kind") == "question"}
+            if not questions:
+                continue
+            replies = [json.loads(x) for x in (trial / "replies.jsonl").read_text().splitlines() if x.strip()]
+            first: dict[int, str] = {}
+            for r in sorted(replies, key=lambda r: r["t"]):
+                first.setdefault(r["to"], r["text"])
+            answers = {}
+            for mid, q in questions.items():
+                if mid not in first:
+                    continue
+                correct, why = judge_answer(client, q["question"], q["reference"], first[mid])
+                unread += correct is None
+                answers[str(mid)] = {"correct": correct, "why": why}
+            out.write_text(json.dumps({"judge_model": model.model, "graded_at": time.time(),
+                                       "answers": answers}, indent=2) + "\n")
+            n_ok = sum(1 for a in answers.values() if a["correct"])
+            say(f"  [OK] {_rel(trial.parent, spec.root)}: {n_ok} of {len(questions)} questions "
+                f"answered correctly ({len(answers)} answered)")
+    finally:
+        client.close()
+    return 1 if unread else 0
 
 
 def make_hints(spec: Spec, force: bool = False) -> int:

@@ -11,14 +11,21 @@ into the hint sent at ``k * interval_sec``:
   test names are descriptive; goawk's ``interp::TestInterp`` and libexpat's ``runtests`` are not);
 - ``report``: a short bug report written beforehand from the hidden test patch by
   ``subagents-bench hints`` (:func:`generate_reports`), read from ``<hints_dir>/<task>.json``.
+
+With ``interactive.replies`` the schedule also holds questions about the code (``questions_per_interval``
+between consecutive bugs, from ``<hints_dir>/<task>.questions.json``, written by ``subagents-bench
+questions`` from the task's source tree) and status checks (``status_every``); every message gets an
+id (``msg_id``, 1, 2, ... in sending order) and ``urgent_every`` marks some bugs urgent.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 import random
 import re
+import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,11 +52,25 @@ class Subtask:
 
 
 @dataclass(frozen=True)
+class Question:
+    id: str
+    file: str  # the source file it is about (relative to the repository root)
+    question: str
+    answer: str  # the reference answer the grader compares with
+
+
+@dataclass(frozen=True)
 class Hint:
-    index: int  # 0-based position in the schedule
+    """One scheduled user message: a bug (``subtask``), a ``question`` or a ``status`` check."""
+
+    index: int  # 0-based position among the messages of its kind
     t_offset: float  # seconds after the episode start
-    subtask: Subtask
+    subtask: Subtask | None
     text: str
+    kind: str = "bug"
+    msg_id: int | None = None  # the id the agent replies to (with interactive.replies)
+    urgent: bool = False
+    question: Question | None = None
 
 
 def load_subtasks(task_dir: str | Path) -> list[Subtask]:
@@ -120,12 +141,34 @@ def order_seed(cfg: InteractiveConfig, round_: int | None) -> int:
 
 def schedule(cfg: InteractiveConfig, task_dir: str | Path, task_name: str, hints_dir: str | Path | None = None,
              round_: int | None = None) -> list[Hint]:
-    """The episode's hints: the ordered subtasks, as many as fit (and ``max_hints``)."""
-    subtasks = ordered(load_subtasks(task_dir), task_name, order_seed(cfg, round_))
+    """The episode's messages in sending order: the ordered subtasks, as many as fit (and
+    ``max_hints``), sent every ``interval_sec``; with ``replies``, the questions and status checks
+    between them and an id per message."""
+    seed = order_seed(cfg, round_)
+    subtasks = ordered(load_subtasks(task_dir), task_name, seed)
     n = min(len(subtasks), n_slots(cfg), cfg.max_hints or len(subtasks))
     reports = load_reports(hints_dir, task_name) if cfg.hint_detail == "report" else {}
-    return [Hint(k, k * cfg.interval_sec, s, hint_text(s, cfg.hint_detail, reports.get(s.id)))
-            for k, s in enumerate(subtasks[:n])]
+    out = [Hint(k, k * cfg.interval_sec, s, hint_text(s, cfg.hint_detail, reports.get(s.id)),
+                urgent=bool(cfg.urgent_every) and k > 0 and k % cfg.urgent_every == 0)
+           for k, s in enumerate(subtasks[:n])]
+    if not cfg.replies:
+        return out
+    q, extra = cfg.questions_per_interval, []
+    slots = [k * cfg.interval_sec + j * cfg.interval_sec / (q + 1) for k in range(n) for j in range(1, q + 1)]
+    slots = [t for t in slots if t < cfg.wall_clock_sec]
+    if slots:
+        questions = load_questions(hints_dir, task_name)
+        random.Random(f"{seed}:{task_name}:questions").shuffle(questions)
+        if len(questions) < len(slots):
+            raise HintError(f"{task_name}: {len(slots)} question slots but {len(questions)} questions "
+                            "(run `subagents-bench questions` with a larger --per-task)")
+        extra += [Hint(j, t, None, x.question, kind="question", question=x) for j, (t, x) in enumerate(zip(slots, questions))]
+    if cfg.status_every:
+        checks = [(k + 0.5) * cfg.interval_sec for k in range(n) if (k + 1) % cfg.status_every == 0]
+        extra += [Hint(j, t, None, "", kind="status") for j, t in enumerate(c for c in checks if c < cfg.wall_clock_sec)]
+    kinds = {"bug": 0, "status": 1, "question": 2}  # at the same time: the bug first
+    out = sorted(out + extra, key=lambda h: (h.t_offset, kinds[h.kind], h.index))
+    return [dataclasses.replace(h, msg_id=i + 1) for i, h in enumerate(out)]
 
 
 def reports_path(hints_dir: str | Path, task_name: str) -> Path:
@@ -184,3 +227,135 @@ def write_reports(hints_dir: str | Path, task_name: str, model: str, reports: di
     path.write_text(json.dumps({"task": task_name, "model": model, "generated_at": time.time(),
                                 "reports": reports}, indent=2) + "\n")
     return path
+
+
+# -- questions about the code (interactive.questions_per_interval) -----------------------------
+
+QUESTION_SUFFIXES = (".py", ".go", ".js", ".ts", ".c", ".h", ".rs", ".java", ".rb")
+QUESTION_FILE_CHARS = (1500, 40000)  # files outside this size give trivial or unreadable questions
+QUESTIONS_PER_FILE = 2
+
+QUESTION_SYSTEM = """\
+You write questions a developer new to a repository asks a colleague who has it open. You are \
+given one source file. Write {k} questions about it, each answerable from this file alone in a \
+sentence or two by someone who reads the relevant function: what a function returns or raises \
+in a given case, a default value, which function or class handles something, what an argument \
+controls. Each question names the file or the function so it can be found. The answer must be \
+exact and unambiguous: a value, a name, an exception type, a short behaviour. Ask about what \
+the code does, not about style or history. Reply with only a JSON list of objects with keys \
+"question" and "answer"."""
+
+QUESTION_JUDGE = """\
+You grade answers to questions about a code repository. You get the question, a reference \
+answer and the answer to grade. The answer is correct if it states what the reference states \
+(other wording, extra correct detail and a longer explanation are fine); it is wrong if it \
+contradicts the reference, misses its key fact, or only says how to find out. Reply with only a \
+JSON object {"correct": true or false, "why": "<one sentence>"}."""
+
+
+def questions_path(hints_dir: str | Path, task_name: str) -> Path:
+    return Path(hints_dir) / f"{task_name}.questions.json"
+
+
+def load_questions(hints_dir: str | Path | None, task_name: str) -> list[Question]:
+    if hints_dir is None:
+        raise HintError("questions need a hints dir (SUBAGENTS_BENCH_HINTS_DIR; the sweep sets it)")
+    path = questions_path(hints_dir, task_name)
+    try:
+        raw = json.loads(path.read_text())["questions"]
+        return [Question(str(x["id"]), str(x["file"]), str(x["question"]), str(x["answer"])) for x in raw]
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        raise HintError(f"{path}: no questions ({type(e).__name__}: {e}); run `subagents-bench questions`") from None
+
+
+def source_ref(task_dir: str | Path) -> tuple[str, str, str]:
+    """(git url, ref, workdir in the image) of a SWE-sweep task: its Dockerfile clones the
+    repository at a tag and copies the tree to the image's working directory."""
+    text = (Path(task_dir) / "environment" / "Dockerfile").read_text()
+    url = re.search(r"git clone\b[^\n]*?\s(https?://\S+)\s+/src\b", text)
+    ref = re.search(r"git -C /src checkout(?:\s+--quiet)?\s+(\S+)", text)
+    workdir = re.search(r"^WORKDIR\s+(\S+)", text, re.M)
+    if not (url and ref):
+        raise HintError(f"{task_dir}: no `git clone URL /src` and checkout in the Dockerfile")
+    return url.group(1), ref.group(1), workdir.group(1) if workdir else "/"
+
+
+def fetch_source(task_dir: str | Path, dest: str | Path) -> Path:
+    """The task's source tree at its ref, cloned to ``dest`` once."""
+    dest = Path(dest)
+    if (dest / ".git").is_dir():
+        return dest
+    url, ref, _ = source_ref(task_dir)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "clone", "--quiet", "--depth", "1", "--branch", ref, url, str(dest)], check=True,
+                   capture_output=True, timeout=600)
+    return dest
+
+
+def question_files(src: str | Path, exclude: set[str], seed: str) -> list[str]:
+    """Source files to ask about (not tests, not ``exclude``: the subtasks' target files), shuffled by ``seed``."""
+    src = Path(src)
+    out = []
+    for p in sorted(src.rglob("*")):
+        rel = p.relative_to(src).as_posix()
+        parts = rel.lower().split("/")
+        if (not p.is_file() or p.suffix not in QUESTION_SUFFIXES or rel in exclude or parts[0].startswith(".")
+                or any(x in ("test", "tests", "testing", "docs", "examples", "vendor", "node_modules") for x in parts)
+                or "test" in parts[-1]):
+            continue
+        if QUESTION_FILE_CHARS[0] <= p.stat().st_size <= QUESTION_FILE_CHARS[1]:
+            out.append(rel)
+    random.Random(seed).shuffle(out)
+    return out
+
+
+def _json_value(text: str) -> Any:
+    m = re.search(r"(\[.*\]|\{.*\})", text, re.S)
+    if not m:
+        raise ValueError("no JSON in the reply")
+    return json.loads(m.group(1))
+
+
+def generate_questions(task_dir: str | Path, src: str | Path, client: Any, n: int,
+                       existing: list[Question] | None = None) -> list[Question]:
+    """At least ``n`` questions about the task's source files (``existing`` kept), two per file."""
+    out = list(existing or [])
+    done = {q.file for q in out}
+    exclude = {f for s in load_subtasks(task_dir) for f in s.target_files}
+    for rel in question_files(src, exclude, Path(task_dir).name):
+        if len(out) >= n:
+            break
+        if rel in done:
+            continue
+        body = (Path(src) / rel).read_text(errors="replace")
+        r = client.complete(QUESTION_SYSTEM.format(k=QUESTIONS_PER_FILE),
+                            [Message("user", f"File: {rel}\n\n{body}")], [])
+        try:
+            items = _json_value(r.text)
+        except ValueError:
+            continue  # one unreadable reply skips its file
+        for x in items[:QUESTIONS_PER_FILE] if isinstance(items, list) else []:
+            if isinstance(x, dict) and str(x.get("question", "")).strip() and str(x.get("answer", "")).strip():
+                out.append(Question(f"q{len(out) + 1}", rel, str(x["question"]).strip(), str(x["answer"]).strip()))
+    if len(out) < n:
+        raise HintError(f"{task_dir}: only {len(out)} questions of {n}")
+    return out
+
+
+def write_questions(hints_dir: str | Path, task_name: str, model: str, questions: list[Question]) -> Path:
+    path = questions_path(hints_dir, task_name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"task": task_name, "model": model, "generated_at": time.time(),
+                                "questions": [dataclasses.asdict(q) for q in questions]}, indent=2) + "\n")
+    return path
+
+
+def judge_answer(client: Any, question: str, reference: str, answer: str) -> tuple[bool | None, str]:
+    """(correct, why) of one answer; None when the judge's reply is unreadable."""
+    r = client.complete(QUESTION_JUDGE, [Message("user", f"Question: {question}\n\nReference answer: {reference}\n\n"
+                                                         f"Answer to grade: {answer}")], [])
+    try:
+        v = _json_value(r.text)
+        return bool(v["correct"]), str(v.get("why", ""))
+    except (ValueError, KeyError, TypeError):
+        return None, r.text[:300]

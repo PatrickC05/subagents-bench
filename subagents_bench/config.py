@@ -89,6 +89,12 @@ class InteractiveConfig:
     session_note: str | None = None  # a paragraph for the first message, before hint 0 (e.g. a testing rule)
     end_when_idle: bool = True  # end once every hint was sent, nothing runs and the orchestrator waits
     max_context_chars: int | None = None  # beyond this, elide old tool output and reports, drop old reasoning
+    # Requests (docs/DESIGN.md, *Requests*): every user message gets an id and the agent answers with
+    # `reply`; the user sees nothing else. Bugs then ask for an ETA when planned and a done reply.
+    replies: bool = False
+    questions_per_interval: int = 0  # code questions sent between consecutive bugs, evenly spaced (needs replies)
+    status_every: int = 0  # 0: none; n: after every n-th bug, a status check halfway to the next asks for ETAs
+    urgent_every: int = 0  # 0: none; n: bugs n, 2n, ... (0-based) are urgent: "fix this one before the others"
 
 
 @dataclass
@@ -183,7 +189,13 @@ def _check_interactive(cfg: ExperimentConfig) -> None:
             raise ConfigError(f"interactive.{name}: expected null or an integer >= {lo}, got {v!r}")
     if isinstance(i.order_seed, bool) or not isinstance(i.order_seed, int):
         raise ConfigError(f"interactive.order_seed: expected an integer, got {i.order_seed!r}")
-    for name in ("end_when_idle", "vary_order_by_round"):
+    for name in ("questions_per_interval", "status_every", "urgent_every"):
+        v = getattr(i, name)
+        if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+            raise ConfigError(f"interactive.{name}: expected an integer >= 0, got {v!r}")
+    if not i.replies and (i.questions_per_interval or i.status_every):
+        raise ConfigError("interactive: questions and status checks are answered with `reply`: set replies: true")
+    for name in ("end_when_idle", "vary_order_by_round", "replies"):
         if not isinstance(getattr(i, name), bool):
             raise ConfigError(f"interactive.{name}: expected true or false, got {getattr(i, name)!r}")
     if cfg.topology == "subagents" and cfg.subagent.spawn_mode == "background" and cfg.subagent.strategy != "parallel":

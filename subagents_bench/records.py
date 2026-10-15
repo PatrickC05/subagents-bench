@@ -23,7 +23,7 @@ from .llm import BillingError, LLMError, LLMResponse, Message, ProviderError, To
 from .tools import ToolOutput
 
 ROLES = ("orchestrator", "subagent", "arbiter", "debate")
-KINDS = ("calls", "tools", "steps", "spawns", "dispatches", "arbitrations", "inbox", "transcript")
+KINDS = ("calls", "tools", "steps", "spawns", "dispatches", "arbitrations", "inbox", "replies", "transcript")
 POLL_SEC = 0.2
 ARG_CHARS = 2000  # per string argument of a tool call in its record (the transcript has them whole)
 
@@ -231,7 +231,9 @@ class EpisodeRecorder:
             if self.episode["config"].get("interactive") is not None:
                 hints = [r for r in self.records["inbox"] if r["kind"] == "hint"]
                 self.episode.update(n_hints=len(hints),
-                                    n_hints_delivered=sum(1 for h in hints if h["t_delivered"] is not None))
+                                    n_hints_delivered=sum(1 for h in hints if h["t_delivered"] is not None),
+                                    n_questions=sum(1 for r in self.records["inbox"] if r["kind"] == "question"),
+                                    n_replies=len(self.records["replies"]))
             self._write_episode()
             return self.episode
 
