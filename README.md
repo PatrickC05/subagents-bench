@@ -264,7 +264,7 @@ asks it to stay available for requests it cannot see yet. A user wants three
 things from a session: their questions answered, their bugs fixed, and to
 know when each fix will be ready.
 [`swe_interactive_requests.yaml`](configs/sweeps/swe_interactive_requests.yaml)
-sends all three kinds of message in one 34-minute session
+sends all three kinds of message in one 30-minute session
 (`interactive.replies`):
 - a bug every 4 minutes, 6 in all, with the hints above (`hint_detail:
   tests`); bug 3 (0-based, at 12:00) is urgent: "fix it before the earlier
@@ -272,36 +272,43 @@ sends all three kinds of message in one 34-minute session
 - two questions about the code between consecutive bugs, 80 s and 160 s after
   each (`questions_per_interval: 2`; 12 in all), such as what a function
   returns in a given case or a default value, written beforehand from files
-  the bugs do not touch;
+  no subtask's fix or tests change;
 - a status check 120 s after bugs 1, 3 and 5 asking how long each open bug
   will take (`status_every: 2`).
 
 Every message has an id (`Request #4`, `Question #5`, `Status check #6`) and
 the agent answers with a new tool, `reply(to, text, eta_min, done)`; the user
-sees nothing else it writes. The prompt asks it to answer each question, to
-reply to a bug with an estimate in minutes (`eta_min`) as soon as it has
-planned or delegated it and again whenever the estimate changes, with `done:
-true` once it is fixed and checked, and to fix the urgent bug before the
-earlier ones. So a question is answered when its reply arrives, and a bug's
-replies say when the agent expects it fixed and when it says it is. Three
-conditions, the same prompt in each: `single_requests`,
-`manager_background_requests` (a read-only orchestrator with background
-subagents) and `background_hinted_requests` (all tools, background
-subagents, the delegation hint); click and pint, 2 rounds: 12 sessions.
+sees nothing else it writes. The prompt asks it to answer each question (its
+first reply to a question is taken as the answer), to reply to a bug with an
+estimate in minutes (`eta_min`) in its first response after the bug arrives
+and again whenever the estimate changes, with `done: true` once it is fixed
+and checked, and to fix the urgent bug before the earlier ones. So a question
+is answered when its reply arrives, and a bug's replies say when the agent
+expects it fixed and when it says it is. Three conditions get the requests,
+the same prompt in each: `single_requests`, `manager_background_requests` (a
+read-only orchestrator with background subagents) and
+`background_hinted_requests` (all tools, background subagents, the delegation
+hint). Two controls, `single_bugsonly` and `manager_background_bugsonly`, get
+the same bugs at the same times and nothing else (no ids, no `reply`, no
+questions, status checks or urgency): the in-sweep baseline for what the
+requests cost in bugs fixed and in how fast a new bug is picked up
+(`hints.csv`, `interactivity.csv`), on the same day and provider. The
+arrival-rate runs above are a looser second reference. Click and pint, 2
+rounds: 5 conditions, 20 sessions.
 
 | The user's question | `requests.csv` columns (per condition) |
 |---|---|
 | Are my questions answered, and how fast? | `answered_frac`, `answer_median_sec`, `answered_60s`, `answered_180s` |
-| Are the answers right? | `correct_frac` (an LLM judge against a reference answer, first reply only) |
+| Are the answers right? | `correct_of_answered`, `correct_of_asked` (an LLM judge against a reference answer, first reply only; unanswered questions count only in the second) |
 | Are my bugs fixed? | `fixed_frac` |
-| Are the estimates right? | `eta_given_frac`, `eta_abs_log2_median` (1: off by a factor of 2), `eta_log2_median` (> 0: late), `on_time_frac` |
+| Are the estimates right? | `eta_given_frac`, `eta_abs_log2_median` (1: off by a factor of 2), `eta_log2_median` (> 0: late; a bug estimated and never said done counts as infinitely late unless the session's deadline came before the predicted time), `n_eta_never_done`, `on_time_frac` |
 | Is a bug done when the agent says so? | `claim_precision` (done claims the grader confirms) |
 | Does an urgent bug go first? | `urgent_first_frac` |
 | Is a status check answered? | `status_reply_median_sec` |
 
 `messages.csv` has one row per message. Questions are written once, before
 the run, and answers are graded after it; rerun `analyze.sh` after grading
-to fill `correct_frac`:
+to fill `correct_of_answered` and `correct_of_asked`:
 
 ```bash
 .venv/bin/subagents-bench questions configs/sweeps/swe_interactive_requests.yaml      # 12 per task, jobs/<sweep>/hints/

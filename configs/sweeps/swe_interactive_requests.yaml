@@ -59,7 +59,8 @@ overrides:
 
 harbor:
   n_concurrent: 3
-  # x the tasks' 43200 s agent timeout = 2160 s: the 1800 s session plus preflight's 120 s grace.
+  # x the tasks' 43200 s agent timeout = 2160 s: the 1800 s session, preflight's 120 s grace and 240 s
+  # more for the background subagents' shutdown and the end kill.
   agent_timeout_multiplier: 0.05
   extra_args: [--override-cpus, "3", --override-memory-mb, "7000"]
 

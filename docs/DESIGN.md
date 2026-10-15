@@ -350,23 +350,46 @@ are `Request #4: another bug, while you keep working on the earlier ones.`
 open bug requests is fixed? Reply to each with an updated eta_min.`; the
 first message ends with `Request #1: a bug.` and its hint. Questions are drawn
 from the task's pool shuffled with `<seed>:<task>`, so the conditions of a
-round get the same questions in the same order and rounds differ. Questions
-or status checks without `replies` are a config error; without `replies`
-nothing changes (no ids, the earlier texts). With `end_when_idle` the
-session can end only after the last message of any kind was sent.
+round get the same questions in the same order and rounds differ. Questions,
+status checks or urgent bugs without `replies` are a config error (each comes
+with message ids and `reply`); without `replies` nothing changes (no ids, the
+earlier texts). With `end_when_idle` the session can end only after the last
+message of any kind was sent.
+
+**The sweep.** `swe_interactive_requests.yaml` runs 30-minute sessions (6
+bugs every 4 minutes, the last at 20:00, then 10 minutes; harbor's timeout
+0.05 x 43200 s = 2160 s, the session plus the 120 s grace) on click and
+pint, 2 rounds. Three conditions get the requests (`single_requests`,
+`manager_background_requests`, `background_hinted_requests`); two controls,
+`single_bugsonly` and `manager_background_bugsonly`, set `replies: false`
+and no questions, status checks or urgent bugs, so they get the same bugs at
+the same times as plain hints. They are the baseline for what answering
+costs in fixes and in how fast a new bug is picked up (`hints.csv`,
+`interactivity.csv`), run on the same day and provider as the requests; the
+arrival-rate sessions are a looser second reference (10 bugs, another day).
+5 conditions x 2 tasks x 2 rounds = 20 sessions.
 
 **The reply tool.** `reply(to, text, eta_min?, done?)` writes a line to
 `replies.jsonl` and returns `[sent to the user, re #3]`; nothing is sent back.
-`to` must be the id of a delivered message (`"#3"` and `"3"` are read; any
-other value is an error that lists the delivered ids), `text` non-empty; an
-`eta_min` that is not a number in [0, 10^6) is dropped, and `done` counts only
-as `true` (or `"true"`). The system prompt adds a *Replying to the user*
-section: the user reads only `reply`, not the agent's other text or its tool
-calls; answer a question from the code; reply to a bug with `eta_min` (minutes
-from now) once it is planned or delegated, again whenever the estimate
-changes, and with `done: true` once it is fixed and checked; answer a status
-check with an updated `eta_min` for each open bug; fix an urgent bug before
-the earlier ones. One channel is what makes "when was the question answered"
+`to` must be the id of a delivered message (`3`, `3.0`, `"3"` and `"#3"` are
+read; any other value, `true` included, is an error that lists the delivered
+ids), `text` non-empty. `eta_min` is read as a number of minutes in [0,
+10^6) (a numeric string too); `done` as `true`/`false`, `1`/`0` or the
+strings `"true"`, `"false"`, `"yes"`, `"no"`. Anything else is not dropped
+silently: the reply is still sent, without the estimate (null) or with
+`done` false, and the result says so (`[sent to the user, re #3; eta_min
+ignored: expected a number of minutes >= 0]`, `...; done ignored: expected
+true or false`), so the agent can resend it. The system prompt adds a
+*Replying to the user* section: the user reads only `reply`, not the agent's
+other text or its tool calls; answer a question from the code, and the first
+reply to a question is taken as the answer, so send it when you have it;
+reply to a bug with `eta_min` (minutes from now) in the first response after
+it arrives, again whenever the estimate changes, and with `done: true` once
+it is fixed and checked; answer a status check with an updated `eta_min` for
+each open bug; fix an urgent bug before the earlier ones. Asking for the
+estimate in the first response (not "once planned") makes `eta_sec` a
+latency the conditions share, and telling the agent the first reply is the
+answer keeps an "on it" acknowledgement from being graded. One channel is what makes "when was the question answered"
 a measurement: in free text an answer can sit in any assistant message, mixed
 with reasoning or stated only implicitly, while here it is the first `reply`
 to the question's id, at a known time, with a text to grade. The cost is that
@@ -379,18 +402,32 @@ delegation hint.
 each task's repository at the ref its Dockerfile checks out (`git clone URL
 /src`, `git -C /src checkout REF`: the source in the image) shallowly to
 `jobs/<sweep>/src/<task>`, lists its source files (`.py .go .js .ts .c .h .rs
-.java .rb`, 1500-40000 bytes; not under `test(s)`, `testing`, `docs`,
-`examples`, `vendor`, `node_modules` or a dot dir, no `test` in the file name)
-minus every subtask's target files, shuffles them per task, and asks the
-orchestrator model of the first interactive condition for two questions per
-file until it has the most one session asks (`--per-task` overrides; 12 in
-`swe_interactive_requests.yaml`). Each question must be answerable from that
-file alone in a sentence or two and name the file or function; the reference
-answer is a value, a name, an exception type or a short behaviour. Excluding
-the target files keeps the questions off code a fix changes (where the
-reference could turn wrong mid-session, or the question could hint at a bug);
-the agent can still edit a question's file before it is asked. A reply that is
-not JSON skips its file; existing questions are kept unless `--force`.
+.java .rb`, 1500-40000 bytes) minus the files any subtask touches, shuffles
+them per task, and asks the orchestrator model of the first interactive
+condition for two questions per file until it has the most one session asks
+(`--per-task` overrides; 12 in `swe_interactive_requests.yaml`). Skipped:
+a dot dir at the top; any directory in `SKIP_DIRS` (`doc(s)`,
+`example(s)`, `vendor`, `node_modules`, `bench`, `benchmark(s)`,
+`script(s)`, `tools`) or whose name starts or ends with `test` (`tests`,
+`testing`, `unittest`); a file whose name has `test` or `tests` as a
+whole `_`-separated word (`test_units.py`, `units_test.go`, `tests.py`) or
+is `conftest.*` (a `test` inside a word, as in `latest.py` or
+`testing.py`, is kept). The touched files (`touched_files`) are the
+subtasks' target files plus every file named in a `diff --git` header of the
+task's oracle and subtask patches (`tests/oracle/*.patch`,
+`tests/subtasks/*/*.patch`): target files can name a later layout than the
+image's source (pint's `pint/facets/numpy/numpy_func.py` is
+`pint/numpy_func.py` in the image), so excluding them alone would let a
+question land on a file a fix changes. Each question must be answerable from
+that file alone in a sentence or two and name the file or function; the
+reference answer is a value, a name, an exception type or a short
+behaviour. Excluding the touched files keeps the questions off code a fix or
+its tests change (where the reference could turn wrong mid-session, or the
+question could hint at a bug); the agent can still edit a question's file
+before it is asked. A failed call or a reply that is not JSON skips its file
+(a `{"questions": [...]}` object is unwrapped); with too few questions the
+error gives the eligible files and how many were skipped. Existing questions
+are kept unless `--force`.
 Written to `jobs/<sweep>/hints/<task>.questions.json`; `preflight` builds
 every schedule and fails when a task has fewer questions than a session asks.
 The questions and reference answers are the model's and are not checked by
@@ -404,23 +441,37 @@ states (other wording and extra correct detail are fine), wrong if it
 contradicts it, misses its key fact or only says how to find out. Only the
 first reply counts: the user may act on it, and a later correction would let
 an agent answer fast and fix the answer at leisure. Unanswered questions are
-not sent to the judge (the analysis counts them wrong). An unreadable verdict
-is `correct: null` and the command exits 1; trials with `answers.json` are
-skipped unless `--force`. Rerun the analysis after grading.
+not sent to the judge and have no verdict (`correct` null): `requests.csv`
+gives accuracy both over answered questions (`correct_of_answered`) and over
+every question asked (`correct_of_asked`, an unanswered one counting as not
+correct), so speed and accuracy are not mixed in one number. The verdict must
+be a JSON boolean (or the string `"true"` or `"false"`); anything else, such
+as `"yes"`, `1` or a missing key, is unreadable: `correct: null` and the
+command exits 1. Trials with `answers.json` are skipped unless `--force`.
+Rerun the analysis after grading.
 
-**Estimates.** A bug's estimate is its first reply with `eta_min`, sent at
-`eta_sec`; it predicts done at `eta_sec + 60 x eta_min`. Done is the first
-reply with `done: true` (`done_sec`). `eta_log2_err = log2(actual /
+**Estimates.** Done is the first reply with `done: true` (`done_sec`). A
+bug's estimate is its first reply with `eta_min` sent before that done reply
+and not itself the done reply, sent at `eta_sec`; it predicts done at
+`eta_sec + 60 x eta_min`. An `eta_min` on the done reply or after it is not
+an estimate (nothing left to predict). `eta_log2_err = log2(actual /
 predicted)`, with predicted `60 x eta_min` and actual the time from the
 estimate to done, both floored at 30 s so an estimate of 0 or an immediate
 done stays finite; > 0 is late, 1 is twice as long as predicted. Only the
-first estimate is scored, as what the user is first told; later ones (status
-checks ask for them) are counted in `n_eta_updates`. Censoring: a bug never
-said done has no error; `on_time` is false when the session ran past its
-predicted time and null when the session ended first (it might still have
-made it); a done before the first estimate has neither. So
-`eta_abs_log2_median` covers only bugs said done after an estimate, which
-favours the easy ones: read it with `done_claimed_frac` and `on_time_frac`.
+first estimate is scored, as what the user is first told; it and the later
+ones before done (status checks ask for them) are counted in
+`n_estimates`. A bug estimated and never said done is late: its error is
++inf and `on_time` false, when the session ran past the predicted time or
+ended for any reason but its deadline (`exit_reason` other than `deadline`
+or `cancelled`: the agent stopped, e.g. `idle` or `finished`, so it gave the
+bug up). Only when the deadline (or harbor's cancel) came before the
+predicted time is it censored: error and `on_time` null, since it might
+still have made it. A bug never estimated has neither. Medians of the error
+keep the +inf values (`eta_abs_log2_median` can be +inf when most estimated
+bugs were never said done) and `n_eta_never_done` counts them, so a
+condition that promises fixes and never delivers does not look accurate by
+dropping its misses. Read the error with `done_claimed_frac` and
+`on_time_frac`.
 
 **Done claims.** `claim_ok` is a done claim the grader confirms: the
 subtask resolved with no visible regression, graded once at the end of the
@@ -437,16 +488,22 @@ the grader or edits: it measures the order the agent reports, which is what
 the user sees.
 
 **Status checks.** The agent is asked to reply to each open bug, so its
-answers go to the bugs' ids; a status check's `reply_sec` is the time to the
-first reply of any kind after it was sent, which a reply the agent was about
-to send anyway also satisfies. Its `eta_min` updates are not scored.
+answers go to the bugs' ids; a status check's `reply_sec` is the time from
+when it was sent to the first reply of any kind made after it was delivered
+(a reply in the step that saw it, or later), which a reply the agent was
+about to send anyway also satisfies; a reply made before the agent could see
+the check does not count, and a check never delivered has none. Its
+`eta_min` updates are not scored on their own (they add to `n_estimates`).
 
 **Analysis.** `hints.csv` and `interactivity.csv` still cover only bugs
 (inbox kind `hint`, now with `urgent`); `analysis/requests.py` builds
 `messages.csv` (per message) and `requests.csv` (per condition, valid
 trials). Medians of times count a missing reply as infinitely late (NaN when
 more than half are missing); `first_reply_median_sec` and `eta_median_sec`
-leave out bug 0, which arrives with the task.
+leave out bug 0, which arrives with the task. `episodes.csv` adds
+`n_questions` and `n_replies` per episode. The bugs-only controls have no
+`reply`, so they have no rows in `messages.csv` or `requests.csv`; compare
+them with the request conditions in `hints.csv` and `interactivity.csv`.
 
 ### Provider fail-fast (`records.py`, `orchestrator.py`)
 

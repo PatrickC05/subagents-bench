@@ -271,38 +271,54 @@ def test_swe_interactive_rate_spec():
 
 
 def test_swe_interactive_requests_spec(tmp_path):
-    """Requests: swe_interactive.yaml's settings but for the tasks, rounds, a 34-minute session with 6
+    """Requests: swe_interactive.yaml's settings but for the tasks, rounds, a 30-minute session with 6
     bugs every 4 minutes, the request stream (replies, 2 questions per interval, status every 2 bugs,
-    bug 3 urgent) and 3 at once; its 3 conditions are the full spec's single agent, a background
-    manager, and the hinted background condition."""
+    bug 3 urgent) and 3 at once; its 3 request conditions are the full spec's single agent, a
+    background manager, and the hinted background condition; 2 bugs-only controls are the single
+    and manager request conditions without the requests."""
     from subagents_bench.hints import Question, write_questions
     from test_interactive import make_task
     s, full = (sweep.load_spec(REPO / f"configs/sweeps/{n}.yaml") for n in ("swe_interactive_requests", "swe_interactive"))
-    assert (s.tasks, s.rounds, len(sweep.plan(s))) == (["swe-sweep__click", "swe-sweep__pint"], 2, 6)
-    assert 2040 + sweep.SESSION_GRACE_SEC <= 43200 * s.timeout_multiplier
+    assert (s.tasks, s.rounds, len(sweep.plan(s))) == (["swe-sweep__click", "swe-sweep__pint"], 2, 10)
+    assert s.timeout_multiplier == 0.05
+    assert 1800 + sweep.SESSION_GRACE_SEC <= 43200 * s.timeout_multiplier
     assert (s.dataset_path, s.platform, s.extra_args, s.n_concurrent) == (full.dataset_path, full.platform,
                                                                          full.extra_args, 3)
-    keep = ("wall_clock_sec", "interval_sec", "max_hints", "replies", "questions_per_interval", "status_every",
-            "urgent_every")
+    requests = ("replies", "questions_per_interval", "status_every", "urgent_every")
+    keep = ("wall_clock_sec", "interval_sec", "max_hints", *requests)
     twins = {"single_requests": "single_interactive", "manager_background_requests": "background_interactive",
              "background_hinted_requests": "background_hinted"}
-    assert set(s.configs) == set(twins)
-    for cond, cfg in s.configs.items():
+    controls = {"single_bugsonly": "single_requests", "manager_background_bugsonly": "manager_background_requests"}
+    assert set(s.configs) == set(twins) | set(controls)
+    for cond in twins:
+        cfg = s.configs[cond]
         i = cfg.interactive
         assert (i.wall_clock_sec, i.interval_sec, i.max_hints, i.replies, i.questions_per_interval, i.status_every,
-                i.urgent_every) == (2040, 240, 6, True, 2, 2, 3)
+                i.urgent_every) == (1800, 240, 6, True, 2, 2, 3)
         d, t = cfg.to_dict(), full.configs[twins[cond]].to_dict()
         for k in ("name", "tools"):
             d.pop(k), t.pop(k)
         for k in keep:
             d["interactive"].pop(k), t["interactive"].pop(k)
         assert d == t, cond
+    # the controls: the same session as their request twin but for the request fields, all off
+    for cond, twin in controls.items():
+        i = s.configs[cond].interactive
+        assert (i.wall_clock_sec, i.interval_sec, i.max_hints) == (1800, 240, 6)
+        assert (i.replies, i.questions_per_interval, i.status_every, i.urgent_every) == (False, 0, 0, 0), cond
+        d, t = s.configs[cond].to_dict(), s.configs[twin].to_dict()
+        assert (d.pop("name"), t.pop("name")) == (cond, twin)
+        for k in requests:
+            d["interactive"].pop(k), t["interactive"].pop(k)
+        assert d == t, cond
     assert s.configs["manager_background_requests"].orchestrator_tools == ["read_file", "list_dir", "search"]
+    assert s.configs["manager_background_bugsonly"].orchestrator_tools == ["read_file", "list_dir", "search"]
     assert (s.configs["single_requests"].orchestrator_tools == s.configs["background_hinted_requests"].orchestrator_tools
             == full.configs["background_hinted"].orchestrator_tools)
     assert s.configs["background_hinted_requests"].subagent.delegation_hint
-    a, b, c = (cfg.interactive for cfg in s.configs.values())
-    assert a == b == c  # the same stream for every condition
+    a, b, c = (s.configs[cond].interactive for cond in twins)
+    assert a == b == c  # the same stream for every request condition
+    assert s.configs["single_bugsonly"].interactive == s.configs["manager_background_bugsonly"].interactive
     assert sweep.questions_needed(s) == 12
     # the stream its comments describe, on a 13-bug task
     task = make_task(tmp_path, 13)
@@ -310,8 +326,14 @@ def test_swe_interactive_requests_spec(tmp_path):
     sched = sweep.schedule(s.configs["single_requests"].interactive, task, "task-1", tmp_path / "hints")
     bugs = [h for h in sched if h.kind == "bug"]
     assert [h.t_offset for h in bugs] == [240 * k for k in range(6)] and [h.index for h in bugs if h.urgent] == [3]
+    assert bugs[-1].t_offset == 1200 and 1800 - bugs[-1].t_offset == 600  # the last at 20:00, then 10 minutes
     assert [h.t_offset for h in sched if h.kind == "status"] == [360, 840, 1320]
     assert [h.t_offset % 240 for h in sched if h.kind == "question"] == [80, 160] * 6
+    # the controls: the same bugs at the same times, nothing else, no ids or urgency (no hints dir needed)
+    for cond in controls:
+        plain = sweep.schedule(s.configs[cond].interactive, task, "task-1", None)
+        assert [(h.kind, h.t_offset, h.subtask.id) for h in plain] == [("bug", h.t_offset, h.subtask.id) for h in bugs]
+        assert all(h.msg_id is None and not h.urgent for h in plain), cond
     if s.dataset_path.is_dir() and all(sweep.hints_dir(s).joinpath(f"{t}.questions.json").is_file() for t in s.tasks):
         assert sweep.check_interactive(s) == []
 

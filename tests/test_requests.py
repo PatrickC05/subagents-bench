@@ -24,8 +24,9 @@ from subagents_bench.analysis.requests import request_rows, request_table
 from subagents_bench.config import ConfigError
 from subagents_bench.environment import LocalShellEnvironment
 from subagents_bench.hints import (HintError, Question, fetch_source, generate_questions, judge_answer, load_questions,
-                                   question_files, schedule, source_ref, write_questions)
-from subagents_bench.interactive import InteractiveOrchestrator
+                                   question_files, schedule, source_ref, touched_files, write_questions)
+from subagents_bench.interactive import InteractiveOrchestrator, _flag, _message_id, _minutes
+from subagents_bench.llm import ProviderError
 from subagents_bench.prompts import interactive_prompt, request_text
 from subagents_bench.records import EpisodeRecorder
 from test_interactive import interactive_spec, make_task, trial_dir
@@ -38,7 +39,7 @@ def questions(n: int) -> list[Question]:
 
 
 def req_cfg(**interactive):
-    return make_config(interactive={"wall_clock_sec": 2040, "interval_sec": 240, "max_hints": 6, **REQ,
+    return make_config(interactive={"wall_clock_sec": 1800, "interval_sec": 240, "max_hints": 6, **REQ,
                                     **interactive}).interactive
 
 
@@ -50,8 +51,10 @@ def req_cfg(**interactive):
     ({"status_every": True, "replies": True}, r"status_every: expected an integer >= 0, got True"),
     ({"urgent_every": 1.5}, r"urgent_every: expected an integer >= 0, got 1.5"),
     ({"urgent_every": -2}, r"urgent_every: expected an integer >= 0"),
-    ({"questions_per_interval": 2}, r"answered with `reply`: set replies: true"),
-    ({"status_every": 1}, r"answered with `reply`: set replies: true"),
+    ({"questions_per_interval": 2}, r"come with message ids and `reply`: set replies: true"),
+    ({"status_every": 1}, r"come with message ids and `reply`: set replies: true"),
+    ({"urgent_every": 1}, r"come with message ids and `reply`: set replies: true"),
+    ({"urgent_every": 3, "replies": False}, r"questions, status checks and urgent bugs come with message ids"),
     ({"replies": "yes"}, r"replies: expected true or false, got 'yes'"),
     ({"replies": 1}, r"replies: expected true or false"),
 ])
@@ -68,16 +71,13 @@ def test_request_config_defaults_and_round_trip():
     assert make_config(interactive={"replies": True}).interactive.replies is True  # replies alone: bugs with ids
 
 
-@pytest.mark.xfail(reason="urgent_every without replies marks bugs urgent (inbox urgent: true) but request_text "
-                          "drops the flag for a message without an id, so the agent is never told; the config "
-                          "should reject it like questions and status checks, or the hint should say it")
-def test_urgent_without_replies_is_rejected_or_told():
-    try:
-        cfg = make_config(interactive={"urgent_every": 1, "interval_sec": 0.5, "wall_clock_sec": 4.0})
-    except ConfigError:
-        return
-    assert "urgent" in request_text("bug", None, "There is a bug.", urgent=True)
-    assert cfg.interactive.urgent_every == 1
+def test_urgent_without_replies_is_rejected():
+    """An urgent bug without an id would never be told urgent (request_text drops the flag without
+    an id): the config rejects it, and accepts it with replies or with urgency off."""
+    with pytest.raises(ConfigError, match="urgent bugs come with message ids"):
+        make_config(interactive={"urgent_every": 1, "interval_sec": 0.5, "wall_clock_sec": 4.0})
+    assert make_config(interactive={"urgent_every": 1, "replies": True}).interactive.urgent_every == 1
+    assert make_config(interactive={"urgent_every": 0, "replies": False}).interactive.urgent_every == 0
 
 
 # --- schedule ----------------------------------------------------------------------------------------
@@ -107,7 +107,7 @@ def test_schedule_interleaves_questions_and_status_checks(tmp_path):
     assert all(h.subtask is not None and h.question is None for h in by["bug"])
     assert schedule(req_cfg(), task, "task-1", tmp_path / "hints") == sched  # deterministic
     assert [h.subtask.id for h in by["bug"]] == [h.subtask.id for h in schedule(
-        req_cfg(replies=False, questions_per_interval=0, status_every=0), task, "task-1")]  # the same bugs
+        req_cfg(replies=False, questions_per_interval=0, status_every=0, urgent_every=0), task, "task-1")]  # the same bugs
     urgent_every_2 = schedule(req_cfg(urgent_every=2), task, "task-1", tmp_path / "hints")
     assert [h.index for h in urgent_every_2 if h.urgent] == [2, 4]
 
@@ -158,6 +158,8 @@ def test_request_texts():
     assert request_text("status", 5, "").startswith("Status check #5: how long until each of your open bug requests")
     with_replies = interactive_prompt(make_config(interactive=REQ), "/w")
     assert "## Replying to the user" in with_replies and "- `reply`: send a message to the user" in with_replies
+    assert "Your first reply to a question is taken as your answer" in with_replies
+    assert "in your first response after it arrives, reply with `eta_min`" in with_replies
     without = interactive_prompt(make_config(interactive={}), "/w")
     assert "Replying to the user" not in without and "- `reply`" not in without
 
@@ -190,23 +192,24 @@ def req_session(tmp_path, scripts, **overrides):
 
 
 def replying():
-    """Step 1: replies to #1 (an estimate, then "#1" with a bad estimate, then a negative one) and to
-    #2 before it arrived. Later: answers each question, says each new bug done, and once replies to
-    #99; otherwise waits."""
+    """Step 1: replies to #1 (an estimate, then "#1" with a bad estimate, then a negative one, then
+    1.0 with an unreadable done) and to #2 before it arrived. Later: answers each question, says
+    each new bug done (to 3.0), and once replies to #99; otherwise waits."""
     state = {"unknown": False}
 
     def orch(system, messages, tools):
         if sum(1 for m in messages if m.role == "assistant") == 0:
             return Reply("", [tc("reply", to=1, text="On it.", eta_min=5), tc("reply", to=2, text="too early"),
                               tc("reply", to="#1", text="Update.", eta_min="soon"),
-                              tc("reply", to=1, text="Again.", eta_min=-3), tc("reply", to=1, text="  ")])
+                              tc("reply", to=1, text="Again.", eta_min=-3), tc("reply", to=1, text="  "),
+                              tc("reply", to=1.0, text="Float.", done="maybe")])
         last = messages[-1]
         calls = []
         if last.role == "user":
             for i in re.findall(r"Question #(\d+):", last.content):
                 calls.append(tc("reply", to=int(i), text=f"Answer to #{i}."))
             for i in re.findall(r"Request #(\d+):", last.content):
-                calls.append(tc("reply", to=int(i), text="Fixed.", eta_min=0.5, done="true"))
+                calls.append(tc("reply", to=float(i), text="Fixed.", eta_min=0.5, done="true"))
             if calls and not state["unknown"]:
                 state["unknown"] = True
                 calls.append(tc("reply", to=99, text="?"))
@@ -240,11 +243,14 @@ def test_session_with_replies_records_replies_and_messages(tmp_path):
     reps = r["replies"]
     assert [(x["to"], x["kind"], x["eta_min"], x["done"]) for x in reps] == [
         (1, "bug", 5.0, False), (1, "bug", None, False), (1, "bug", None, False),  # "#1"; "soon" and -3 dropped
-        (2, "question", None, False), (3, "bug", 0.5, True), (4, "question", None, False)]
-    assert [x["text"] for x in reps] == ["On it.", "Update.", "Again.", "Answer to #2.", "Fixed.", "Answer to #4."]
+        (1, "bug", None, False),  # 1.0; done "maybe" unreadable
+        (2, "question", None, False), (3, "bug", 0.5, True), (4, "question", None, False)]  # 3.0
+    assert [x["text"] for x in reps] == ["On it.", "Update.", "Again.", "Float.", "Answer to #2.", "Fixed.",
+                                         "Answer to #4."]
     assert reps[0]["subtask_id"] == hints[0].subtask.id and reps[0]["question_id"] is None
-    assert reps[3]["question_id"] == hints[1].question.id and reps[3]["subtask_id"] is None
-    assert reps[4]["hint_index"] == 1 and all(x["step"] >= 1 for x in reps)
+    assert reps[4]["question_id"] == hints[1].question.id and reps[4]["subtask_id"] is None
+    assert reps[5]["hint_index"] == 1 and all(x["step"] >= 1 for x in reps)
+    assert all(type(x["to"]) is int for x in reps)
     assert reps == sorted(reps, key=lambda x: x["t"])
 
     results = [x for m in f[ORCH].requests[-1]["messages"] if m.role == "tool" for x in m.tool_results]
@@ -252,10 +258,41 @@ def test_session_with_replies_records_replies_and_messages(tmp_path):
     assert early.is_error and "you received (#1)" in early.content  # #2 had not arrived yet
     assert any(x.is_error and "must be the id" in x.content and "(#1, #2" in x.content for x in results)  # #99
     assert any(x.is_error and "`text` must be a non-empty message" in x.content for x in results)
-    assert sum(1 for x in results if x.content.startswith("[sent to the user, re #")) == 6
-    assert sum(1 for x in r["tools"] if x["name"] == "reply") == 9
+    sent = [x.content.split("\n")[0] for x in results if x.content.startswith("[sent to the user, re #")]
+    assert len(sent) == 7 and not any(x.is_error for x in results if x.content.startswith("[sent"))
+    # unusable eta_min / done are sent without them, and the agent is told
+    assert sent[:4] == ["[sent to the user, re #1]",
+                        "[sent to the user, re #1; eta_min ignored: expected a number of minutes >= 0]",
+                        "[sent to the user, re #1; eta_min ignored: expected a number of minutes >= 0]",
+                        "[sent to the user, re #1; done ignored: expected true or false]"]
+    assert "[sent to the user, re #3]" in sent  # eta_min 0.5 and done "true" are usable: no note
+    assert sum(1 for x in r["tools"] if x["name"] == "reply") == 10
     ep = r["episode"]
-    assert (ep["n_hints"], ep["n_hints_delivered"], ep["n_questions"], ep["n_replies"]) == (2, 2, 2, 6)
+    assert (ep["n_hints"], ep["n_hints_delivered"], ep["n_questions"], ep["n_replies"]) == (2, 2, 2, 7)
+
+
+@pytest.mark.parametrize("raw, want", [(3, 3), (3.0, 3), ("3", 3), ("#3", 3), (" #12 ", 12), (3.5, None), (True, None),
+                                       (False, None), ("three", None), ("#", None), ("", None), (None, None),
+                                       ("\u0663", None), ([3], None), ("-3", None)])
+def test_reply_message_id(raw, want):
+    assert _message_id(raw) == want
+
+
+@pytest.mark.parametrize("raw, want", [(None, (None, True)), (5, (5.0, True)), ("2.5", (2.5, True)), (0, (0.0, True)),
+                                       (-3, (None, False)), ("soon", (None, False)), (True, (None, False)),
+                                       (float("nan"), (None, False)), (float("inf"), (None, False)), (1e6, (None, False)),
+                                       ([1], (None, False)), (10 ** 400, (None, False))])
+def test_reply_minutes(raw, want):
+    assert _minutes(raw) == want
+
+
+@pytest.mark.parametrize("raw, want", [(None, (False, True)), (True, (True, True)), (False, (False, True)),
+                                       ("true", (True, True)), (" TRUE ", (True, True)), ("false", (False, True)),
+                                       ("yes", (True, True)), ("no", (False, True)), (1, (True, True)),
+                                       (0, (False, True)), (1.0, (True, True)), ("maybe", (False, False)),
+                                       (2, (False, False)), ([True], (False, False))])
+def test_reply_done_flag(raw, want):
+    assert _flag(raw) == want
 
 
 def test_reply_is_not_a_tool_without_replies(tmp_path):
@@ -289,11 +326,13 @@ def test_undelivered_messages_cannot_be_replied_to_and_analysis_of_a_session(tmp
     msgs = pd.read_csv(out / "messages.csv")
     assert list(msgs["msg_id"]) == [1, 2, 3, 4] and list(msgs["kind"]) == ["bug", "question", "bug", "question"]
     assert msgs["reply_sec"].notna().tolist() == [False, True, False, False]
-    assert list(msgs["correct"].iloc[[1, 3]]) == [True, False]  # the graded answer; #4 never answered
+    assert msgs["correct"].iloc[1] == True and pd.isna(msgs["correct"].iloc[3])  # noqa: E712; #4 never answered: no verdict
     assert list(pd.read_csv(out / "hints.csv")["urgent"]) == [False, True]  # bugs only, with the urgent flag
     req = pd.read_csv(out / "requests.csv").iloc[0]
     assert (req["condition"], req["n_questions"], req["n_bugs"], req["n_urgent"]) == ("solo", 2, 2, 1)
-    assert (req["answered_frac"], req["correct_frac"], req["fixed_frac"]) == (0.5, 0.5, 0.5)
+    assert (req["answered_frac"], req["correct_of_answered"], req["correct_of_asked"], req["fixed_frac"]) == (
+        0.5, 1.0, 0.5, 0.5)
+    assert req["n_graded_answers"] == 1
     assert pd.isna(req["eta_given_frac"]) or req["eta_given_frac"] == 0.0
 
 
@@ -315,7 +354,7 @@ def rep(t, to, text="x", eta=None, done=False):
 
 
 def synthetic_trial(tmp_path: Path, inbox, replies, verdicts, answers=None, t_end=600.0, replies_cfg=True,
-                    visible_ok=True) -> Trial:
+                    visible_ok=True, exit_reason=None) -> Trial:
     d = tmp_path / "trial"
     (d / "agent").mkdir(parents=True)
     (d / "verifier").mkdir()
@@ -325,6 +364,8 @@ def synthetic_trial(tmp_path: Path, inbox, replies, verdicts, answers=None, t_en
         (d / "agent" / "answers.json").write_text(json.dumps({"judge_model": "j", "answers": answers}))
     ep = {"config": {"interactive": {"replies": replies_cfg}}, "session_t0": T0,
           "t_end": None if t_end is None else T0 + t_end}
+    if exit_reason is not None:
+        ep["exit_reason"] = exit_reason
     return Trial(d, "s", 1, "c", None, ep, {"inbox": inbox, "replies": replies})
 
 
@@ -345,22 +386,25 @@ def test_request_rows(tmp_path):
     b0, q2, b1, s4, q5, b2, b3 = (rows[i] for i in range(1, 8))
     assert (b0["t_ready_sec"], b0["delivery_sec"], b0["reply_sec"], b0["n_replies"]) == (0, 1, 10, 2)
     # b0: estimate 2 min at 10 s (due 130 s), done at 200 s: 190 s for 120 predicted, late
-    assert (b0["eta_sec"], b0["eta_min"], b0["done_sec"], b0["n_eta_updates"]) == (10, 2, 200, 1)
+    assert (b0["eta_sec"], b0["eta_min"], b0["done_sec"], b0["n_estimates"]) == (10, 2, 200, 1)
     assert b0["eta_log2_err"] == pytest.approx(math.log2(190 / 120)) and b0["on_time"] is False
     assert (b0["fixed"], b0["claim_ok"], b0["urgent_first"]) == (True, True, None)
-    # questions: the first reply is the answer; #5 never answered is wrong, not ungraded
+    # questions: the first reply is the answer; #5 never answered has no verdict (None, not False)
     assert (q2["reply_sec"], q2["answer"], q2["correct"], q2["question"], q2["reference"]) == (10, "A2", True, "Q2?", "ref")
-    assert (q5["reply_sec"], q5["answer"], q5["correct"]) == (None, None, False)
-    # b1: estimate 1 min at 250 s, never said done, the session ran past 310 s: late; not a claim
-    assert (b1["eta_sec"], b1["eta_min"], b1["n_eta_updates"], b1["done_sec"]) == (10, 1, 2, None)
-    assert (b1["on_time"], b1["eta_log2_err"], b1["fixed"], b1["claim_ok"]) == (False, None, False, None)
+    assert (q5["reply_sec"], q5["answer"], q5["correct"]) == (None, None, None)
+    # b1: estimate 1 min at 250 s, never said done, the session ran past 310 s: late (+inf); not a claim
+    assert (b1["eta_sec"], b1["eta_min"], b1["n_estimates"], b1["done_sec"]) == (10, 1, 2, None)
+    assert (b1["on_time"], b1["eta_log2_err"], b1["fixed"], b1["claim_ok"]) == (False, math.inf, False, None)
     # the status check: the first reply of any kind after it (#3's update at 375 s)
     assert s4["reply_sec"] == 15 and s4["kind"] == "status" and "eta_sec" not in s4
     # b2 urgent: done at 520 s, before b1 (open, never done); b0 was done before b2 arrived
     assert b2["urgent"] and b2["urgent_first"] == 1.0 and b2["on_time"] is True
     assert b2["eta_log2_err"] == pytest.approx(-1.0)  # 30 s for 60 predicted
-    # b3: a 30 min estimate the session ended before: censored; no verdict in a valid trial: unfixed
-    assert (b3["on_time"], b3["fixed"], b3["claim_ok"], b3["urgent"]) == (None, False, None, False)
+    # b3: a 30 min estimate the session ended before (no exit reason: cut short): censored; no verdict
+    # in a valid trial: unfixed
+    assert (b3["on_time"], b3["eta_log2_err"], b3["fixed"], b3["claim_ok"], b3["urgent"]) == (
+        None, None, False, None, False)
+    assert "n_eta_updates" not in b0 and "correct_frac" not in q2
 
 
 def test_request_rows_urgency_censoring_and_validity(tmp_path):
@@ -377,7 +421,8 @@ def test_request_rows_urgency_censoring_and_validity(tmp_path):
     # no t_end: the session ends at the last event (300 s), before b3's due time (330 s): censored
     assert rows[4]["on_time"] is None
     late = synthetic_trial(tmp_path / "late", inbox, replies, {"b0": True}, t_end=331.0)
-    assert {r["msg_id"]: r["on_time"] for r in request_rows(late, {}, True)}[4] is False
+    late4 = {r["msg_id"]: r for r in request_rows(late, {}, True)}[4]
+    assert (late4["on_time"], late4["eta_log2_err"]) == (False, math.inf)
     assert rows[2]["claim_ok"] is False and rows[1]["claim_ok"] is True
     invalid = {r["msg_id"]: r for r in request_rows(t, {}, False)}
     assert invalid[3]["fixed"] is None and invalid[3]["claim_ok"] is None  # unknown in an invalid trial
@@ -389,17 +434,99 @@ def test_request_rows_urgency_censoring_and_validity(tmp_path):
     assert request_rows(no_answers, {}, True)[0]["correct"] is None  # answered, not graded yet
 
 
+def test_request_rows_estimate_is_the_first_before_done(tmp_path):
+    """The estimate is the first one sent before the done reply: an eta_min on the done reply itself
+    or after it is not an estimate."""
+    inbox = [msg(1, "hint", 0, 0, "b0"), msg(2, "hint", 1, 0, "b1"), msg(3, "hint", 2, 0, "b2")]
+    replies = [rep(5, 1, "looking"), rep(10, 1, eta=4, done=True), rep(20, 1, eta=3),
+               rep(10, 2, eta=1), rep(40, 2, eta=2), rep(100, 2, done=True), rep(130, 2, eta=5),
+               rep(50, 3, done=True), rep(60, 3, eta=1)]
+    rows = {r["msg_id"]: r for r in request_rows(synthetic_trial(tmp_path, inbox, replies, {"b0": True}), {}, True)}
+    b0, b1, b2 = rows[1], rows[2], rows[3]
+    assert (b0["reply_sec"], b0["done_sec"], b0["eta_sec"], b0["eta_min"], b0["n_estimates"]) == (5, 10, None, None, 0)
+    assert (b0["eta_log2_err"], b0["on_time"], b0["claim_ok"]) == (None, None, True)
+    # b1: estimates at 10 s (1 min) and 40 s, done at 100 s: 90 s for 60 predicted; the 130 s one is after done
+    assert (b1["eta_sec"], b1["eta_min"], b1["n_estimates"], b1["done_sec"]) == (10, 1, 2, 100)
+    assert b1["eta_log2_err"] == pytest.approx(math.log2(1.5)) and b1["on_time"] is False
+    assert (b2["eta_sec"], b2["n_estimates"], b2["eta_log2_err"], b2["on_time"]) == (None, 0, None, None)
+
+
+@pytest.mark.parametrize("exit_reason, t_end, want", [
+    (None, 300.0, (None, None)),            # no exit reason recorded: treated as cut short
+    ("deadline", 300.0, (None, None)),      # the deadline came before the due time: censored
+    ("cancelled", 300.0, (None, None)),
+    ("idle", 300.0, (math.inf, False)),     # the agent stopped with the bug open: it gave up, late
+    ("max_steps", 300.0, (math.inf, False)),
+    ("error", 300.0, (math.inf, False)),
+    ("deadline", 700.0, (math.inf, False)),  # past the due time (610 s) without done: late however it ended
+    ("idle", 700.0, (math.inf, False)),
+])
+def test_request_rows_never_done_bug_is_late_unless_cut_short(tmp_path, exit_reason, t_end, want):
+    inbox = [msg(1, "hint", 0, 0, "b0")]
+    t = synthetic_trial(tmp_path, inbox, [rep(10, 1, eta=10)], {"b0": False}, t_end=t_end, exit_reason=exit_reason)
+    row = request_rows(t, {}, True)[0]
+    assert (row["eta_log2_err"], row["on_time"]) == want and row["done_sec"] is None
+
+
+def test_request_rows_status_counts_replies_after_delivery(tmp_path):
+    """A status check's reply is the first reply of any kind after the check was delivered: one sent
+    while it waited undelivered does not answer it, and an undelivered check has none."""
+    status = msg(2, "status", 0, 100)
+    status["t_delivered"] = T0 + 150
+    inbox = [msg(1, "hint", 0, 0, "b0"), status, msg(3, "status", 1, 200, delivered=False)]
+    replies = [rep(120, 1, eta=5), rep(160, 1, eta=4), rep(250, 1, eta=3)]
+    rows = {r["msg_id"]: r for r in request_rows(synthetic_trial(tmp_path, inbox, replies, {}), {}, True)}
+    assert (rows[2]["delivery_sec"], rows[2]["reply_sec"], rows[2]["n_replies"]) == (50, 60, 0)
+    assert (rows[3]["delivery_sec"], rows[3]["reply_sec"]) == (None, None)
+
+
+def test_request_table_correct_of_asked(tmp_path):
+    """correct_of_answered is over graded answers; correct_of_asked over every question asked, and
+    NaN while an answered question is still ungraded (it is not known yet)."""
+    inbox = [msg(1, "question", 0, 0, question="Q1?"), msg(2, "question", 1, 10, question="Q2?"),
+             msg(3, "question", 2, 20, question="Q3?")]
+    replies = [rep(5, 1, "A1"), rep(15, 2, "A2")]  # #3 never answered
+    keys = {"condition": "c", "trial_name": "t"}
+    ungraded = request_rows(synthetic_trial(tmp_path / "a", inbox, replies, {}, {"1": {"correct": True}}), keys, True)
+    assert [r["correct"] for r in ungraded] == [True, None, None]
+    c = request_table(pd.DataFrame(ungraded)).iloc[0]
+    assert (c["correct_of_answered"], c["n_graded_answers"]) == (1.0, 1) and pd.isna(c["correct_of_asked"])
+    graded = request_rows(synthetic_trial(tmp_path / "b", inbox, replies, {}, {"1": {"correct": True},
+                                                                               "2": {"correct": False}}), keys, True)
+    c = request_table(pd.DataFrame(graded)).iloc[0]
+    assert (c["correct_of_answered"], c["n_graded_answers"]) == (0.5, 2)
+    assert c["correct_of_asked"] == pytest.approx(1 / 3)
+    # no answers.json yet: every answered question ungraded
+    none = request_table(pd.DataFrame(request_rows(synthetic_trial(tmp_path / "c", inbox, replies, {}), keys, True)))
+    assert pd.isna(none.iloc[0]["correct_of_asked"]) and pd.isna(none.iloc[0]["correct_of_answered"])
+    # nothing answered: nothing to grade, 0 of 3 asked
+    silent = request_table(pd.DataFrame(request_rows(synthetic_trial(tmp_path / "d", inbox, [], {}), keys, True)))
+    assert silent.iloc[0]["correct_of_asked"] == 0.0 and pd.isna(silent.iloc[0]["correct_of_answered"])
+
+
+def test_request_table_never_done_estimates_make_an_infinite_median(tmp_path):
+    inbox = [msg(1, "hint", 0, 0, "b0"), msg(2, "hint", 1, 0, "b1")]
+    t = synthetic_trial(tmp_path, inbox, [rep(10, 1, eta=1), rep(10, 2, eta=1)], {}, exit_reason="idle")
+    c = request_table(pd.DataFrame(request_rows(t, {"condition": "c", "trial_name": "t"}, True))).iloc[0]
+    assert (c["n_eta_never_done"], c["eta_abs_log2_median"], c["eta_log2_median"], c["on_time_frac"]) == (
+        2, math.inf, math.inf, 0.0)
+
+
 def test_request_table(tmp_path):
     rows = pd.DataFrame(request_rows(scenario(tmp_path), {"condition": "c", "trial_name": "t"}, True))
     c = request_table(rows).iloc[0]
     assert (c["condition"], c["n_episodes"], c["n_questions"], c["n_bugs"], c["n_status"], c["n_urgent"]) == (
         "c", 1, 2, 4, 1, 1)
-    assert (c["answered_frac"], c["answered_60s"], c["answered_180s"], c["correct_frac"]) == (0.5, 0.5, 0.5, 0.5)
-    assert c["n_graded_answers"] == 2 and pd.isna(c["answer_median_sec"])  # [10, never]: infinite median
+    assert (c["answered_frac"], c["answered_60s"], c["answered_180s"]) == (0.5, 0.5, 0.5)
+    # 1 of 1 answered question correct; 1 of 2 asked
+    assert (c["correct_of_answered"], c["correct_of_asked"], c["n_graded_answers"]) == (1.0, 0.5, 1)
+    assert "correct_frac" not in c and pd.isna(c["answer_median_sec"])  # [10, never]: infinite median
     assert (c["fixed_frac"], c["eta_given_frac"], c["done_claimed_frac"], c["claim_precision"]) == (0.5, 1.0, 0.5, 1.0)
     assert c["on_time_frac"] == pytest.approx(1 / 3)  # [late, late, on time]; b3 censored
-    assert c["eta_abs_log2_median"] == pytest.approx((math.log2(190 / 120) + 1) / 2)
-    assert c["eta_log2_median"] == pytest.approx((math.log2(190 / 120) - 1) / 2)
+    # errors [log2(190/120), +inf (b1 never done), -1], b3 censored: the never-done bug counts
+    assert c["n_eta_never_done"] == 1
+    assert c["eta_abs_log2_median"] == pytest.approx(1.0)  # median of [0.66, inf, 1]
+    assert c["eta_log2_median"] == pytest.approx(math.log2(190 / 120))  # median of [-1, 0.66, inf]
     assert (c["first_reply_median_sec"], c["eta_median_sec"], c["eta_min_median"]) == (10, 10, 1.5)
     assert (c["status_reply_median_sec"], c["urgent_first_frac"]) == (15, 1.0)
     rows["valid"] = False
@@ -416,16 +543,27 @@ def write(p: Path, size: int) -> None:
 
 def test_question_files(tmp_path):
     src = tmp_path / "src"
-    ok = ["pkg/core.py", "pkg/sub/types.go", "lib/util.rs", "cmd/main.c"]
+    # "test" inside a word is not a test file; dir names only count for directories
+    ok = ["pkg/core.py", "pkg/sub/types.go", "lib/util.rs", "cmd/main.c", "pkg/latest.py", "pkg/contest.py",
+          "pkg/attestation.go", "pkg/docs.py", "pkg/tools.py", "pkg/protest.rs"]
     for f in ok:
         write(src / f, 2000)
     for f in ("pkg/target.py", "tests/conftest.py", "pkg/test_helpers.py", "pkg/tests/x.py", "docs/conf.py",
-              "examples/demo.py", "vendor/dep.go", ".github/ci.py", "pkg/README.md", "pkg/core.pyc"):
+              "examples/demo.py", "vendor/dep.go", ".github/ci.py", "pkg/README.md", "pkg/core.pyc",
+              # SKIP_DIRS at any depth
+              "doc/conf.py", "example/e.py", "node_modules/m/index.js", "bench/b.py", "benchmark/b.py",
+              "benchmarks/b.py", "pkg/benchmarks/b.go", "script/s.py", "scripts/gen.py", "tools/t.py",
+              # directories starting or ending with "test"
+              "testing/t.py", "pkg/testutils/h.py", "pkg/testdata/d.go", "src/e2etest/x.py", "pkg/unittest/u.py",
+              # test files: test.py, tests.py, test_*, *_test, *_tests, conftest
+              "pkg/test.py", "pkg/tests.py", "pkg/test_core.py", "pkg/core_test.go", "pkg/core_tests.py",
+              "pkg/a_test_b.py", "pkg/conftest.py", "pkg/TEST_X.py"):
         write(src / f, 2000)
     write(src / "pkg" / "tiny.py", 100)
     write(src / "pkg" / "huge.py", 50000)
     files = question_files(src, {"pkg/target.py"}, "task-1")
     assert sorted(files) == sorted(ok)
+    assert "pkg/target.py" in question_files(src, set(), "task-1")  # skipped only as excluded
     assert question_files(src, {"pkg/target.py"}, "task-1") == files  # shuffled by the seed: reproducible
     assert {tuple(question_files(src, set(), s)) for s in ("a", "b", "c", "d", "e")} != {tuple(files)}
 
@@ -478,8 +616,6 @@ def test_fetch_source_clones_the_tag_once(tmp_path, monkeypatch):
     assert fetch_source(tmp_path / "task", dest) == dest
 
 
-@pytest.mark.xfail(reason="fetch_source clones with `git clone --branch <ref>`, which takes only a branch or tag; "
-                          "4 SWE-sweep Dockerfiles check out a commit sha (e.g. 12f392c3d31e..., c9c20bf3683f)")
 def test_fetch_source_at_a_commit_sha(tmp_path, monkeypatch):
     repo, sha = _repo(tmp_path)
     monkeypatch.setattr(hints_mod, "source_ref", lambda d: (repo.as_uri(), sha, "/w"))
@@ -523,6 +659,51 @@ def test_generate_and_load_questions(tmp_path):
         load_questions(tmp_path / "hints", "task-1")
 
 
+def patch(*files: str) -> str:
+    return "".join(f"diff --git a/{f} b/{f}\nindex 1..2 100644\n--- a/{f}\n+++ b/{f}\n@@ -1 +1 @@\n-x\n+y\n"
+                   for f in files)
+
+
+def test_touched_files(tmp_path):
+    """The subtasks' target files plus every file the oracle and subtask patches change (target
+    files can name a later layout than the image's)."""
+    task = make_task(tmp_path, 2)  # targets src/m0.py, src/m1.py; test.patch files without diff headers
+    assert touched_files(task) == {"src/m0.py", "src/m1.py"}
+    (task / "tests" / "oracle").mkdir()
+    (task / "tests" / "oracle" / "fix.patch").write_text(patch("pkg/numpy_func.py", "pkg/util.py"))
+    (task / "tests" / "oracle" / "notes.txt").write_text(patch("pkg/ignored.py"))  # not a .patch
+    (task / "tests" / "subtasks" / "b0" / "test.patch").write_text(patch("tests/test_m.py"))
+    (task / "tests" / "subtasks" / "b1" / "fix.patch").write_text(
+        "a text line mentioning diff --git a/inline.py b/inline.py\n" + patch("pkg/core.py"))
+    (task / "tests" / "subtasks" / "b1" / "deeper").mkdir()
+    (task / "tests" / "subtasks" / "b1" / "deeper" / "x.patch").write_text(patch("pkg/deep.py"))  # one level only
+    assert touched_files(task) == {"src/m0.py", "src/m1.py", "pkg/numpy_func.py", "pkg/util.py", "tests/test_m.py",
+                                   "pkg/core.py"}
+
+
+def test_generate_questions_skips_touched_files_and_failed_calls(tmp_path):
+    """A file an oracle patch changes is never asked about; a call that raises skips its file (and
+    is counted in the error); a {"questions": [...]} reply is unwrapped."""
+    task = make_task(tmp_path, 1)
+    (task / "tests" / "oracle").mkdir()
+    (task / "tests" / "oracle" / "all.patch").write_text(patch("src/patched.py"))
+    src = tmp_path / "repo"
+    for f in ("src/a.py", "src/b.py", "src/patched.py", "src/m0.py"):
+        write(src / f, 2000)
+
+    def model(system, messages, tools):
+        rel = messages[0].content.split("\n", 1)[0].removeprefix("File: ")
+        assert rel in ("src/a.py", "src/b.py"), rel
+        if rel == "src/a.py":
+            return ProviderError("upstream chat completion failed")
+        return Reply(json.dumps({"questions": [{"question": "Qb", "answer": "Ab"}, {"question": "Qb2", "answer": "Ab2"}]}))
+
+    qs = generate_questions(task, src, FakeFactory({ORCH: model})(make_config().orchestrator), 2)
+    assert [(q.id, q.file, q.question) for q in qs] == [("q1", "src/b.py", "Qb"), ("q2", "src/b.py", "Qb2")]
+    with pytest.raises(HintError, match=r"only 2 questions of 3 \(2 eligible files, 1 skipped after a failed call"):
+        generate_questions(task, src, FakeFactory({ORCH: model})(make_config().orchestrator), 3)
+
+
 def judge(text: str):
     return FakeFactory({ORCH: [Reply(text)]})(make_config().orchestrator)
 
@@ -539,10 +720,15 @@ def test_judge_answer():
     assert judge_answer(judge("[1, 2]"), "q", "r", "a")[0] is None
 
 
-@pytest.mark.xfail(reason='judge_answer takes bool(v["correct"]): a judge replying {"correct": "false"} is graded '
-                          "correct (any non-empty string is truthy)")
-def test_judge_answer_string_verdict():
-    assert judge_answer(judge('{"correct": "false", "why": "Wrong value."}'), "q", "r", "a")[0] is False
+@pytest.mark.parametrize("verdict, want", [
+    ('"false"', False), ('"true"', True), ('" True "', True), ('"FALSE"', False), ("true", True), ("false", False),
+    ('"yes"', None), ('"no"', None), ("1", None), ("0", None), ("null", None), ('""', None), ("[true]", None),
+])
+def test_judge_answer_needs_a_boolean_verdict(verdict, want):
+    """Only a boolean or the strings "true"/"false" are verdicts: {"correct": "false"} is not truthy."""
+    text = f'{{"correct": {verdict}, "why": "w"}}'
+    got = judge_answer(judge(text), "q", "r", "a")
+    assert got == ((want, "w") if want is not None else (None, text))
 
 
 # --- sweep: questions and grade-answers ----------------------------------------------------------------

@@ -15,7 +15,9 @@ calls, so:
   late; a 30 s floor on both), +inf for a bug never said done although the session ran past the
   predicted time or ended for another reason than its deadline (the agent gave up), and None when
   the deadline came first (censored); ``on_time`` is done by the predicted time, with the same
-  censoring; ``claim_ok`` is a done claim the grader confirms;
+  censoring; ``eta_total_log2_err`` scores the same prediction from when the bug was sent,
+  log2(done_sec / (eta_sec + 60 * eta_min)), so estimating late (after most of the work) does not
+  pass for accuracy; ``claim_ok`` is a done claim the grader confirms;
 - an urgent bug's ``urgent_first``: of the earlier bugs still open (not said done) when it was
   sent, the share it was said done before (never-done bugs count as later; None without one);
 - a status check's ``reply_sec``: until the first reply of any kind after it was delivered.
@@ -89,15 +91,17 @@ def request_rows(t: Trial, keys: dict[str, Any], valid: bool) -> list[dict[str, 
                        eta_min=eta["eta_min"] if eta else None, done_sec=done - t0 if done else None,
                        n_estimates=len(ahead), fixed=fixed,
                        claim_ok=None if done is None or fixed is None else fixed)
-            row["eta_log2_err"] = row["on_time"] = None
+            row["eta_log2_err"] = row["eta_total_log2_err"] = row["on_time"] = None
             if eta is not None:
                 due = eta["t"] + 60 * eta["eta_min"]
                 if done is not None:
                     pred, actual = max(60 * eta["eta_min"], 30.0), max(done - eta["t"], 30.0)  # 30 s floor: no log of 0
                     row["eta_log2_err"] = math.log2(actual / pred)
+                    row["eta_total_log2_err"] = math.log2(max(done - t0, 30.0) / max(due - t0, 30.0))
                     row["on_time"] = done <= due
                 elif t_end > due or not cut:
-                    row["eta_log2_err"], row["on_time"] = math.inf, False
+                    row["eta_log2_err"] = row["eta_total_log2_err"] = math.inf
+                    row["on_time"] = False
             row["urgent_first"] = None
             if m.get("urgent"):
                 earlier = [o for o in inbox if o["kind"] == "hint" and o["msg_id"] < m["msg_id"]
@@ -117,6 +121,10 @@ def _frac(x: pd.Series) -> float:
 
 def _within(x: pd.Series, sec: float) -> float:
     return float((pd.to_numeric(x, errors="coerce").fillna(math.inf) <= sec).mean()) if len(x) else math.nan
+
+
+def _num(df: pd.DataFrame, col: str) -> pd.Series:
+    return pd.to_numeric(df[col], errors="coerce").astype(float) if col in df else pd.Series(dtype=float)
 
 
 def _median(x: pd.Series) -> float:
@@ -153,8 +161,9 @@ def request_table(rows: pd.DataFrame) -> pd.DataFrame:
                "eta_min_median": float(b["eta_min"].median()) if "eta_min" in b and b["eta_min"].notna().any() else math.nan,
                "done_claimed_frac": _frac(b["done_sec"].notna()) if "done_sec" in b else math.nan,
                "claim_precision": _frac(b["claim_ok"]) if "claim_ok" in b else math.nan,
-               "eta_abs_log2_median": _median(b["eta_log2_err"].abs()) if "eta_log2_err" in b else math.nan,
-               "eta_log2_median": _median(b["eta_log2_err"]) if "eta_log2_err" in b else math.nan,
+               "eta_abs_log2_median": _median(_num(b, "eta_log2_err").abs()),
+               "eta_log2_median": _median(_num(b, "eta_log2_err")),
+               "eta_total_abs_log2_median": _median(_num(b, "eta_total_log2_err").abs()),
                "n_eta_never_done": int(np.isinf(pd.to_numeric(b["eta_log2_err"], errors="coerce")).sum())
                if "eta_log2_err" in b else 0,
                "on_time_frac": _frac(b["on_time"]) if "on_time" in b else math.nan,

@@ -86,6 +86,7 @@ class InteractiveOrchestrator(Orchestrator):
             specs = [BACKGROUND_SPAWN_SPEC if s.name == "spawn_subagents" else s for s in specs]
         self.specs = specs + [WAIT_SPEC] + ([REPLY_SPEC] if self.icfg.replies else [])
         self.sent: dict[int, Hint] = {}  # delivered messages by id, for `reply`
+        self.answered: set[int] = set()  # ids replied to
         self.system = interactive_prompt(config, workdir)
         self.cv = threading.Condition()
         self.live: dict[str, tuple[Dispatch, float]] = {}  # running background dispatches -> (dispatch, t_start)
@@ -331,12 +332,15 @@ class InteractiveOrchestrator(Orchestrator):
         eta, eta_ok = _minutes(args.get("eta_min"))
         done, done_ok = _flag(args.get("done"))
         h = self.sent[to]
+        first_answer = h.kind == "question" and to not in self.answered
+        self.answered.add(to)
         self.rec.write("replies", {
             "t": time.time(), "step": step, "to": to, "kind": h.kind, "hint_index": h.index,
             "subtask_id": h.subtask.id if h.subtask else None, "question_id": h.question.id if h.question else None,
             "text": text, "eta_min": eta, "done": done,
         })
-        notes = ([] if eta_ok else ["eta_min ignored: expected a number of minutes >= 0"]) + \
+        notes = (["taken as your answer to this question"] if first_answer else []) + \
+                ([] if eta_ok else ["eta_min ignored: expected a number of minutes >= 0"]) + \
                 ([] if done_ok else ["done ignored: expected true or false"])
         return ToolOutput(f"[sent to the user, re #{to}" + "".join(f"; {n}" for n in notes) + "]")
 
@@ -432,7 +436,7 @@ def _message_id(raw: Any) -> int | None:
         return int(raw)
     if isinstance(raw, str):
         raw = raw.strip().lstrip("#")
-        return int(raw) if raw.isascii() and raw.isdigit() else None
+        return int(raw) if raw.isascii() and raw.isdigit() and len(raw) <= 9 else None
     return raw if isinstance(raw, int) else None
 
 

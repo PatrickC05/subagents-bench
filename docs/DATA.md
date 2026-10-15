@@ -202,20 +202,22 @@ written; a rejected call is an errored tool record. Empty otherwise.
 |---|---|
 | `t` | when it was sent: the time the user got it |
 | `step` | the orchestrator step |
-| `to` | the `msg_id` it answers |
+| `to` | the `msg_id` it answers (the call may name it `3`, `3.0`, `"3"` or `"#3"`) |
 | `kind`, `hint_index` | that message's kind (`bug`, `question`, `status`: note `bug`, where the inbox says `hint`) and position |
 | `subtask_id`, `question_id` | that message's subtask (a bug) or question, else null |
 | `text` | the message to the user |
-| `eta_min` | minutes from now until the bug is fixed, as a float; null when not given or not a number in [0, 10^6) |
-| `done` | true when the call passed `done: true` (or `"true"`), else false |
+| `eta_min` | minutes from now until the bug is fixed, as a float (a numeric string is read); null when not given or not a number in [0, 10^6), in which case the tool result told the agent it was ignored |
+| `done` | true when the call passed `done` as `true`, `1` or `"true"`/`"yes"`; false when absent, `false`, `0`, `"false"`/`"no"`, or anything else (which the tool result reports as ignored) |
 
 ### `answers.json`: verdicts on the answers (`subagents-bench grade-answers`)
 
 Written after the run, for trials with questions; absent until then.
 `{judge_model, graded_at, answers: {msg_id (string): {correct, why}}}`: per
 question answered, the judge's verdict on its first reply against the
-reference (`correct` null when the judge's reply could not be read) and its
-one-sentence reason. Unanswered questions are not listed.
+reference (`correct` null when the judge's reply could not be read or its
+`correct` was not a boolean or the string `"true"`/`"false"`; `why` is then
+the start of the raw reply) and its one-sentence reason. Unanswered
+questions are not listed.
 
 ### `episode.json`: the episode
 
@@ -303,6 +305,7 @@ Every per-trial and per-record table starts with the **keys**: `sweep`,
 | `n_subtasks`, `bugs_fixed`, `regressed` | SWE-sweep only (else empty): the task's bugs (from `tasks.json`, so a trial whose patch breaks the build, which the grader reports as 0 subtasks, keeps them), the grader's `n_resolved` (0 if a visible test regressed, as SWE-sweep's scoring counts it; reward x n_subtasks would carry the reward's rounding to 4 places), and 1 if a visible test regressed (`visible_ok` 0) |
 | `t_start`, `wall_clock_sec` | the episode's |
 | `interactive`, `n_hints`, `n_hints_delivered` | 1 for an interactive session, else 0; its hints scheduled and delivered (empty in batch episodes) |
+| `n_questions`, `n_replies` | an interactive session's questions scheduled and `reply` calls written (0 without `interactive.replies`; empty in batch episodes and in episodes written before they existed) |
 | `steps`, `spawns`, `dispatches`, `arbitrations` | record counts |
 | `delegated` | 1 if the orchestrator spawned at least once |
 | `orch_bash_n`, `orch_bash_median_sec`, `orch_bash_max_sec`, `orch_llm_median_sec` | the orchestrator's own bash commands (count, median and longest duration) and the median duration of its successful LLM calls: what a message waits behind between its steps |
@@ -411,15 +414,15 @@ message's kind are filled only for that kind.
 | `urgent` | a bug marked urgent |
 | `t_ready_sec`, `delivery_sec` | when it was sent after the session start; until it entered the conversation |
 | `n_replies` | replies naming its id |
-| `reply_sec` | a bug or question: until the first reply naming it (a question's answer); a status check: until the first reply of any kind sent after it |
+| `reply_sec` | a bug or question: until the first reply naming it (a question's answer); a status check: until the first reply of any kind sent at or after its delivery (empty if never delivered) |
 | `question_id`, `question`, `reference`, `answer` | a question, its reference answer, and the text of its first reply |
-| `correct` | the judge's verdict on that first reply (`answers.json`); false when never answered; empty when answered but not graded (or the verdict was unreadable) |
+| `correct` | the judge's verdict on that first reply (`answers.json`); empty when never answered, and when answered but not graded (or the verdict was unreadable) |
 | `subtask_id`, `fixed` | a bug's subtask and whether the grader counts it fixed (resolved, no visible regression; false without a verdict in a valid trial, empty in an invalid one) |
-| `eta_sec`, `eta_min` | the first reply with an estimate, and the estimate in minutes; it predicts done at `eta_sec + 60 x eta_min` |
-| `n_eta_updates` | replies with an estimate, the first included |
+| `eta_sec`, `eta_min` | the first estimate: the first reply with `eta_min` sent before the done reply (not the done reply itself), and the estimate in minutes; it predicts done at `eta_sec + 60 x eta_min` |
+| `n_estimates` | such replies (with `eta_min`, before the done reply), the first included |
 | `done_sec` | the first reply with `done` |
-| `eta_log2_err` | log2(actual / predicted time from the estimate to done), each floored at 30 s; > 0 late; only when done came at or after the estimate |
-| `on_time` | done by the predicted time; false when never done and the session ran past it; empty when the session ended first, or without an estimate |
+| `eta_log2_err` | log2(actual / predicted time from the estimate to done), each floored at 30 s; > 0 late. A bug estimated and never said done: `inf` when the session ran past the predicted time or ended for another reason than its deadline (`exit_reason` not `deadline` or `cancelled`: the agent stopped, so it gave the bug up); empty when the deadline came first (censored). Empty without an estimate |
+| `on_time` | done by the predicted time; false where `eta_log2_err` is `inf`; empty where it is empty |
 | `claim_ok` | a done claim the grader confirms (`fixed`); empty without a done claim |
 | `urgent_first` | an urgent bug: of the earlier bugs still open (no done reply) when it was sent, the share it was said done before, never-done bugs counting as later; empty without an open earlier bug |
 
@@ -430,13 +433,14 @@ message's kind are filled only for that kind.
 | `condition`, `n_episodes` | the condition and its valid episodes |
 | `n_questions`, `answered_frac` | questions sent, and the share with a reply |
 | `answer_median_sec`, `answered_60s`, `answered_180s` | `reply_sec` of questions: median counting no answer as infinitely late (NaN when more than half unanswered), and the share answered within 60 s and 180 s |
-| `n_graded_answers`, `correct_frac` | questions with a `correct` value (graded answers plus unanswered ones, which count false), and the share of them correct |
+| `n_graded_answers`, `correct_of_answered`, `correct_of_asked` | questions with a verdict (answered and graded); the share of them correct; and correct answers over every question sent, unanswered ones counting as not correct (NaN while an answered question has no verdict, e.g. before `grade-answers`) |
 | `n_bugs`, `fixed_frac` | bugs sent, and the share counted fixed |
 | `first_reply_median_sec` | censored median `reply_sec` of the bugs after the first |
-| `eta_given_frac`, `eta_median_sec`, `eta_min_median` | the share of bugs with an estimate; censored median `eta_sec` of the bugs after the first; median estimate in minutes |
+| `eta_given_frac`, `eta_median_sec`, `eta_min_median` | the share of bugs with an estimate (before their done reply); censored median `eta_sec` of the bugs after the first; median estimate in minutes |
 | `done_claimed_frac`, `claim_precision` | the share of bugs said done; of those, the share the grader confirms |
-| `eta_abs_log2_median`, `eta_log2_median` | median \|`eta_log2_err`\| (1: off by a factor of 2) and median signed error (> 0: late), over bugs said done after an estimate |
-| `on_time_frac` | the share on time of the bugs with a known `on_time` |
+| `eta_abs_log2_median`, `eta_log2_median` | median \|`eta_log2_err`\| (1: off by a factor of 2) and median signed error (> 0: late), over bugs with a known error: those said done after an estimate and the never-done ones at `inf` (so either median can be `inf`) |
+| `n_eta_never_done` | bugs estimated and never said done that count as late (`eta_log2_err` `inf`) |
+| `on_time_frac` | the share on time of the bugs with a known `on_time` (never-done ones counting as late) |
 | `n_status`, `status_reply_median_sec` | status checks sent, and the censored median of their `reply_sec` |
 | `n_urgent`, `urgent_first_frac` | urgent bugs, and the mean `urgent_first` over those with an open earlier bug |
 

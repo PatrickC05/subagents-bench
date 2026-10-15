@@ -25,6 +25,7 @@ import json
 import math
 import random
 import re
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass
@@ -32,7 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import InteractiveConfig
-from .llm import Message
+from .llm import BillingError, LLMError, Message
 
 EVAL_JSON = Path("tests") / "swesweep_eval.json"
 HINTS_DIR_ENV = "SUBAGENTS_BENCH_HINTS_DIR"  # where harbor's agent finds the generated reports (the sweep sets it)
@@ -287,8 +288,15 @@ def fetch_source(task_dir: str | Path, dest: str | Path) -> Path:
         return dest
     url, ref, _ = source_ref(task_dir)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "clone", "--quiet", "--depth", "1", "--branch", ref, url, str(dest)], check=True,
-                   capture_output=True, timeout=600)
+    try:  # a tag or branch: one shallow clone
+        subprocess.run(["git", "clone", "--quiet", "--depth", "1", "--branch", ref, url, str(dest)], check=True,
+                       capture_output=True, timeout=600)
+    except subprocess.CalledProcessError:  # a commit sha (4 SWE-sweep Dockerfiles): the whole history
+        shutil.rmtree(dest, ignore_errors=True)
+        subprocess.run(["git", "clone", "--quiet", "--no-checkout", url, str(dest)], check=True, capture_output=True,
+                       timeout=1800)
+        subprocess.run(["git", "-C", str(dest), "checkout", "--quiet", ref], check=True, capture_output=True,
+                       timeout=600)
     return dest
 
 
@@ -335,9 +343,10 @@ def _json_value(text: str) -> Any:
 def generate_questions(task_dir: str | Path, src: str | Path, client: Any, n: int,
                        existing: list[Question] | None = None) -> list[Question]:
     """At least ``n`` questions about the task's source files (``existing`` kept), two per file."""
-    out = list(existing or [])
+    touched = touched_files(task_dir)
+    out = [q for q in existing or [] if q.file not in touched]  # written before a file was known to be touched
     done = {q.file for q in out}
-    files = question_files(src, touched_files(task_dir), Path(task_dir).name)
+    files = question_files(src, touched, Path(task_dir).name)
     skipped = 0
     for rel in files:
         if len(out) >= n:
@@ -349,7 +358,9 @@ def generate_questions(task_dir: str | Path, src: str | Path, client: Any, n: in
             r = client.complete(QUESTION_SYSTEM.format(k=QUESTIONS_PER_FILE),
                                 [Message("user", f"File: {rel}\n\n{body}")], [])
             items = _json_value(r.text)
-        except Exception:  # one failed call or unreadable reply skips its file
+        except BillingError:
+            raise
+        except (LLMError, ValueError):  # one failed call or unreadable reply skips its file
             skipped += 1
             continue
         if isinstance(items, dict) and len(items) == 1:  # {"questions": [...]}
