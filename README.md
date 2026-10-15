@@ -319,8 +319,59 @@ scripts/analyze.sh jobs/swe_interactive_requests
 ```
 
 Design and caveats (question generation, the judge, the ETA metrics,
-censoring): docs/DESIGN.md, *Requests*; columns: docs/DATA.md. Results:
-not run yet.
+censoring): docs/DESIGN.md, *Requests*; columns: docs/DATA.md.
+
+First run (2026-10-15, one Mac; all 20 sessions valid, $2.47; 4 sessions per
+condition, so these are directions, not effects; jobs 7-10, round 2's hinted,
+manager and both controls, ran two jobs at a time, `jobs_at_once` in the
+manifest):
+
+| Per condition (4 sessions) | Single agent | Background manager | All tools + background, hinted |
+|---|---|---|---|
+| Questions answered | 27 of 48 (56%) | 39 of 48 (81%) | 39 of 48 (81%) |
+| Answer time, median (unanswered = never) | 293 s | 55 s | 61 s |
+| Answered within 60 s | 27% | 52% | 50% |
+| Answers correct, of those answered | 96% | 97% | 100% |
+| Status check answered, median | 142 s | 42 s | 42 s |
+| Requested bugs fixed | 9 of 24 | 9 of 24 | 11 of 24 |
+| Same bugs, bugs-only control | 10 of 24 | 8 of 24 | – |
+| Bugs given an estimate | 21% | 29% | 38% |
+| Estimated bugs done on time | 0 of 5 | 4 of 6 | 1 of 9 |
+| Done claims the grader confirms | 2 of 3 | 6 of 6 | 10 of 13 |
+| Urgent bug done before the earlier open ones | 0% | 22% | 50% |
+| Cost per session | $0.07 | $0.22 | $0.10 |
+
+- The single agent was the least available: it left 44% of the questions
+  unanswered and took a median 293 s to answer, five times the subagent
+  conditions, and answered status checks three times slower. It was not
+  stuck behind its own commands: the questions reached it a median 13 s
+  after they were sent (it was in a model call for 24 of the 25 questions it
+  left unanswered or answered after 180 s; LLM calls took 82-92% of each
+  session, its own tools 7-18%). It then kept working on its bugs: for 17 of
+  those 25 its reasoning says it will answer ("Let me answer #9 quickly"),
+  often with the answer worked out, and it ran 10-57 more steps without
+  calling `reply`. In one session its last reply came at 2:47 of 30:00.
+  The earlier bugs-only runs could not show this: it picked up new bugs as
+  fast as the others (a median 10-12 s to receive one here too).
+- The requests cost few fixes in total: 9 against 10 bugs fixed for the
+  single agent, 9 against 8 for the manager, on the same bugs at the same
+  times. Per repository and round the differences are larger (r2 pint,
+  single: 1 against 3), so this is noise-level.
+- With questions to answer, the all-tools orchestrator delegated in 3 of 4
+  sessions, each a single burst (one `spawn_subagents` call of 1-3
+  subagents); in the first bugs-only smoke 1 of 6 all-tools sessions did. It
+  answered as fast as the manager, fixed the most and claimed done most
+  often, at half the manager's cost.
+- The agents mostly did not estimate, although the prompt asks for an
+  estimate in the first response after a bug arrives (21-38% of bugs; median
+  estimate 8-9 minutes). Only the manager's estimates were usable: off by a
+  factor of about 3 at the median, mostly early (4 of the 5 bugs it said done
+  beat the estimate). The single agent never said done any bug it estimated;
+  the hinted orchestrator 4 of 9.
+- Fairplay: 11 sessions probed git history (the images hold only the
+  `baseline` commit, so there was nothing to find); two bugs-only sessions
+  looked for an installed copy and one also tried `pip download` (no network,
+  it failed). No command obtained a fix (`fairplay` in tools.csv).
 
 ## Where data and figures land
 
