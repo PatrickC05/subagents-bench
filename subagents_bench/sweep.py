@@ -35,7 +35,7 @@ import yaml
 from .config import ConfigError, ExperimentConfig, ModelConfig, from_dict
 from .hints import (HINTS_DIR_ENV, HintError, fetch_source, generate_questions, generate_reports, judge_answer,
                     load_questions, load_reports, load_subtasks, n_slots, schedule, write_questions, write_reports)
-from .llm import Message, SailClient
+from .llm import BillingError, Message, SailClient
 from .records import git_commit
 
 AGENT = "subagents_bench.harness.harbor_agent:OrchestratorAgent"
@@ -205,12 +205,16 @@ def make_questions(spec: Spec, per_task: int | None = None, force: bool = False)
             try:
                 src = fetch_source(spec.dataset_path / t, spec.jobs_dir / "src" / t)
                 qs = generate_questions(spec.dataset_path / t, src, client, need, existing)
+            except BillingError as e:  # every later task would fail the same way
+                say(f"  [FAIL] {t}: {type(e).__name__}: {str(e)[:300]}")
+                return 3
             except Exception as e:  # one task's failure does not lose the others'
                 say(f"  [FAIL] {t}: {type(e).__name__}: {str(e)[:300]}")
                 failed += 1
                 continue
             path = write_questions(hints_dir(spec), t, model.model, qs)
-            say(f"  [OK] {t}: {len(qs)} questions ({len(qs) - len(existing)} new) -> {_rel(path, spec.root)}")
+            new = len({q.id for q in qs} - {q.id for q in existing})
+            say(f"  [OK] {t}: {len(qs)} questions ({new} new) -> {_rel(path, spec.root)}")
     finally:
         client.close()
     return 1 if failed else 0

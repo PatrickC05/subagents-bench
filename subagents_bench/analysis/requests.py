@@ -15,9 +15,10 @@ calls, so:
   late; a 30 s floor on both), +inf for a bug never said done although the session ran past the
   predicted time or ended for another reason than its deadline (the agent gave up), and None when
   the deadline came first (censored); ``on_time`` is done by the predicted time, with the same
-  censoring; ``eta_total_log2_err`` scores the same prediction from when the bug was sent,
-  log2(done_sec / (eta_sec + 60 * eta_min)), so estimating late (after most of the work) does not
-  pass for accuracy; ``claim_ok`` is a done claim the grader confirms;
+  censoring; ``eta_total_log2_err`` scores the same prediction against the user's whole wait,
+  log2(done_sec / (eta_sec + 60 * eta_min)) from when the bug was sent (an estimate given late
+  is still scored on its own short horizon by ``eta_log2_err``; how late it came is ``eta_sec``);
+  ``claim_ok`` is a done claim the grader confirms;
 - an urgent bug's ``urgent_first``: of the earlier bugs still open (not said done) when it was
   sent, the share it was said done before (never-done bugs count as later; None without one);
 - a status check's ``reply_sec``: until the first reply of any kind after it was delivered.

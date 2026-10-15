@@ -26,7 +26,7 @@ from subagents_bench.environment import LocalShellEnvironment
 from subagents_bench.hints import (HintError, Question, fetch_source, generate_questions, judge_answer, load_questions,
                                    question_files, schedule, source_ref, touched_files, write_questions)
 from subagents_bench.interactive import InteractiveOrchestrator, _flag, _message_id, _minutes
-from subagents_bench.llm import ProviderError
+from subagents_bench.llm import BillingError, ProviderError
 from subagents_bench.prompts import interactive_prompt, request_text
 from subagents_bench.records import EpisodeRecorder
 from test_interactive import interactive_spec, make_task, trial_dir
@@ -266,6 +266,8 @@ def test_session_with_replies_records_replies_and_messages(tmp_path):
                         "[sent to the user, re #1; eta_min ignored: expected a number of minutes >= 0]",
                         "[sent to the user, re #1; done ignored: expected true or false]"]
     assert "[sent to the user, re #3]" in sent  # eta_min 0.5 and done "true" are usable: no note
+    assert "[sent to the user, re #2; taken as your answer to this question]" in sent
+    assert "[sent to the user, re #4; taken as your answer to this question]" in sent
     assert sum(1 for x in r["tools"] if x["name"] == "reply") == 10
     ep = r["episode"]
     assert (ep["n_hints"], ep["n_hints_delivered"], ep["n_questions"], ep["n_replies"]) == (2, 2, 2, 7)
@@ -273,7 +275,8 @@ def test_session_with_replies_records_replies_and_messages(tmp_path):
 
 @pytest.mark.parametrize("raw, want", [(3, 3), (3.0, 3), ("3", 3), ("#3", 3), (" #12 ", 12), (3.5, None), (True, None),
                                        (False, None), ("three", None), ("#", None), ("", None), (None, None),
-                                       ("\u0663", None), ([3], None), ("-3", None)])
+                                       ("\u0663", None), ([3], None), ("-3", None), ("123456789", 123456789),
+                                       ("1234567890", None), ("#99999999999999999999", None)])
 def test_reply_message_id(raw, want):
     assert _message_id(raw) == want
 
@@ -293,6 +296,30 @@ def test_reply_minutes(raw, want):
                                        (2, (False, False)), ([True], (False, False))])
 def test_reply_done_flag(raw, want):
     assert _flag(raw) == want
+
+
+def test_reply_notes_only_a_questions_first_reply_as_its_answer(tmp_path):
+    """The result of the first reply to a question says it is taken as the answer; a later reply to
+    the same question (in the same step or a later one) and a reply to a bug say nothing of it."""
+    later = {"done": False}
+
+    def orch(system, messages, tools):
+        last = messages[-1]
+        if last.role == "user" and "Question #2:" in last.content:
+            return Reply("", [tc("reply", to=2, text="Answer."), tc("reply", to="#2", text="More."),
+                              tc("reply", to=1, text="On it.", eta_min=1)])
+        if not later["done"] and any(m.role == "user" and "Question #2:" in m.content for m in messages):
+            later["done"] = True
+            return Reply("", [tc("reply", to=2, text="Even more.")])
+        return Reply("", [tc("wait")])
+
+    _, r, f, _ = req_session(tmp_path, {ORCH: orch})
+    results = [x.content.split("\n")[0] for m in f[ORCH].requests[-1]["messages"] if m.role == "tool"
+               for x in m.tool_results if x.content.startswith("[sent to the user")]
+    assert results == ["[sent to the user, re #2; taken as your answer to this question]",
+                       "[sent to the user, re #2]", "[sent to the user, re #1]", "[sent to the user, re #2]"]
+    assert [(x["to"], x["text"]) for x in r["replies"]] == [(2, "Answer."), (2, "More."), (1, "On it."),
+                                                            (2, "Even more.")]
 
 
 def test_reply_is_not_a_tool_without_replies(tmp_path):
@@ -388,6 +415,7 @@ def test_request_rows(tmp_path):
     # b0: estimate 2 min at 10 s (due 130 s), done at 200 s: 190 s for 120 predicted, late
     assert (b0["eta_sec"], b0["eta_min"], b0["done_sec"], b0["n_estimates"]) == (10, 2, 200, 1)
     assert b0["eta_log2_err"] == pytest.approx(math.log2(190 / 120)) and b0["on_time"] is False
+    assert b0["eta_total_log2_err"] == pytest.approx(math.log2(200 / 130))  # from the bug's arrival: 200 s for 130
     assert (b0["fixed"], b0["claim_ok"], b0["urgent_first"]) == (True, True, None)
     # questions: the first reply is the answer; #5 never answered has no verdict (None, not False)
     assert (q2["reply_sec"], q2["answer"], q2["correct"], q2["question"], q2["reference"]) == (10, "A2", True, "Q2?", "ref")
@@ -395,15 +423,18 @@ def test_request_rows(tmp_path):
     # b1: estimate 1 min at 250 s, never said done, the session ran past 310 s: late (+inf); not a claim
     assert (b1["eta_sec"], b1["eta_min"], b1["n_estimates"], b1["done_sec"]) == (10, 1, 2, None)
     assert (b1["on_time"], b1["eta_log2_err"], b1["fixed"], b1["claim_ok"]) == (False, math.inf, False, None)
+    assert b1["eta_total_log2_err"] == math.inf
     # the status check: the first reply of any kind after it (#3's update at 375 s)
     assert s4["reply_sec"] == 15 and s4["kind"] == "status" and "eta_sec" not in s4
     # b2 urgent: done at 520 s, before b1 (open, never done); b0 was done before b2 arrived
     assert b2["urgent"] and b2["urgent_first"] == 1.0 and b2["on_time"] is True
     assert b2["eta_log2_err"] == pytest.approx(-1.0)  # 30 s for 60 predicted
+    assert b2["eta_total_log2_err"] == pytest.approx(math.log2(40 / 70))  # sent at 480 s, due at 550 s, done at 520 s
     # b3: a 30 min estimate the session ended before (no exit reason: cut short): censored; no verdict
     # in a valid trial: unfixed
     assert (b3["on_time"], b3["eta_log2_err"], b3["fixed"], b3["claim_ok"], b3["urgent"]) == (
         None, None, False, None, False)
+    assert b3["eta_total_log2_err"] is None  # censored too
     assert "n_eta_updates" not in b0 and "correct_frac" not in q2
 
 
@@ -444,10 +475,11 @@ def test_request_rows_estimate_is_the_first_before_done(tmp_path):
     rows = {r["msg_id"]: r for r in request_rows(synthetic_trial(tmp_path, inbox, replies, {"b0": True}), {}, True)}
     b0, b1, b2 = rows[1], rows[2], rows[3]
     assert (b0["reply_sec"], b0["done_sec"], b0["eta_sec"], b0["eta_min"], b0["n_estimates"]) == (5, 10, None, None, 0)
-    assert (b0["eta_log2_err"], b0["on_time"], b0["claim_ok"]) == (None, None, True)
+    assert (b0["eta_log2_err"], b0["eta_total_log2_err"], b0["on_time"], b0["claim_ok"]) == (None, None, None, True)
     # b1: estimates at 10 s (1 min) and 40 s, done at 100 s: 90 s for 60 predicted; the 130 s one is after done
     assert (b1["eta_sec"], b1["eta_min"], b1["n_estimates"], b1["done_sec"]) == (10, 1, 2, 100)
     assert b1["eta_log2_err"] == pytest.approx(math.log2(1.5)) and b1["on_time"] is False
+    assert b1["eta_total_log2_err"] == pytest.approx(math.log2(100 / 70))
     assert (b2["eta_sec"], b2["n_estimates"], b2["eta_log2_err"], b2["on_time"]) == (None, 0, None, None)
 
 
@@ -466,6 +498,25 @@ def test_request_rows_never_done_bug_is_late_unless_cut_short(tmp_path, exit_rea
     t = synthetic_trial(tmp_path, inbox, [rep(10, 1, eta=10)], {"b0": False}, t_end=t_end, exit_reason=exit_reason)
     row = request_rows(t, {}, True)[0]
     assert (row["eta_log2_err"], row["on_time"]) == want and row["done_sec"] is None
+    assert row["eta_total_log2_err"] == want[0]  # censored or late from the arrival alike
+
+
+def test_request_rows_estimate_is_also_scored_from_the_bugs_arrival(tmp_path):
+    """eta_total_log2_err scores the prediction against the whole wait from the bug's arrival: a late
+    estimate's miss on its short horizon is a large ratio there and a small one here; both floor at 30 s."""
+    inbox = [msg(1, "hint", 0, 0, "b0"), msg(2, "hint", 1, 0, "b1"), msg(3, "hint", 2, 100, "b2")]
+    replies = [rep(10, 1, eta=1), rep(570, 1, eta=1), rep(600, 1, done=True),  # early: 1 min, done at 600 s
+               rep(540, 2, eta=2), rep(600, 2, done=True),  # late: 2 min at 540 s, done 60 s later
+               rep(110, 3, eta=1), rep(170, 3, done=True)]  # sent at 100 s: exactly right
+    rows = {r["msg_id"]: r for r in request_rows(synthetic_trial(tmp_path, inbox, replies, {}, t_end=700.0), {}, True)}
+    assert rows[1]["eta_log2_err"] == pytest.approx(math.log2(590 / 60))
+    assert rows[1]["eta_total_log2_err"] == pytest.approx(math.log2(600 / 70))
+    assert rows[2]["eta_log2_err"] == pytest.approx(-1.0)  # 60 s for 120
+    assert rows[2]["eta_total_log2_err"] == pytest.approx(math.log2(600 / 660))
+    assert rows[3]["eta_log2_err"] == pytest.approx(0.0) and rows[3]["eta_total_log2_err"] == pytest.approx(0.0)
+    quick = synthetic_trial(tmp_path / "q", [msg(1, "hint", 0, 0, "b0")], [rep(5, 1, eta=0), rep(10, 1, done=True)], {})
+    row = request_rows(quick, {}, True)[0]
+    assert (row["eta_log2_err"], row["eta_total_log2_err"]) == (0.0, 0.0)  # 5 s for 0, 10 s for 5: both floored
 
 
 def test_request_rows_status_counts_replies_after_delivery(tmp_path):
@@ -510,6 +561,23 @@ def test_request_table_never_done_estimates_make_an_infinite_median(tmp_path):
     c = request_table(pd.DataFrame(request_rows(t, {"condition": "c", "trial_name": "t"}, True))).iloc[0]
     assert (c["n_eta_never_done"], c["eta_abs_log2_median"], c["eta_log2_median"], c["on_time_frac"]) == (
         2, math.inf, math.inf, 0.0)
+    assert c["eta_total_abs_log2_median"] == math.inf
+
+
+def test_request_table_without_a_usable_estimate(tmp_path):
+    """A condition whose bugs have no estimate (every eta_log2_err None, an object column) gets NaN
+    medians and no never-done count, not a crash."""
+    inbox = [msg(1, "hint", 0, 0, "b0"), msg(2, "hint", 1, 0, "b1"), msg(3, "question", 0, 5, question="Q?")]
+    t = synthetic_trial(tmp_path, inbox, [rep(10, 1, "looking"), rep(20, 2, done=True), rep(30, 3, "A")], {"b0": True})
+    rows = pd.DataFrame(request_rows(t, {"condition": "c", "trial_name": "t"}, True))
+    assert rows["eta_log2_err"].isna().all() and rows["eta_total_log2_err"].isna().all()
+    c = request_table(rows).iloc[0]
+    for col in ("eta_abs_log2_median", "eta_log2_median", "eta_total_abs_log2_median", "on_time_frac",
+                "eta_min_median"):
+        assert math.isnan(c[col]), col
+    assert c["n_eta_never_done"] == 0 and c["n_bugs"] == 2
+    bare = request_table(rows.drop(columns=["eta_log2_err", "eta_total_log2_err"])).iloc[0]
+    assert math.isnan(bare["eta_total_abs_log2_median"]) and bare["n_eta_never_done"] == 0
 
 
 def test_request_table(tmp_path):
@@ -527,6 +595,8 @@ def test_request_table(tmp_path):
     assert c["n_eta_never_done"] == 1
     assert c["eta_abs_log2_median"] == pytest.approx(1.0)  # median of [0.66, inf, 1]
     assert c["eta_log2_median"] == pytest.approx(math.log2(190 / 120))  # median of [-1, 0.66, inf]
+    # from each bug's arrival: [log2(200/130) = 0.62, +inf, |log2(40/70)| = 0.81]
+    assert c["eta_total_abs_log2_median"] == pytest.approx(math.log2(70 / 40))
     assert (c["first_reply_median_sec"], c["eta_median_sec"], c["eta_min_median"]) == (10, 10, 1.5)
     assert (c["status_reply_median_sec"], c["urgent_first_frac"]) == (15, 1.0)
     rows["valid"] = False
@@ -590,7 +660,8 @@ def test_source_ref(tmp_path):
 
 
 def _repo(tmp_path: Path) -> tuple[Path, str]:
-    """A local repository with a tag and a commit after it -> (path, the tagged commit's sha)."""
+    """A local repository with a tag, an untagged commit and a commit after it -> (path, the untagged
+    middle commit's sha: neither a tag nor a branch head)."""
     repo = tmp_path / "upstream"
     repo.mkdir()
     git = lambda *a: subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True, text=True)  # noqa: E731
@@ -601,9 +672,11 @@ def _repo(tmp_path: Path) -> tuple[Path, str]:
     git("add", "-A")
     git("commit", "-q", "-m", "one")
     git("tag", "v1")
-    sha = git("rev-parse", "HEAD").stdout.strip()
     (repo / "a.py").write_text("v2\n")
     git("commit", "-q", "-am", "two")
+    sha = git("rev-parse", "HEAD").stdout.strip()
+    (repo / "a.py").write_text("v3\n")
+    git("commit", "-q", "-am", "three")
     return repo, sha
 
 
@@ -617,9 +690,17 @@ def test_fetch_source_clones_the_tag_once(tmp_path, monkeypatch):
 
 
 def test_fetch_source_at_a_commit_sha(tmp_path, monkeypatch):
+    """`clone --branch` cannot take a sha: the failed shallow clone is removed, and a full clone
+    checks the commit out."""
     repo, sha = _repo(tmp_path)
     monkeypatch.setattr(hints_mod, "source_ref", lambda d: (repo.as_uri(), sha, "/w"))
-    assert (fetch_source(tmp_path / "task", tmp_path / "src" / "task") / "a.py").read_text() == "v1\n"
+    dest = fetch_source(tmp_path / "task", tmp_path / "src" / "task")
+    assert (dest / "a.py").read_text() == "v2\n"
+    head = subprocess.run(["git", "-C", str(dest), "rev-parse", "HEAD"], check=True, capture_output=True, text=True)
+    assert head.stdout.strip() == sha
+    monkeypatch.setattr(hints_mod, "source_ref", lambda d: (repo.as_uri(), "0" * 40, "/w"))
+    with pytest.raises(subprocess.CalledProcessError):  # an unknown commit still fails
+        fetch_source(tmp_path / "task", tmp_path / "src" / "other")
 
 
 def test_generate_and_load_questions(tmp_path):
@@ -702,6 +783,43 @@ def test_generate_questions_skips_touched_files_and_failed_calls(tmp_path):
     assert [(q.id, q.file, q.question) for q in qs] == [("q1", "src/b.py", "Qb"), ("q2", "src/b.py", "Qb2")]
     with pytest.raises(HintError, match=r"only 2 questions of 3 \(2 eligible files, 1 skipped after a failed call"):
         generate_questions(task, src, FakeFactory({ORCH: model})(make_config().orchestrator), 3)
+
+
+def test_generate_questions_stops_on_a_billing_error(tmp_path):
+    """A billing error is not one file's failure: it stops generation (no more calls) and reaches the caller."""
+    task = make_task(tmp_path, 1)
+    src = tmp_path / "repo"
+    for f in ("src/a.py", "src/b.py", "src/c.py"):
+        write(src / f, 2000)
+    client = FakeFactory({ORCH: lambda system, messages, tools: BillingError("402: insufficient credit",
+                                                                              status=402)})(make_config().orchestrator)
+    with pytest.raises(BillingError, match="insufficient credit"):
+        generate_questions(task, src, client, 2)
+    assert len(client.requests) == 1
+
+
+def test_generate_questions_drops_existing_questions_about_touched_files(tmp_path):
+    """A question kept from an earlier run about a file now known to be touched (an oracle patch
+    added since) is dropped, and its file is not asked about again; a new question's id is above
+    every earlier one, dropped ones included, so an id never names two questions."""
+    task = make_task(tmp_path, 1)
+    (task / "tests" / "oracle").mkdir()
+    (task / "tests" / "oracle" / "all.patch").write_text(patch("src/patched.py"))
+    src = tmp_path / "repo"
+    for f in ("src/a.py", "src/b.py", "src/patched.py"):
+        write(src / f, 2000)
+    asked = []
+
+    def model(system, messages, tools):
+        rel = messages[0].content.split("\n", 1)[0].removeprefix("File: ")
+        asked.append(rel)
+        return Reply(json.dumps([{"question": f"Q {rel}", "answer": "A"}]))
+
+    kept = [Question("q1", "src/a.py", "Qa", "Aa"), Question("q2", "src/patched.py", "Qp", "Ap"),
+            Question("q3", "src/m0.py", "Qm", "Am")]  # a subtask's target file
+    qs = generate_questions(task, src, FakeFactory({ORCH: model})(make_config().orchestrator), 2, kept)
+    assert asked == ["src/b.py"]
+    assert [(q.id, q.file, q.question) for q in qs] == [("q1", "src/a.py", "Qa"), ("q4", "src/b.py", "Q src/b.py")]
 
 
 def judge(text: str):

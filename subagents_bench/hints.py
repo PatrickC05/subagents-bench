@@ -367,11 +367,17 @@ def generate_questions(task_dir: str | Path, src: str | Path, client: Any, n: in
             items = next(iter(items.values()))
         for x in items[:QUESTIONS_PER_FILE] if isinstance(items, list) else []:
             if isinstance(x, dict) and str(x.get("question", "")).strip() and str(x.get("answer", "")).strip():
-                out.append(Question(f"q{len(out) + 1}", rel, str(x["question"]).strip(), str(x["answer"]).strip()))
+                out.append(Question(_next_id(out, existing), rel, str(x["question"]).strip(), str(x["answer"]).strip()))
     if len(out) < n:
         raise HintError(f"{task_dir}: only {len(out)} questions of {n} ({len(files)} eligible files, "
                         f"{skipped} skipped after a failed call or unreadable reply)")
     return out
+
+
+def _next_id(out: list[Question], existing: list[Question] | None) -> str:
+    """``q<n>`` above every id used so far, dropped questions' included (ids stay unique)."""
+    used = [int(q.id[1:]) for q in [*out, *(existing or [])] if re.fullmatch(r"q\d+", q.id)]
+    return f"q{max(used, default=0) + 1}"
 
 
 def write_questions(hints_dir: str | Path, task_name: str, model: str, questions: list[Question]) -> Path:

@@ -279,7 +279,8 @@ sends all three kinds of message in one 30-minute session
 Every message has an id (`Request #4`, `Question #5`, `Status check #6`) and
 the agent answers with a new tool, `reply(to, text, eta_min, done)`; the user
 sees nothing else it writes. The prompt asks it to answer each question (its
-first reply to a question is taken as the answer), to reply to a bug with an
+first reply to a question is taken as the answer, and that reply's result says
+so), to reply to a bug with an
 estimate in minutes (`eta_min`) in its first response after the bug arrives
 and again whenever the estimate changes, with `done: true` once it is fixed
 and checked, and to fix the urgent bug before the earlier ones. So a question
@@ -301,7 +302,7 @@ rounds: 5 conditions, 20 sessions.
 | Are my questions answered, and how fast? | `answered_frac`, `answer_median_sec`, `answered_60s`, `answered_180s` |
 | Are the answers right? | `correct_of_answered`, `correct_of_asked` (an LLM judge against a reference answer, first reply only; unanswered questions count only in the second) |
 | Are my bugs fixed? | `fixed_frac` |
-| Are the estimates right? | `eta_given_frac`, `eta_abs_log2_median` (1: off by a factor of 2), `eta_log2_median` (> 0: late; a bug estimated and never said done counts as infinitely late unless the session's deadline came before the predicted time), `n_eta_never_done`, `on_time_frac` |
+| Are the estimates right? | `eta_given_frac`, `eta_abs_log2_median` (1: off by a factor of 2), `eta_log2_median` (> 0: late; a bug estimated and never said done counts as infinitely late unless the session's deadline came before the predicted time), `eta_total_abs_log2_median` (the same prediction scored from the bug's arrival, against the user's whole wait: a late estimate has a short horizon), `n_eta_never_done`, `on_time_frac` |
 | Is a bug done when the agent says so? | `claim_precision` (done claims the grader confirms) |
 | Does an urgent bug go first? | `urgent_first_frac` |
 | Is a status check answered? | `status_reply_median_sec` |

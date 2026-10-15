@@ -29,7 +29,8 @@ jobs/<sweep>/
                                       questions: [{id (q1, q2, ...), file, question, answer}]}, from
                                       `subagents-bench questions` (`answer`: the reference answer)
   src/<task>/                         `subagents-bench questions`: a shallow clone of the task's repository at the
-                                      ref its Dockerfile checks out (the source the questions are written from)
+                                      ref its Dockerfile checks out (the source the questions are written from;
+                                      a full clone checked out at the commit when the ref is a sha)
 ```
 
 The analysis loads only job dirs whose name does not start with `_` or `.`,
@@ -202,7 +203,7 @@ written; a rejected call is an errored tool record. Empty otherwise.
 |---|---|
 | `t` | when it was sent: the time the user got it |
 | `step` | the orchestrator step |
-| `to` | the `msg_id` it answers (the call may name it `3`, `3.0`, `"3"` or `"#3"`) |
+| `to` | the `msg_id` it answers (the call may name it `3`, `3.0`, `"3"` or `"#3"`; a string of 10 or more digits is rejected) |
 | `kind`, `hint_index` | that message's kind (`bug`, `question`, `status`: note `bug`, where the inbox says `hint`) and position |
 | `subtask_id`, `question_id` | that message's subtask (a bug) or question, else null |
 | `text` | the message to the user |
@@ -422,6 +423,7 @@ message's kind are filled only for that kind.
 | `n_estimates` | such replies (with `eta_min`, before the done reply), the first included |
 | `done_sec` | the first reply with `done` |
 | `eta_log2_err` | log2(actual / predicted time from the estimate to done), each floored at 30 s; > 0 late. A bug estimated and never said done: `inf` when the session ran past the predicted time or ended for another reason than its deadline (`exit_reason` not `deadline` or `cancelled`: the agent stopped, so it gave the bug up); empty when the deadline came first (censored). Empty without an estimate |
+| `eta_total_log2_err` | the same prediction scored from when the bug was sent: log2(`done_sec` / (`eta_sec` + 60 x `eta_min`)), each floored at 30 s; a late estimate's short horizon makes `eta_log2_err` a ratio of a small part of the wait, this one is of the whole wait. `inf` and empty where `eta_log2_err` is |
 | `on_time` | done by the predicted time; false where `eta_log2_err` is `inf`; empty where it is empty |
 | `claim_ok` | a done claim the grader confirms (`fixed`); empty without a done claim |
 | `urgent_first` | an urgent bug: of the earlier bugs still open (no done reply) when it was sent, the share it was said done before, never-done bugs counting as later; empty without an open earlier bug |
@@ -439,6 +441,7 @@ message's kind are filled only for that kind.
 | `eta_given_frac`, `eta_median_sec`, `eta_min_median` | the share of bugs with an estimate (before their done reply); censored median `eta_sec` of the bugs after the first; median estimate in minutes |
 | `done_claimed_frac`, `claim_precision` | the share of bugs said done; of those, the share the grader confirms |
 | `eta_abs_log2_median`, `eta_log2_median` | median \|`eta_log2_err`\| (1: off by a factor of 2) and median signed error (> 0: late), over bugs with a known error: those said done after an estimate and the never-done ones at `inf` (so either median can be `inf`) |
+| `eta_total_abs_log2_median` | median \|`eta_total_log2_err`\| over the same bugs (can be `inf` too); NaN, like the two above, when no bug has a known error |
 | `n_eta_never_done` | bugs estimated and never said done that count as late (`eta_log2_err` `inf`) |
 | `on_time_frac` | the share on time of the bugs with a known `on_time` (never-done ones counting as late) |
 | `n_status`, `status_reply_median_sec` | status checks sent, and the censored median of their `reply_sec` |

@@ -358,8 +358,9 @@ message of any kind was sent.
 
 **The sweep.** `swe_interactive_requests.yaml` runs 30-minute sessions (6
 bugs every 4 minutes, the last at 20:00, then 10 minutes; harbor's timeout
-0.05 x 43200 s = 2160 s, the session plus the 120 s grace) on click and
-pint, 2 rounds. Three conditions get the requests (`single_requests`,
+0.05 x 43200 s = 2160 s: the 1800 s session, preflight's 120 s grace, and
+240 s more for the background subagents' shutdown and the end kill) on click
+and pint, 2 rounds. Three conditions get the requests (`single_requests`,
 `manager_background_requests`, `background_hinted_requests`); two controls,
 `single_bugsonly` and `manager_background_bugsonly`, set `replies: false`
 and no questions, status checks or urgent bugs, so they get the same bugs at
@@ -372,14 +373,19 @@ arrival-rate sessions are a looser second reference (10 bugs, another day).
 **The reply tool.** `reply(to, text, eta_min?, done?)` writes a line to
 `replies.jsonl` and returns `[sent to the user, re #3]`; nothing is sent back.
 `to` must be the id of a delivered message (`3`, `3.0`, `"3"` and `"#3"` are
-read; any other value, `true` included, is an error that lists the delivered
-ids), `text` non-empty. `eta_min` is read as a number of minutes in [0,
+read; any other value, `true` or a string of 10 or more digits included, is
+an error that lists the delivered ids), `text` non-empty. `eta_min` is read as a number of minutes in [0,
 10^6) (a numeric string too); `done` as `true`/`false`, `1`/`0` or the
 strings `"true"`, `"false"`, `"yes"`, `"no"`. Anything else is not dropped
 silently: the reply is still sent, without the estimate (null) or with
 `done` false, and the result says so (`[sent to the user, re #3; eta_min
 ignored: expected a number of minutes >= 0]`, `...; done ignored: expected
-true or false`), so the agent can resend it. The system prompt adds a
+true or false`), so the agent can resend it. The first reply to a question
+also says it was taken as the answer (`[sent to the user, re #5; taken as
+your answer to this question]`); a later reply to the same question, or a
+reply to a bug or status check, does not. So an agent that acknowledged a
+question with "on it" learns, at that step, that the acknowledgement is what
+gets graded. The system prompt adds a
 *Replying to the user* section: the user reads only `reply`, not the agent's
 other text or its tool calls; answer a question from the code, and the first
 reply to a question is taken as the answer, so send it when you have it;
@@ -401,7 +407,10 @@ delegation hint.
 **Questions.** `subagents-bench questions SPEC`, once before the run, clones
 each task's repository at the ref its Dockerfile checks out (`git clone URL
 /src`, `git -C /src checkout REF`: the source in the image) shallowly to
-`jobs/<sweep>/src/<task>`, lists its source files (`.py .go .js .ts .c .h .rs
+`jobs/<sweep>/src/<task>` (`git clone --depth 1 --branch REF`; when REF is a
+commit sha, which `--branch` cannot take and 4 SWE-sweep Dockerfiles check
+out, the failed clone is removed and the whole history is cloned and the sha
+checked out), lists its source files (`.py .go .js .ts .c .h .rs
 .java .rb`, 1500-40000 bytes) minus the files any subtask touches, shuffles
 them per task, and asks the orchestrator model of the first interactive
 condition for two questions per file until it has the most one session asks
@@ -426,8 +435,12 @@ its tests change (where the reference could turn wrong mid-session, or the
 question could hint at a bug); the agent can still edit a question's file
 before it is asked. A failed call or a reply that is not JSON skips its file
 (a `{"questions": [...]}` object is unwrapped); with too few questions the
-error gives the eligible files and how many were skipped. Existing questions
-are kept unless `--force`.
+error gives the eligible files and how many were skipped. A billing error is
+not one file's failure: it is re-raised and stops the task's generation,
+rather than being counted as a skip on every remaining file. Existing
+questions are kept unless `--force`, except those about a file now touched
+(written before a patch naming it was known): they are dropped, and their
+file is not asked about again.
 Written to `jobs/<sweep>/hints/<task>.questions.json`; `preflight` builds
 every schedule and fails when a task has fewer questions than a session asks.
 The questions and reference answers are the model's and are not checked by
@@ -472,6 +485,21 @@ bugs were never said done) and `n_eta_never_done` counts them, so a
 condition that promises fixes and never delivers does not look accurate by
 dropping its misses. Read the error with `done_claimed_frac` and
 `on_time_frac`.
+
+`eta_log2_err` scores the estimate over its own horizon, from when it was
+sent. A late estimate (given after most of the work) has a short horizon, so
+its ratio says little about the wait the user had: a miss of a minute is a
+factor of 2 on a 1-minute horizon, and a horizon under 30 s is floored to
+an error near 0. `eta_total_log2_err = log2((done - sent) / (predicted
+done - sent))`, both floored at 30 s, scores the same prediction from when the
+bug was sent, against the user's whole wait: a bug sent at 0, estimated at
+9:00 as 2 minutes and done at 10:00 is -1 on its own horizon (60 s for 120)
+and log2(600 / 660) = -0.14 from the arrival; one estimated at 0:10 as 1
+minute and done at 10:00 is log2(590 / 60) = 3.3 and log2(600 / 70) = 3.1.
+The never-done and censored cases are those of `eta_log2_err` (+inf, null).
+`eta_total_abs_log2_median` is its median absolute value. Neither error
+charges for estimating late as such (an estimate given just before done is
+close to right on both): that is `eta_sec`, so read the two errors with it.
 
 **Done claims.** `claim_ok` is a done claim the grader confirms: the
 subtask resolved with no visible regression, graded once at the end of the
