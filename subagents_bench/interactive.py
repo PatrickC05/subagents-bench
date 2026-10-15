@@ -321,28 +321,24 @@ class InteractiveOrchestrator(Orchestrator):
         return self.rec.tool(self.who, step, call_id, tc, wait)
 
     def _reply(self, args: dict, step: int) -> ToolOutput:
-        to, text = args.get("to"), args.get("text")
-        if isinstance(to, str) and to.strip().lstrip("#").isdigit():
-            to = int(to.strip().lstrip("#"))
-        if isinstance(to, bool) or not isinstance(to, int) or to not in self.sent:
+        to = _message_id(args.get("to"))
+        text = args.get("text")
+        if to is None or to not in self.sent:
             known = ", ".join(f"#{i}" for i in sorted(self.sent)) or "none yet"
             return ToolOutput(f"[error] `to` must be the id of a message you received ({known})", True)
         if not isinstance(text, str) or not text.strip():
             return ToolOutput("[error] `text` must be a non-empty message", True)
-        eta, done = args.get("eta_min"), args.get("done")
-        try:
-            eta = None if eta is None or isinstance(eta, bool) else float(eta)
-        except (TypeError, ValueError):
-            eta = None
-        if eta is not None and not (eta == eta and 0 <= eta < 1e6):
-            eta = None
+        eta, eta_ok = _minutes(args.get("eta_min"))
+        done, done_ok = _flag(args.get("done"))
         h = self.sent[to]
         self.rec.write("replies", {
             "t": time.time(), "step": step, "to": to, "kind": h.kind, "hint_index": h.index,
             "subtask_id": h.subtask.id if h.subtask else None, "question_id": h.question.id if h.question else None,
-            "text": text, "eta_min": eta, "done": done is True or str(done).lower() == "true",
+            "text": text, "eta_min": eta, "done": done,
         })
-        return ToolOutput(f"[sent to the user, re #{to}]")
+        notes = ([] if eta_ok else ["eta_min ignored: expected a number of minutes >= 0"]) + \
+                ([] if done_ok else ["done ignored: expected true or false"])
+        return ToolOutput(f"[sent to the user, re #{to}" + "".join(f"; {n}" for n in notes) + "]")
 
     def _spawn(self, instructions: list[str], step: int, group_id: str) -> ToolOutput:
         if not self.background:
@@ -426,6 +422,42 @@ class InteractiveOrchestrator(Orchestrator):
                 size -= len(m.reasoning)
                 m.reasoning = None
                 self.n_elided += 1
+
+
+def _message_id(raw: Any) -> int | None:
+    """``reply``'s ``to``: 3, 3.0, "3" or "#3"."""
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, float) and raw.is_integer():
+        return int(raw)
+    if isinstance(raw, str):
+        raw = raw.strip().lstrip("#")
+        return int(raw) if raw.isascii() and raw.isdigit() else None
+    return raw if isinstance(raw, int) else None
+
+
+def _minutes(raw: Any) -> tuple[float | None, bool]:
+    """``reply``'s ``eta_min`` -> (minutes or None, whether it was absent or usable)."""
+    if raw is None:
+        return None, True
+    if isinstance(raw, bool):
+        return None, False
+    try:
+        x = float(raw)
+    except (TypeError, ValueError, OverflowError):
+        return None, False
+    return (x, True) if 0 <= x < 1e6 else (None, False)
+
+
+def _flag(raw: Any) -> tuple[bool, bool]:
+    """``reply``'s ``done`` -> (done, whether it was absent or readable)."""
+    if raw is None or isinstance(raw, bool):
+        return raw is True, True
+    if isinstance(raw, (int, float)) and raw in (0, 1):
+        return raw == 1, True
+    if isinstance(raw, str) and raw.strip().lower() in ("true", "false", "yes", "no"):
+        return raw.strip().lower() in ("true", "yes"), True
+    return False, False
 
 
 def wait_timeout(raw: Any, cap: float) -> float | None:

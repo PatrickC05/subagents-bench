@@ -292,16 +292,32 @@ def fetch_source(task_dir: str | Path, dest: str | Path) -> Path:
     return dest
 
 
+SKIP_DIRS = ("doc", "docs", "example", "examples", "vendor", "node_modules", "bench", "benchmark", "benchmarks",
+             "script", "scripts", "tools")
+
+
+def touched_files(task_dir: str | Path) -> set[str]:
+    """Every file a subtask's fix or tests change: the target files and the files of the task's
+    oracle and test patches (target files can name paths of a later layout: pint's
+    ``pint/facets/numpy/numpy_func.py`` is ``pint/numpy_func.py`` in the image)."""
+    out = {f for s in load_subtasks(task_dir) for f in s.target_files}
+    tests = Path(task_dir) / "tests"
+    for patch in [*tests.glob("oracle/*.patch"), *tests.glob("subtasks/*/*.patch")]:
+        out |= set(re.findall(r"^diff --git a/(\S+) b/", patch.read_text(errors="replace"), re.M))
+    return out
+
+
 def question_files(src: str | Path, exclude: set[str], seed: str) -> list[str]:
-    """Source files to ask about (not tests, not ``exclude``: the subtasks' target files), shuffled by ``seed``."""
+    """Source files to ask about (not tests, benchmarks or docs, not ``exclude``: the files the
+    subtasks' fixes and tests change), shuffled by ``seed``."""
     src = Path(src)
     out = []
     for p in sorted(src.rglob("*")):
         rel = p.relative_to(src).as_posix()
         parts = rel.lower().split("/")
         if (not p.is_file() or p.suffix not in QUESTION_SUFFIXES or rel in exclude or parts[0].startswith(".")
-                or any(x in ("test", "tests", "testing", "docs", "examples", "vendor", "node_modules") for x in parts)
-                or "test" in parts[-1]):
+                or any(x in SKIP_DIRS or x.startswith("test") or x.endswith("test") for x in parts[:-1])
+                or re.search(r"(^|_)tests?(_|\.|$)|^conftest\.", parts[-1])):
             continue
         if QUESTION_FILE_CHARS[0] <= p.stat().st_size <= QUESTION_FILE_CHARS[1]:
             out.append(rel)
@@ -321,24 +337,29 @@ def generate_questions(task_dir: str | Path, src: str | Path, client: Any, n: in
     """At least ``n`` questions about the task's source files (``existing`` kept), two per file."""
     out = list(existing or [])
     done = {q.file for q in out}
-    exclude = {f for s in load_subtasks(task_dir) for f in s.target_files}
-    for rel in question_files(src, exclude, Path(task_dir).name):
+    files = question_files(src, touched_files(task_dir), Path(task_dir).name)
+    skipped = 0
+    for rel in files:
         if len(out) >= n:
             break
         if rel in done:
             continue
         body = (Path(src) / rel).read_text(errors="replace")
-        r = client.complete(QUESTION_SYSTEM.format(k=QUESTIONS_PER_FILE),
-                            [Message("user", f"File: {rel}\n\n{body}")], [])
         try:
+            r = client.complete(QUESTION_SYSTEM.format(k=QUESTIONS_PER_FILE),
+                                [Message("user", f"File: {rel}\n\n{body}")], [])
             items = _json_value(r.text)
-        except ValueError:
-            continue  # one unreadable reply skips its file
+        except Exception:  # one failed call or unreadable reply skips its file
+            skipped += 1
+            continue
+        if isinstance(items, dict) and len(items) == 1:  # {"questions": [...]}
+            items = next(iter(items.values()))
         for x in items[:QUESTIONS_PER_FILE] if isinstance(items, list) else []:
             if isinstance(x, dict) and str(x.get("question", "")).strip() and str(x.get("answer", "")).strip():
                 out.append(Question(f"q{len(out) + 1}", rel, str(x["question"]).strip(), str(x["answer"]).strip()))
     if len(out) < n:
-        raise HintError(f"{task_dir}: only {len(out)} questions of {n}")
+        raise HintError(f"{task_dir}: only {len(out)} questions of {n} ({len(files)} eligible files, "
+                        f"{skipped} skipped after a failed call or unreadable reply)")
     return out
 
 
@@ -356,6 +377,11 @@ def judge_answer(client: Any, question: str, reference: str, answer: str) -> tup
                                                          f"Answer to grade: {answer}")], [])
     try:
         v = _json_value(r.text)
-        return bool(v["correct"]), str(v.get("why", ""))
+        c = v["correct"]
+        if isinstance(c, str) and c.strip().lower() in ("true", "false"):
+            c = c.strip().lower() == "true"
+        if isinstance(c, bool):
+            return c, str(v.get("why", ""))
     except (ValueError, KeyError, TypeError):
-        return None, r.text[:300]
+        pass
+    return None, r.text[:300]

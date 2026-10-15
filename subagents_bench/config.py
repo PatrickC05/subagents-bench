@@ -193,8 +193,9 @@ def _check_interactive(cfg: ExperimentConfig) -> None:
         v = getattr(i, name)
         if isinstance(v, bool) or not isinstance(v, int) or v < 0:
             raise ConfigError(f"interactive.{name}: expected an integer >= 0, got {v!r}")
-    if not i.replies and (i.questions_per_interval or i.status_every):
-        raise ConfigError("interactive: questions and status checks are answered with `reply`: set replies: true")
+    if not i.replies and (i.questions_per_interval or i.status_every or i.urgent_every):
+        raise ConfigError("interactive: questions, status checks and urgent bugs come with message ids and `reply`: "
+                          "set replies: true")
     for name in ("end_when_idle", "vary_order_by_round", "replies"):
         if not isinstance(getattr(i, name), bool):
             raise ConfigError(f"interactive.{name}: expected true or false, got {getattr(i, name)!r}")

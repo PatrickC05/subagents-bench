@@ -20,7 +20,7 @@ SHOW_BUGS = ["n_bugs", "bugs_fixed", "bug_fix_rate", "n_regressed"]  # when a ta
 SHOW_INTERACTIVE = ["condition", "n_episodes", "n_later_hints", "busy_at_arrival_frac", "delivery_median_sec",
                     "response_median_sec", "dispatch_median_sec", "touch_median_sec", "edit_median_sec",
                     "touch_before_next", "continued_at_next_frac", "stopped_at_next_frac", "hinted_fixed_frac"]
-SHOW_REQUESTS = ["condition", "n_episodes", "n_questions", "answer_median_sec", "answered_60s", "correct_frac",
+SHOW_REQUESTS = ["condition", "n_episodes", "n_questions", "answer_median_sec", "answered_60s", "correct_of_answered",
                  "n_bugs", "fixed_frac", "eta_given_frac", "eta_abs_log2_median", "on_time_frac", "claim_precision",
                  "status_reply_median_sec", "urgent_first_frac"]
 

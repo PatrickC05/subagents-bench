@@ -255,6 +255,65 @@ commands that may break SWE-sweep's fairplay rules (git history, network,
 installed copies: `fairplay` in tools.csv, `[WARN]` in the output); the first
 smoke's stuck single agent ran `git cat-file --batch-all-objects`.
 
+### Requests: answers, fixes and estimates
+
+The runs above sent only bugs, and read a bug's latency off the agent's tool
+calls (`touch_sec`, `edit_sec`): an agent that keeps working on the bugs it
+knows looks responsive without ever telling the user anything, and nothing
+asks it to stay available for requests it cannot see yet. A user wants three
+things from a session: their questions answered, their bugs fixed, and to
+know when each fix will be ready.
+[`swe_interactive_requests.yaml`](configs/sweeps/swe_interactive_requests.yaml)
+sends all three kinds of message in one 34-minute session
+(`interactive.replies`):
+- a bug every 4 minutes, 6 in all, with the hints above (`hint_detail:
+  tests`); bug 3 (0-based, at 12:00) is urgent: "fix it before the earlier
+  ones" (`urgent_every: 3`);
+- two questions about the code between consecutive bugs, 80 s and 160 s after
+  each (`questions_per_interval: 2`; 12 in all), such as what a function
+  returns in a given case or a default value, written beforehand from files
+  the bugs do not touch;
+- a status check 120 s after bugs 1, 3 and 5 asking how long each open bug
+  will take (`status_every: 2`).
+
+Every message has an id (`Request #4`, `Question #5`, `Status check #6`) and
+the agent answers with a new tool, `reply(to, text, eta_min, done)`; the user
+sees nothing else it writes. The prompt asks it to answer each question, to
+reply to a bug with an estimate in minutes (`eta_min`) as soon as it has
+planned or delegated it and again whenever the estimate changes, with `done:
+true` once it is fixed and checked, and to fix the urgent bug before the
+earlier ones. So a question is answered when its reply arrives, and a bug's
+replies say when the agent expects it fixed and when it says it is. Three
+conditions, the same prompt in each: `single_requests`,
+`manager_background_requests` (a read-only orchestrator with background
+subagents) and `background_hinted_requests` (all tools, background
+subagents, the delegation hint); click and pint, 2 rounds: 12 sessions.
+
+| The user's question | `requests.csv` columns (per condition) |
+|---|---|
+| Are my questions answered, and how fast? | `answered_frac`, `answer_median_sec`, `answered_60s`, `answered_180s` |
+| Are the answers right? | `correct_frac` (an LLM judge against a reference answer, first reply only) |
+| Are my bugs fixed? | `fixed_frac` |
+| Are the estimates right? | `eta_given_frac`, `eta_abs_log2_median` (1: off by a factor of 2), `eta_log2_median` (> 0: late), `on_time_frac` |
+| Is a bug done when the agent says so? | `claim_precision` (done claims the grader confirms) |
+| Does an urgent bug go first? | `urgent_first_frac` |
+| Is a status check answered? | `status_reply_median_sec` |
+
+`messages.csv` has one row per message. Questions are written once, before
+the run, and answers are graded after it; rerun `analyze.sh` after grading
+to fill `correct_frac`:
+
+```bash
+.venv/bin/subagents-bench questions configs/sweeps/swe_interactive_requests.yaml      # 12 per task, jobs/<sweep>/hints/
+scripts/run_experiment.sh configs/sweeps/swe_interactive_requests.yaml
+.venv/bin/subagents-bench grade-answers configs/sweeps/swe_interactive_requests.yaml  # <trial>/agent/answers.json
+scripts/analyze.sh jobs/swe_interactive_requests
+```
+
+Design and caveats (question generation, the judge, the ETA metrics,
+censoring): docs/DESIGN.md, *Requests*; columns: docs/DATA.md. Results:
+not run yet.
+
 ## Where data and figures land
 
 ```
@@ -384,16 +443,17 @@ subagents_bench/
   tools.py            bash, edit_file, read_file, list_dir, search via a per-agent shell
   prompts.py          orchestrator, subagent, judge and debate prompts
   orchestrator.py     the step loop and spawn_subagents
-  interactive.py      timed sessions: hints as user messages, background subagents, wait
-  hints.py            SWE-sweep subtasks -> the hint schedule; generated bug reports
+  interactive.py      timed sessions: hints as user messages, background subagents, wait, reply
+  hints.py            SWE-sweep subtasks -> the message schedule; generated bug reports and code questions
   subagent.py         one subagent run (a dispatch)
   arbiter.py          candidates, judge, debate, copy isolation and apply
   records.py          the episode records
   harness/harbor_agent.py   harbor's external agent (OrchestratorAgent)
   sweep.py, cli.py    sweep specs, preflight, harbor jobs; `subagents-bench`
-  analysis/           validity, cost, critical path, tables, delegation gate
+  analysis/           validity, cost, critical path, tables, delegation gate; interactivity.py (hints),
+                      requests.py (replies: answers, estimates, done claims)
   plots/              the nine figures
-configs/              sail/base.yaml, sweeps/{pilot,smoke,swe_sweep,swe_interactive}.yaml, pricing.yaml
+configs/              sail/base.yaml, sweeps/{pilot,smoke,swe_sweep,swe_interactive*}.yaml, pricing.yaml
 scripts/              setup.sh, run_experiment.sh, analyze.sh
 tests/                offline tests (fake models, fake harbor); RUN_DOCKER=1, RUN_LIVE=1 opt in
 ```

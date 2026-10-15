@@ -242,10 +242,11 @@ REPLIES = """
 Every user message has an id (#3). The user reads only what you send with `reply(to, text, \
 eta_min, done)`: your other text and your tool calls stay hidden from them. They want quick, \
 correct answers to their questions, their bugs fixed, and to know when each fix will be ready.
-- A question: answer it with `reply` (to its id). Answer from the code; a short answer is fine.
-- A bug: as soon as you have planned it (or delegated it), reply with `eta_min`, your estimate of \
-the minutes from now until it is fixed. Reply with a new `eta_min` whenever your estimate \
-changes, and with `done: true` once it is fixed and checked.
+- A question: answer it with `reply` (to its id). Answer from the code; a short answer is fine. \
+Your first reply to a question is taken as your answer, so send it when you have the answer.
+- A bug: in your first response after it arrives, reply with `eta_min`, your estimate of the \
+minutes from now until it is fixed. Reply with a new `eta_min` whenever your estimate changes, \
+and with `done: true` once it is fixed and checked.
 - A status check: reply to each open bug with an updated `eta_min`.
 - An urgent bug matters more than the earlier ones: fix it before them.
 """

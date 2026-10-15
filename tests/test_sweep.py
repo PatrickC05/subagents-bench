@@ -270,6 +270,52 @@ def test_swe_interactive_rate_spec():
         assert dicts[0] == dicts[1] == dicts[2]
 
 
+def test_swe_interactive_requests_spec(tmp_path):
+    """Requests: swe_interactive.yaml's settings but for the tasks, rounds, a 34-minute session with 6
+    bugs every 4 minutes, the request stream (replies, 2 questions per interval, status every 2 bugs,
+    bug 3 urgent) and 3 at once; its 3 conditions are the full spec's single agent, a background
+    manager, and the hinted background condition."""
+    from subagents_bench.hints import Question, write_questions
+    from test_interactive import make_task
+    s, full = (sweep.load_spec(REPO / f"configs/sweeps/{n}.yaml") for n in ("swe_interactive_requests", "swe_interactive"))
+    assert (s.tasks, s.rounds, len(sweep.plan(s))) == (["swe-sweep__click", "swe-sweep__pint"], 2, 6)
+    assert 2040 + sweep.SESSION_GRACE_SEC <= 43200 * s.timeout_multiplier
+    assert (s.dataset_path, s.platform, s.extra_args, s.n_concurrent) == (full.dataset_path, full.platform,
+                                                                         full.extra_args, 3)
+    keep = ("wall_clock_sec", "interval_sec", "max_hints", "replies", "questions_per_interval", "status_every",
+            "urgent_every")
+    twins = {"single_requests": "single_interactive", "manager_background_requests": "background_interactive",
+             "background_hinted_requests": "background_hinted"}
+    assert set(s.configs) == set(twins)
+    for cond, cfg in s.configs.items():
+        i = cfg.interactive
+        assert (i.wall_clock_sec, i.interval_sec, i.max_hints, i.replies, i.questions_per_interval, i.status_every,
+                i.urgent_every) == (2040, 240, 6, True, 2, 2, 3)
+        d, t = cfg.to_dict(), full.configs[twins[cond]].to_dict()
+        for k in ("name", "tools"):
+            d.pop(k), t.pop(k)
+        for k in keep:
+            d["interactive"].pop(k), t["interactive"].pop(k)
+        assert d == t, cond
+    assert s.configs["manager_background_requests"].orchestrator_tools == ["read_file", "list_dir", "search"]
+    assert (s.configs["single_requests"].orchestrator_tools == s.configs["background_hinted_requests"].orchestrator_tools
+            == full.configs["background_hinted"].orchestrator_tools)
+    assert s.configs["background_hinted_requests"].subagent.delegation_hint
+    a, b, c = (cfg.interactive for cfg in s.configs.values())
+    assert a == b == c  # the same stream for every condition
+    assert sweep.questions_needed(s) == 12
+    # the stream its comments describe, on a 13-bug task
+    task = make_task(tmp_path, 13)
+    write_questions(tmp_path / "hints", "task-1", "m", [Question(f"q{k}", "f.py", f"Q{k}?", "A") for k in range(12)])
+    sched = sweep.schedule(s.configs["single_requests"].interactive, task, "task-1", tmp_path / "hints")
+    bugs = [h for h in sched if h.kind == "bug"]
+    assert [h.t_offset for h in bugs] == [240 * k for k in range(6)] and [h.index for h in bugs if h.urgent] == [3]
+    assert [h.t_offset for h in sched if h.kind == "status"] == [360, 840, 1320]
+    assert [h.t_offset % 240 for h in sched if h.kind == "question"] == [80, 160] * 6
+    if s.dataset_path.is_dir() and all(sweep.hints_dir(s).joinpath(f"{t}.questions.json").is_file() for t in s.tasks):
+        assert sweep.check_interactive(s) == []
+
+
 def test_swe_sweep_larger_budget_hint(tmp_path, monkeypatch):
     """swe_sweep.yaml's larger step budget, made as its comments say (orchestrator_steps and the
     commented conditions block): every condition gets it, single_matched it x 8 subagent steps."""

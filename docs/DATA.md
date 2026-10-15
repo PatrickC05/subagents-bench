@@ -25,6 +25,11 @@ jobs/<sweep>/
                                       their Dockerfiles pinned (the dirs harbor runs)
   hints/<task>.json                   interactive sweeps with `hint_detail: report`: {task, model, generated_at,
                                       reports: {subtask id: bug report}}, from `subagents-bench hints`
+  hints/<task>.questions.json         interactive sweeps with `questions_per_interval`: {task, model, generated_at,
+                                      questions: [{id (q1, q2, ...), file, question, answer}]}, from
+                                      `subagents-bench questions` (`answer`: the reference answer)
+  src/<task>/                         `subagents-bench questions`: a shallow clone of the task's repository at the
+                                      ref its Dockerfile checks out (the source the questions are written from)
 ```
 
 The analysis loads only job dirs whose name does not start with `_` or `.`,
@@ -169,19 +174,48 @@ the subagents still running, dispatch budget left).
 
 ### `inbox.jsonl`: one delivery to the orchestrator (interactive episodes)
 
-Empty in batch episodes. One line per hint (user message) and per background
-subagent report, written when it is delivered, plus one per hint or report
+Empty in batch episodes. One line per scheduled user message (a bug hint, and
+with `interactive.replies` a question or a status check) and per background
+subagent report, written when it is delivered, plus one per message or report
 never delivered (the session ended first), written when the episode ends.
 
 | Field | Meaning |
 |---|---|
-| `kind` | `hint` or `report` |
-| `t_ready` | a hint: when it was sent (session start + `hint_index` x `interval_sec`); a report: when its subagent ended |
+| `kind` | `hint` (a bug), `question`, `status` (a status check) or `report` |
+| `t_ready` | a message: when it was sent (a bug: session start + `hint_index` x `interval_sec`; questions and status checks: docs/DESIGN.md, *Requests*); a report: when its subagent ended |
 | `t_delivered` | when it entered the orchestrator's conversation (before a step's LLM call, never after the last step); null if never delivered |
 | `step` | the orchestrator step whose LLM call saw it first (1 for hint 0, in the first message); null if never delivered |
-| `hint_index`, `subtask_id`, `target_files`, `f2p` | a hint's position and its SWE-sweep subtask: id, the files the reference fix changes, the hidden tests that fail before it (null for a report) |
+| `hint_index` | a message's 0-based position among the messages of its kind (bugs, questions, status checks); null for a report |
+| `subtask_id`, `target_files`, `f2p` | a bug's SWE-sweep subtask: id, the files the reference fix changes, the hidden tests that fail before it (null otherwise) |
 | `dispatch_id`, `agent_id`, `status` | a report's subagent and its dispatch status (null for a hint) |
-| `chars` | length of the hint text or of the full report |
+| `chars` | length of the hint or question text (0 for a status check) or of the full report |
+| `msg_id` | with `interactive.replies`: the message's id (1, 2, ... in sending order; what `reply` names); else null, and null for a report |
+| `urgent` | a bug marked urgent (`urgent_every`); false otherwise (absent in records written before it existed) |
+| `question_id`, `question`, `reference` | a question's id in `questions.json`, its text and the reference answer; null otherwise |
+
+### `replies.jsonl`: one `reply` call (interactive episodes with `interactive.replies`)
+
+Only valid calls (`to` a delivered message's id, non-empty `text`) are
+written; a rejected call is an errored tool record. Empty otherwise.
+
+| Field | Meaning |
+|---|---|
+| `t` | when it was sent: the time the user got it |
+| `step` | the orchestrator step |
+| `to` | the `msg_id` it answers |
+| `kind`, `hint_index` | that message's kind (`bug`, `question`, `status`: note `bug`, where the inbox says `hint`) and position |
+| `subtask_id`, `question_id` | that message's subtask (a bug) or question, else null |
+| `text` | the message to the user |
+| `eta_min` | minutes from now until the bug is fixed, as a float; null when not given or not a number in [0, 10^6) |
+| `done` | true when the call passed `done: true` (or `"true"`), else false |
+
+### `answers.json`: verdicts on the answers (`subagents-bench grade-answers`)
+
+Written after the run, for trials with questions; absent until then.
+`{judge_model, graded_at, answers: {msg_id (string): {correct, why}}}`: per
+question answered, the judge's verdict on its first reply against the
+reference (`correct` null when the judge's reply could not be read) and its
+one-sentence reason. Unanswered questions are not listed.
 
 ### `episode.json`: the episode
 
@@ -214,7 +248,8 @@ Interactive episodes add:
 |---|---|
 | `session_t0` | the session's start: hint k is sent at `session_t0` + k x `interval_sec` |
 | `hint_order_seed` | the seed of the subtasks' order: `order_seed` + round - 1 with `vary_order_by_round` (harbor runs) |
-| `n_hints`, `n_hints_delivered` | hints scheduled, and delivered before the session ended |
+| `n_hints`, `n_hints_delivered` | bug hints scheduled, and delivered before the session ended (questions and status checks not counted) |
+| `n_questions`, `n_replies` | questions scheduled (inbox records of kind `question`), and `reply` calls written |
 | `n_elided_results` | older tool outputs, subagent reports and reasoning replaced or dropped to stay within `max_context_chars` |
 | `end_kill` | `{ok, n_killed, error}` of killing the commands left running when the session ended (harbor runs only) |
 
@@ -319,7 +354,7 @@ heuristic (docs/DESIGN.md).
 | Columns | Meaning |
 |---|---|
 | keys, `valid`, `topology`, `spawn_mode`, `hint_detail`, `interval_sec` | the trial and its design (`spawn_mode` empty for a single agent) |
-| `hint_index`, `subtask_id`, `target_files` (`;`-joined), `n_target_files` | the hint and its subtask |
+| `hint_index`, `urgent`, `subtask_id`, `target_files` (`;`-joined), `n_target_files` | the hint (urgent: `urgent_every`) and its subtask |
 | `scope` | `interactive.scope`: `reported` (the session fixes the bugs the user sends) or `all` |
 | `shared_files` | one of its target files is also a target of an earlier hint's subtask (its touch and edit latencies can come from that subtask's work) |
 | `shares_any` | one of its target files is a target of any other hint's subtask |
@@ -361,6 +396,49 @@ task, while the agent starts up; it has the `first_*` columns).
 `condition`, `hint_index`, `n`, `{delivery,response,dispatch,touch,edit}_median_sec`
 (censored as above), `touch_before_next`, `hinted_fixed_frac`: whether the
 reaction slows as requests pile up.
+
+### `messages.csv`: one row per user message of an episode with `interactive.replies`
+
+Built by `analysis/requests.py` from `inbox.jsonl`, `replies.jsonl`,
+`answers.json` and the grader's verdicts. Every time is seconds after the
+message was sent (`t_ready`), empty when it never happened. Columns after a
+message's kind are filled only for that kind.
+
+| Columns | Meaning |
+|---|---|
+| keys, `valid` | the trial |
+| `msg_id`, `kind`, `index` | the message's id, `bug`, `question` or `status`, and its position among its kind |
+| `urgent` | a bug marked urgent |
+| `t_ready_sec`, `delivery_sec` | when it was sent after the session start; until it entered the conversation |
+| `n_replies` | replies naming its id |
+| `reply_sec` | a bug or question: until the first reply naming it (a question's answer); a status check: until the first reply of any kind sent after it |
+| `question_id`, `question`, `reference`, `answer` | a question, its reference answer, and the text of its first reply |
+| `correct` | the judge's verdict on that first reply (`answers.json`); false when never answered; empty when answered but not graded (or the verdict was unreadable) |
+| `subtask_id`, `fixed` | a bug's subtask and whether the grader counts it fixed (resolved, no visible regression; false without a verdict in a valid trial, empty in an invalid one) |
+| `eta_sec`, `eta_min` | the first reply with an estimate, and the estimate in minutes; it predicts done at `eta_sec + 60 x eta_min` |
+| `n_eta_updates` | replies with an estimate, the first included |
+| `done_sec` | the first reply with `done` |
+| `eta_log2_err` | log2(actual / predicted time from the estimate to done), each floored at 30 s; > 0 late; only when done came at or after the estimate |
+| `on_time` | done by the predicted time; false when never done and the session ran past it; empty when the session ended first, or without an estimate |
+| `claim_ok` | a done claim the grader confirms (`fixed`); empty without a done claim |
+| `urgent_first` | an urgent bug: of the earlier bugs still open (no done reply) when it was sent, the share it was said done before, never-done bugs counting as later; empty without an open earlier bug |
+
+### `requests.csv`: one row per condition with replies (valid trials only)
+
+| Columns | Meaning |
+|---|---|
+| `condition`, `n_episodes` | the condition and its valid episodes |
+| `n_questions`, `answered_frac` | questions sent, and the share with a reply |
+| `answer_median_sec`, `answered_60s`, `answered_180s` | `reply_sec` of questions: median counting no answer as infinitely late (NaN when more than half unanswered), and the share answered within 60 s and 180 s |
+| `n_graded_answers`, `correct_frac` | questions with a `correct` value (graded answers plus unanswered ones, which count false), and the share of them correct |
+| `n_bugs`, `fixed_frac` | bugs sent, and the share counted fixed |
+| `first_reply_median_sec` | censored median `reply_sec` of the bugs after the first |
+| `eta_given_frac`, `eta_median_sec`, `eta_min_median` | the share of bugs with an estimate; censored median `eta_sec` of the bugs after the first; median estimate in minutes |
+| `done_claimed_frac`, `claim_precision` | the share of bugs said done; of those, the share the grader confirms |
+| `eta_abs_log2_median`, `eta_log2_median` | median \|`eta_log2_err`\| (1: off by a factor of 2) and median signed error (> 0: late), over bugs said done after an estimate |
+| `on_time_frac` | the share on time of the bugs with a known `on_time` |
+| `n_status`, `status_reply_median_sec` | status checks sent, and the censored median of their `reply_sec` |
+| `n_urgent`, `urgent_first_frac` | urgent bugs, and the mean `urgent_first` over those with an open earlier bug |
 
 ### `summary.json`
 

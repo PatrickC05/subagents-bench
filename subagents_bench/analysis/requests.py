@@ -7,16 +7,18 @@ calls, so:
 
 - ``reply_sec``: until the first reply to the message (a question's answer; a bug's first reply);
 - a question's ``correct``: the judge's verdict on that first reply against the reference answer
-  (``subagents-bench grade-answers`` writes ``agent/answers.json``; missing until it ran, False
-  for a question never answered);
-- a bug's ``eta_sec`` and ``eta_min``: its first reply with an estimate, and the estimate;
-  ``done_sec``: its first reply with ``done``. The estimate predicts done at ``eta_sec + 60 *
-  eta_min``: ``eta_log2_err`` is log2(actual / predicted time from the estimate to done), for
-  bugs said done (> 0: late); ``on_time`` is done by the predicted time (None when the session
-  ended first); ``claim_ok`` is a done claim the grader confirms;
+  (``subagents-bench grade-answers`` writes ``agent/answers.json``; None until it ran and for a
+  question never answered: the table reports accuracy over answered and over asked questions);
+- a bug's ``eta_sec`` and ``eta_min``: its first estimate sent before it was said done, and the
+  estimate; ``done_sec``: its first reply with ``done``. The estimate predicts done at ``eta_sec +
+  60 * eta_min``: ``eta_log2_err`` is log2(actual / predicted time from the estimate to done) (> 0:
+  late; a 30 s floor on both), +inf for a bug never said done although the session ran past the
+  predicted time or ended for another reason than its deadline (the agent gave up), and None when
+  the deadline came first (censored); ``on_time`` is done by the predicted time, with the same
+  censoring; ``claim_ok`` is a done claim the grader confirms;
 - an urgent bug's ``urgent_first``: of the earlier bugs still open (not said done) when it was
   sent, the share it was said done before (never-done bugs count as later; None without one);
-- a status check's ``reply_sec``: until the first reply of any kind after it was sent.
+- a status check's ``reply_sec``: until the first reply of any kind after it was delivered.
 """
 
 from __future__ import annotations
@@ -51,6 +53,7 @@ def request_rows(t: Trial, keys: dict[str, Any], valid: bool) -> list[dict[str, 
     replies = sorted(r.get("replies", []), key=lambda x: x["t"])
     session_t0 = ep.get("session_t0", inbox[0]["t_ready"])
     t_end = ep.get("t_end") or max([x["t"] for x in replies] + [x["t_ready"] for x in inbox])
+    cut = ep.get("exit_reason") in ("deadline", "cancelled", None)  # observation cut short, not given up
     verdicts, visible_ok, _ = eval_subtasks(t.dir)
     answers = _answers(t)
     by_msg: dict[int, list[dict]] = {}
@@ -67,7 +70,7 @@ def request_rows(t: Trial, keys: dict[str, Any], valid: bool) -> list[dict[str, 
                "delivery_sec": None if m["t_delivered"] is None else m["t_delivered"] - t0,
                "n_replies": len(mine)}
         if kind == "status":
-            after = [x for x in replies if x["t"] >= t0]
+            after = [x for x in replies if m["t_delivered"] is not None and x["t"] >= m["t_delivered"]]
             row["reply_sec"] = after[0]["t"] - t0 if after else None
         else:
             row["reply_sec"] = mine[0]["t"] - t0 if mine else None
@@ -75,25 +78,26 @@ def request_rows(t: Trial, keys: dict[str, Any], valid: bool) -> list[dict[str, 
             a = answers.get(str(m["msg_id"])) or {}
             row.update(question_id=m.get("question_id"), question=m.get("question"), reference=m.get("reference"),
                        answer=mine[0]["text"] if mine else None,
-                       correct=False if not mine else a.get("correct"))
+                       correct=a.get("correct") if mine else None)
         if kind == "bug":
-            eta = next((x for x in mine if x["eta_min"] is not None), None)
             done = done_at.get(m["msg_id"])
+            ahead = [x for x in mine if x["eta_min"] is not None and not x["done"] and (done is None or x["t"] < done)]
+            eta = ahead[0] if ahead else None
             v = verdicts.get(m["subtask_id"])
             fixed = (bool(v.get("resolved")) and bool(visible_ok)) if v else (False if valid else None)
             row.update(subtask_id=m["subtask_id"], eta_sec=eta["t"] - t0 if eta else None,
                        eta_min=eta["eta_min"] if eta else None, done_sec=done - t0 if done else None,
-                       n_eta_updates=sum(1 for x in mine if x["eta_min"] is not None), fixed=fixed,
+                       n_estimates=len(ahead), fixed=fixed,
                        claim_ok=None if done is None or fixed is None else fixed)
             row["eta_log2_err"] = row["on_time"] = None
             if eta is not None:
                 due = eta["t"] + 60 * eta["eta_min"]
-                if done is not None and done >= eta["t"]:
+                if done is not None:
                     pred, actual = max(60 * eta["eta_min"], 30.0), max(done - eta["t"], 30.0)  # 30 s floor: no log of 0
                     row["eta_log2_err"] = math.log2(actual / pred)
                     row["on_time"] = done <= due
-                elif done is None and t_end > due:
-                    row["on_time"] = False
+                elif t_end > due or not cut:
+                    row["eta_log2_err"], row["on_time"] = math.inf, False
             row["urgent_first"] = None
             if m.get("urgent"):
                 earlier = [o for o in inbox if o["kind"] == "hint" and o["msg_id"] < m["msg_id"]
@@ -115,6 +119,19 @@ def _within(x: pd.Series, sec: float) -> float:
     return float((pd.to_numeric(x, errors="coerce").fillna(math.inf) <= sec).mean()) if len(x) else math.nan
 
 
+def _median(x: pd.Series) -> float:
+    """Median of the known values; +inf ones (never done) count, so it can be +inf."""
+    x = pd.to_numeric(x, errors="coerce").dropna().astype(float)
+    return float(np.median(x)) if len(x) else math.nan
+
+
+def _correct_of_asked(q: pd.DataFrame) -> float:
+    """Correct answers over every question asked; NaN while an answered question is ungraded."""
+    if not len(q) or "correct" not in q or (q["reply_sec"].notna() & q["correct"].isna()).any():
+        return math.nan
+    return float((q["correct"] == True).sum() / len(q))  # noqa: E712 (object column)
+
+
 def request_table(rows: pd.DataFrame) -> pd.DataFrame:
     """Per condition, over valid episodes: questions, bug estimates and done claims, status checks, urgency."""
     if rows.empty or not rows["valid"].astype(bool).any():
@@ -127,7 +144,8 @@ def request_table(rows: pd.DataFrame) -> pd.DataFrame:
                "answered_frac": _frac(q["reply_sec"].notna()), "answer_median_sec": _median_censored(q["reply_sec"]),
                "answered_60s": _within(q["reply_sec"], 60), "answered_180s": _within(q["reply_sec"], 180),
                "n_graded_answers": int(q["correct"].notna().sum()) if "correct" in q else 0,
-               "correct_frac": _frac(q["correct"]) if "correct" in q else math.nan,
+               "correct_of_answered": _frac(q["correct"]) if "correct" in q else math.nan,
+               "correct_of_asked": _correct_of_asked(q),
                "n_bugs": len(b), "fixed_frac": _frac(b["fixed"]) if "fixed" in b else math.nan,
                "first_reply_median_sec": _median_censored(later["reply_sec"]),
                "eta_given_frac": _frac(b["eta_sec"].notna()) if "eta_sec" in b else math.nan,
@@ -135,10 +153,10 @@ def request_table(rows: pd.DataFrame) -> pd.DataFrame:
                "eta_min_median": float(b["eta_min"].median()) if "eta_min" in b and b["eta_min"].notna().any() else math.nan,
                "done_claimed_frac": _frac(b["done_sec"].notna()) if "done_sec" in b else math.nan,
                "claim_precision": _frac(b["claim_ok"]) if "claim_ok" in b else math.nan,
-               "eta_abs_log2_median": float(b["eta_log2_err"].abs().median())
-               if "eta_log2_err" in b and b["eta_log2_err"].notna().any() else math.nan,
-               "eta_log2_median": float(b["eta_log2_err"].median())
-               if "eta_log2_err" in b and b["eta_log2_err"].notna().any() else math.nan,
+               "eta_abs_log2_median": _median(b["eta_log2_err"].abs()) if "eta_log2_err" in b else math.nan,
+               "eta_log2_median": _median(b["eta_log2_err"]) if "eta_log2_err" in b else math.nan,
+               "n_eta_never_done": int(np.isinf(pd.to_numeric(b["eta_log2_err"], errors="coerce")).sum())
+               if "eta_log2_err" in b else 0,
                "on_time_frac": _frac(b["on_time"]) if "on_time" in b else math.nan,
                "n_status": len(s), "status_reply_median_sec": _median_censored(s["reply_sec"]),
                "n_urgent": int(b["urgent"].sum()) if len(b) else 0,
