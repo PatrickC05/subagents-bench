@@ -381,3 +381,15 @@ def test_analyze_script(jobs, tmp_path):
     assert "[FAIL] delegation gate" in res.stdout and "figures:" in res.stdout
     assert sorted(p.stem for p in (tmp_path / "figures/both").glob("*.png")) == sorted(FIGURES)
     assert (tmp_path / "analysis/both/episodes.csv").is_file()
+
+
+def test_a_heredoc_saved_to_a_scratch_file_edits_nothing_it_lists():
+    """A subagent's ``cat << 'EOF' > /tmp/s.py`` lists repository paths as data: no edit of them
+    (the requests sweep's r1 pint manager session counted 4 false edits); a heredoc saved into a
+    repository file is still that file's edit."""
+    from subagents_bench.analysis.interactivity import tool_touches
+    scratch = {"name": "bash", "arguments": {"command": "cat << 'EOF' > /tmp/find.py\nfiles = ['pint/registry.py']\n"
+                                                        "open('pint/registry.py', 'w')\nEOF\npython /tmp/find.py"}}
+    assert tool_touches(scratch, ["pint/registry.py"]) == (False, False)
+    into = {"name": "bash", "arguments": {"command": "cat <<EOF > pint/registry.py\nx = 1\nEOF"}}
+    assert tool_touches(into, ["pint/registry.py"]) == (True, True)

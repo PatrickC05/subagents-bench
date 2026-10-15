@@ -114,6 +114,29 @@ def _writes(segment: str, path: str, basename_ok: bool) -> bool:
     return WRITE_RE.search(segment) is not None
 
 
+HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_]\w*)\1")
+
+
+def strip_data_heredocs(cmd: str) -> str:
+    """``cmd`` without the bodies of heredocs that ``cat``/``tee`` save to a file: data, not commands
+    (a scratch script ``cat <<'EOF' > /tmp/s.py`` listing repository paths edits none of them). The
+    header line stays, so ``cat <<EOF > pint/x.py`` still edits pint/x.py."""
+    lines, out, i = cmd.split("\n"), [], 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        i += 1
+        m = HEREDOC_RE.search(line)
+        if not m:
+            continue
+        before, after = re.split(r"&&|\|\||;|\||\(", line[:m.start()])[-1], line[m.end():]
+        if (re.match(r"\s*(?:cat|tee)\b", before) and "|" not in after
+                and (">" in before + after or before.strip().startswith("tee"))):
+            while i < len(lines) and lines[i].strip() != m.group(2):
+                i += 1  # the body; the terminator line is kept
+    return "\n".join(out)
+
+
 def tool_touches(tool: dict, files: list[str], basename_ok: set[str] | None = None) -> tuple[bool, bool]:
     """(touches, edits) one of ``files``; ``basename_ok``: the files a bare basename may stand for
     (default: all)."""
@@ -130,6 +153,7 @@ def tool_touches(tool: dict, files: list[str], basename_ok: set[str] | None = No
         cmd = args.get("command")
         if not isinstance(cmd, str):
             return False, False
+        cmd = strip_data_heredocs(cmd) if "<<" in cmd else cmd
         touched = edited = False
         for seg in segments(cmd):
             named = [f for f in files if names_file(seg, f, ok(f))]

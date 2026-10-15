@@ -24,8 +24,10 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 import tomllib
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -550,8 +552,11 @@ def _write_status(spec: Spec, status: str, t_start: float) -> None:
     (spec.jobs_dir / "sweep.json").write_text(json.dumps(doc, indent=2) + "\n")
 
 
-def run(spec: Spec, jobs: list[tuple[int, str]], dry_run: bool = False) -> int:
-    """Run the planned jobs in order (``dry_run``: print them); returns the exit code."""
+def run(spec: Spec, jobs: list[tuple[int, str]], dry_run: bool = False, jobs_at_once: int = 1) -> int:
+    """Run the planned jobs in order, ``jobs_at_once`` harbor jobs at a time (``dry_run``: print
+    them); returns the exit code. An abort or Ctrl-C stops every running job (each is rerun on
+    resume); the manifest records ``jobs_at_once`` per job, since sessions running side by side
+    share the machine and the provider."""
     configs_dir = spec.jobs_dir / "configs"
     say(f"Sweep {spec.name!r}: {len(jobs)} jobs x {len(spec.tasks)} tasks, jobs dir {_rel(spec.jobs_dir, spec.root)}")
     if dry_run:
@@ -573,15 +578,27 @@ def run(spec: Spec, jobs: list[tuple[int, str]], dry_run: bool = False) -> int:
     t_start = time.time()
     _write_status(spec, "running", t_start)
     models = sweep_models(spec)
-    code, n_failed = None, 0
-    for i, (r, cond) in enumerate(jobs, 1):
+    stop = threading.Event()  # an abort or Ctrl-C: the other running jobs stop too (they are rerun on resume)
+    interrupted = threading.Event()
+
+    def one(i: int, r: int, cond: str) -> tuple[str, int | None, str | None]:
+        try:
+            return one_job(i, r, cond)
+        except BaseException:
+            stop.set()  # the other running jobs stop now, not when the main thread reaches this one
+            raise
+
+    def one_job(i: int, r: int, cond: str) -> tuple[str, int | None, str | None]:
+        """Run one job -> (state, abort code or None, abort reason)."""
         job = job_name(spec, r, cond)
         job_dir, ids, prefix = spec.jobs_dir / job, {"job": job, "round": r, "condition": cond}, f"[{i}/{len(jobs)}] {job}"
         state, why = job_state(job_dir)
         if state == "complete":
             say(f"{prefix}: complete ({why}) -> skip")
             _log(spec, "skipped", **ids)
-            continue
+            return state, None, None
+        if stop.is_set():
+            return "absent", None, None
         if state != "absent":
             moved = _rel(move_aside(job_dir, spec.jobs_dir), spec.root)
             say(f"{prefix}: {state} ({why}) -> moved to {moved}")
@@ -591,31 +608,61 @@ def run(spec: Spec, jobs: list[tuple[int, str]], dry_run: bool = False) -> int:
         env = {**os.environ, "SUBAGENTS_BENCH_CONFIG": str(configs_dir / f"{cond}.yaml"),
                HINTS_DIR_ENV: str(hints_dir(spec))}
         try:
-            rc = run_job(harbor_cmd(spec, job), env, spec.root, watcher.poll)
-        except KeyboardInterrupt:
+            rc = run_job(harbor_cmd(spec, job), env, spec.root, lambda: watcher.poll() or stop.is_set())
+        except KeyboardInterrupt:  # one job at a time: the Ctrl-C reached this thread
+            interrupted.set()
+        if interrupted.is_set():
             say(f"{prefix}: interrupted; re-run the same command to resume")
             _log(spec, "interrupted", **ids)
-            code = 130
-            break
+            return "interrupted", 130, None
         watcher.poll()  # trials that finished after the last poll
         state, why = job_state(job_dir)
         say(f"{prefix}: harbor exit {rc}, {state} ({why}), {time.time() - t0:.0f}s")
-        _log(spec, "run", **ids, rc=rc, state=state, why=why, duration_sec=time.time() - t0)
-        if state == "absent" and rc != 0 and watcher.abort is None:
+        _log(spec, "run", **ids, rc=rc, state=state, why=why, duration_sec=time.time() - t0, jobs_at_once=jobs_at_once)
+        if state == "absent" and rc != 0 and watcher.abort is None and not stop.is_set():
             # harbor resolves the dataset online first: a dropped network kills it before the job dir exists
             say(f"{prefix}: harbor exited before creating the job: probing every model ...")
             failing = probe(models)
             if failing:
                 watcher.abort = f"harbor could not start {job}; models failing too: {'; '.join(failing)}"
+        code = reason = None
         if any(retry_reason(t) == "billing" for t in _trials(job_dir)):
             code, reason = 3, f"billing error in {job}: top up the Sail account"
         elif watcher.abort is not None:
             code, reason = 4, watcher.abort
         if code is not None:
+            stop.set()
             say(f"ABORT: {reason}. Re-run the same command later to resume (this job is rerun).")
             _log(spec, "abort", **ids, code=code, reason=reason)
-            break
-        n_failed += state != "complete"
+        return state, code, reason
+
+    code, n_failed, results = None, 0, []
+    if jobs_at_once == 1:
+        for i, (r, cond) in enumerate(jobs, 1):
+            results.append(one(i, r, cond))
+            if results[-1][1] is not None:
+                break
+    else:
+        pool = ThreadPoolExecutor(jobs_at_once, thread_name_prefix="job")
+        futures = [pool.submit(one, i, r, cond) for i, (r, cond) in enumerate(jobs, 1)]
+        try:
+            for f in futures:
+                results.append(f.result())
+        except BaseException as e:  # Ctrl-C, or a job thread's error: stop every running harbor first
+            if isinstance(e, KeyboardInterrupt):
+                interrupted.set()  # each running job stops its harbor and logs its interruption
+            stop.set()
+            pool.shutdown(wait=True, cancel_futures=True)
+            if not isinstance(e, KeyboardInterrupt):
+                _write_status(spec, "error", t_start)
+                _log(spec, "error", error=f"{type(e).__name__}: {e}"[:500])
+                raise
+            results = [f.result() for f in futures if f.done() and not f.cancelled() and f.exception() is None]
+        pool.shutdown(wait=True)
+    for state, c, _ in results:
+        if c == 130 or (code is None and c is not None):
+            code = c
+        n_failed += state not in ("complete", "interrupted") and c is None
     if code is None:
         code = 1 if n_failed else 0
     _write_status(spec, STATUS[code], t_start)

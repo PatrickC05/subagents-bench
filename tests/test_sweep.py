@@ -34,6 +34,7 @@ class Fake:
 
     def __init__(self, tmp: Path):
         self.log, self.modes = tmp / "harbor_calls.jsonl", tmp / "harbor_modes.json"
+        self.times = tmp / "harbor_times.jsonl"  # start/end of each harbor call
         self.failing: dict[str, str] = {}  # model -> error the probe reports
         self.pinged: list[str] = []
         self.set()
@@ -46,6 +47,15 @@ class Fake:
 
     def jobs(self) -> list[str]:
         return [c["argv"][c["argv"].index("--job-name") + 1] for c in self.calls()]
+
+    def most_at_once(self) -> int:
+        """The most harbor processes alive at the same time."""
+        events = sorted((e["t"], e["event"] == "start") for e in map(json.loads, self.times.read_text().splitlines()))
+        n = most = 0
+        for _, start in events:  # an end sorts before a start at the same time
+            n += 1 if start else -1
+            most = max(most, n)
+        return most
 
     def ping(self, m) -> str | None:
         self.pinged.append(m.model)
@@ -64,6 +74,7 @@ def fake(tmp_path, monkeypatch):
     f = Fake(tmp_path)
     monkeypatch.setenv("FAKE_HARBOR_LOG", str(f.log))
     monkeypatch.setenv("FAKE_HARBOR_MODES", str(f.modes))
+    monkeypatch.setenv("FAKE_HARBOR_TIMES", str(f.times))
     monkeypatch.setattr(sweep, "POLL_SEC", 0.05)
     monkeypatch.setattr(sweep, "ping", f.ping)
     monkeypatch.setattr(sweep, "harbor_bin", lambda: str(bin_dir / "harbor"))  # never the venv's real harbor
@@ -568,6 +579,121 @@ def test_interrupt_stops_harbor_and_exits_130(fake, spec):
     assert json.loads((spec.jobs_dir / "sweep.json").read_text())["status"] == "interrupted"
 
 
+# --- several jobs at once (--jobs-at-once) --------------------------------------------------------
+
+
+@pytest.fixture
+def spec4(tmp_path):
+    """2 conditions x 2 rounds: 4 jobs, so with 2 at once two are queued behind the first two."""
+    return sweep.load_spec(make_spec(tmp_path, rounds=2))
+
+
+def names(spec) -> list[str]:
+    return [sweep.job_name(spec, r, c) for r, c in sweep.plan(spec)]
+
+
+def go2(spec, **kw) -> int:
+    return sweep.run(spec, sweep.plan(spec, **kw), jobs_at_once=2)
+
+
+def test_two_jobs_at_once_run_every_job_then_resume_skips_them(fake, spec4):
+    jobs = names(spec4)
+    fake.set(**{j: "slow" for j in jobs})  # ~2 s each: they overlap
+    assert go2(spec4) == 0
+    assert sorted(fake.jobs()) == sorted(jobs) and fake.most_at_once() == 2
+    assert all(sweep.job_state(spec4.jobs_dir / j)[0] == "complete" for j in jobs)
+    runs = manifest(spec4)
+    assert [m["event"] for m in runs] == ["run"] * 4 and all(m["jobs_at_once"] == 2 for m in runs)
+    assert sorted(m["job"] for m in runs) == sorted(jobs)
+    assert json.loads((spec4.jobs_dir / "sweep.json").read_text())["status"] == "complete"
+    assert go2(spec4) == 0
+    assert len(fake.calls()) == 4 and [m["event"] for m in manifest(spec4)][4:] == ["skipped"] * 4
+
+
+def test_sequential_run_records_one_job_at_once(fake, spec):
+    assert go(spec) == 0 and fake.most_at_once() == 1
+    assert [m["jobs_at_once"] for m in manifest(spec)] == [1, 1]
+
+
+def test_provider_abort_in_one_job_stops_the_other_and_the_queue(fake, spec4, capsys):
+    a, b, *queued = names(spec4)
+    fake.set(**{a: "outage", b: "hang"})
+    fake.failing = {SUB_MODEL: "ProviderError: HTTP 503: no healthy upstream"}
+    t0 = time.monotonic()
+    assert go2(spec4) == 4
+    assert time.monotonic() - t0 < 20
+    assert sorted(fake.jobs()) == sorted([a, b])  # the queued jobs never started
+    assert (spec4.jobs_dir / a / "sigint").exists() and (spec4.jobs_dir / b / "sigint").exists()
+    m = manifest(spec4)
+    assert [(e["job"], e["code"]) for e in m if e["event"] == "abort"] == [(a, 4)]
+    assert {e["job"] for e in m if e["event"] == "run"} == {a, b}
+    assert not any(e["job"] in queued for e in m)
+    assert json.loads((spec4.jobs_dir / "sweep.json").read_text())["status"] == "aborted: provider outage"
+    out = capsys.readouterr().out
+    assert f"ABORT: provider failure in {a}/fix-git__t0" in out and out.count("ABORT:") == 1
+    fake.set()
+    fake.failing = {}
+    assert go2(spec4) == 0
+    assert sorted(fake.jobs()) == sorted([a, b, *names(spec4)])  # the stopped two rerun, the queued ones run
+    assert {p.name for p in (spec4.jobs_dir / "_partial").iterdir()} == {f"{a}.1", f"{b}.1"}
+    assert all(sweep.job_state(spec4.jobs_dir / j)[0] == "complete" for j in names(spec4))
+
+
+def test_billing_error_with_two_jobs_at_once_exits_3(fake, spec4, capsys):
+    a, b, *_ = names(spec4)
+    fake.set(**{a: "billing", b: "hang"})
+    t0 = time.monotonic()
+    assert go2(spec4) == 3
+    assert time.monotonic() - t0 < 20
+    assert sorted(fake.jobs()) == sorted([a, b]) and fake.pinged == []
+    assert (spec4.jobs_dir / b / "sigint").exists()  # the other running job was stopped
+    assert [(e["job"], e["code"]) for e in manifest(spec4) if e["event"] == "abort"] == [(a, 3)]
+    assert json.loads((spec4.jobs_dir / "sweep.json").read_text())["status"] == "aborted: billing error"
+    assert "ABORT: billing error" in capsys.readouterr().out
+
+
+def test_interrupt_with_two_jobs_at_once_stops_both_harbors_and_exits_130(fake, spec4):
+    a, b, *queued = names(spec4)
+    fake.set(**{a: "hang", b: "hang"})
+
+    def ctrl_c_once_both_run():
+        deadline = time.monotonic() + 15
+        while len(fake.calls()) < 2 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        time.sleep(0.3)  # both are in their poll loop
+        os.kill(os.getpid(), signal.SIGINT)
+
+    saved = signal.signal(signal.SIGINT, signal.default_int_handler)  # also when pytest runs with it ignored
+    threading.Thread(target=ctrl_c_once_both_run, daemon=True).start()
+    t0 = time.monotonic()
+    try:
+        assert go2(spec4) == 130
+    finally:
+        signal.signal(signal.SIGINT, saved)
+    assert time.monotonic() - t0 < 20
+    assert sorted(fake.jobs()) == sorted([a, b])
+    assert (spec4.jobs_dir / a / "sigint").exists() and (spec4.jobs_dir / b / "sigint").exists()
+    m = manifest(spec4)
+    assert sorted(e["job"] for e in m if e["event"] == "interrupted") == sorted([a, b])
+    assert not any(e["event"] in ("run", "abort") for e in m) and not any(e["job"] in queued for e in m)
+    assert all(c["pgid"] != os.getpgid(0) for c in fake.calls())
+    assert json.loads((spec4.jobs_dir / "sweep.json").read_text())["status"] == "interrupted"
+    fake.set()
+    assert go2(spec4) == 0  # resume: both are moved aside and rerun
+    assert {p.name for p in (spec4.jobs_dir / "_partial").iterdir()} == {f"{a}.1", f"{b}.1"}
+
+
+def test_cli_jobs_at_once(fake, tmp_path, capsys):
+    path = str(make_spec(tmp_path))
+    for bad in ("0", "-1"):
+        assert cli.main(["sweep", path, "--jobs-at-once", bad]) == 2
+        assert "--jobs-at-once must be at least 1" in capsys.readouterr().err
+    assert fake.calls() == []
+    assert cli.main(["sweep", path, "--jobs-at-once", "2"]) == 0 and len(fake.calls()) == 2
+    spec = sweep.load_spec(Path(path))
+    assert [m["jobs_at_once"] for m in manifest(spec)] == [2, 2]
+
+
 def test_sigterm_and_sighup_stop_the_sweep_like_ctrl_c(fake, tmp_path):
     saved = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGHUP)}
     try:
@@ -671,3 +797,30 @@ def test_cli_sweep_and_preflight(fake, tmp_path, monkeypatch, capsys):
     r = subprocess.run([sys.executable, "-m", "subagents_bench.cli", "sweep", "--help"], capture_output=True,
                        text=True, cwd=REPO)
     assert r.returncode == 0 and "--dry-run" in r.stdout and "--only" in r.stdout and "--rounds" in r.stdout
+
+
+def test_a_job_threads_error_stops_the_other_harbor_and_the_queue(fake, spec4, monkeypatch):
+    """With two jobs at once, an ordinary error in one job's thread (here the job's first status
+    line) stops the other running harbor, starts no queued job, records the error and re-raises."""
+    a, b, *queued = names(spec4)
+    fake.set(**{a: "hang", b: "hang"})
+    real_say = sweep.say
+
+    def say(msg):
+        if f"] {b}: running" in msg:
+            deadline = time.monotonic() + 15  # once a's harbor runs
+            while not fake.calls() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            time.sleep(0.3)
+            raise BrokenPipeError("the log pipe closed")
+        real_say(msg)
+
+    monkeypatch.setattr(sweep, "say", say)
+    t0 = time.monotonic()
+    with pytest.raises(BrokenPipeError):
+        go2(spec4)
+    assert time.monotonic() - t0 < 20
+    assert fake.jobs() == [a] and (spec4.jobs_dir / a / "sigint").exists()
+    m = manifest(spec4)
+    assert [e["event"] for e in m if e.get("job") in queued] == [] and m[-1]["event"] == "error"
+    assert json.loads((spec4.jobs_dir / "sweep.json").read_text())["status"] == "error"
