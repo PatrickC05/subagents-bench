@@ -1,0 +1,76 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792140462.982698,
+  "answers": {
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states it returns echo.NewHTTPError with http.StatusInternalServerError and the pooled value cast to error's message, matching the reference."
+    },
+    "9": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states it returns n and echo.ErrStatusRequestEntityTooLarge, matching the reference exactly."
+    },
+    "10": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that the default Skipper value is DefaultSkipper, matching the reference answer."
+    },
+    "16": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states config.Skipper is set to DefaultGzipConfig.Skipper, matching the reference."
+    },
+    "17": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that it panics with fmt.Errorf(\"echo: invalid body-limit=%s\", config.Limit), matching the reference exactly."
+    }
+  },
+  "replies": {
+    "3": [
+      {
+        "t": 1792138847.3722408,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states it returns echo.NewHTTPError with http.StatusInternalServerError and the pooled value cast to error's message, matching the reference."
+      }
+    ],
+    "9": [
+      {
+        "t": 1792139334.330525,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states it returns n and echo.ErrStatusRequestEntityTooLarge, matching the reference exactly."
+      }
+    ],
+    "10": [
+      {
+        "t": 1792139334.331545,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that the default Skipper value is DefaultSkipper, matching the reference answer."
+      }
+    ],
+    "16": [
+      {
+        "t": 1792139894.57899,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states config.Skipper is set to DefaultGzipConfig.Skipper, matching the reference."
+      }
+    ],
+    "17": [
+      {
+        "t": 1792139894.579795,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that it panics with fmt.Errorf(\"echo: invalid body-limit=%s\", config.Limit), matching the reference exactly."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

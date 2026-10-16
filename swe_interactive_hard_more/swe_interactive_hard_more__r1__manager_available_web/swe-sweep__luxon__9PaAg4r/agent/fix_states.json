@@ -1,0 +1,2003 @@
+{
+  "version": 1,
+  "trial": "swe_interactive_hard_more__r1__manager_available_web/swe-sweep__luxon__9PaAg4r",
+  "task": "swe-sweep__luxon",
+  "graded_at": 1792143592.402605,
+  "image": {
+    "dockerfile": "jobs/swe_interactive_hard_more/tasks/swe-sweep__luxon/tests/Dockerfile",
+    "tests_sha256": "9e191d3121c6d241040d46c4a167e07f16a01f5aa751cc8d0eb4e4e5feee4141",
+    "id": "im-HLh8ZwJzzZ9KCV1EeCN7AI"
+  },
+  "final_matches_verifier": true,
+  "mismatches": [],
+  "sent": [
+    "luxon-05032aa9bdd0",
+    "luxon-851dc45e86a0",
+    "luxon-5f239ae6b8f3",
+    "luxon-2067e91b61a0",
+    "luxon-8688e266d051",
+    "luxon-e125e09755fa"
+  ],
+  "states": [
+    {
+      "seq": 0,
+      "source": "snapshot",
+      "t": 1792141230.280641,
+      "patch": "snapshots/0000.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 19.418,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 39,
+      "source": "snapshot",
+      "t": 1792141626.375583,
+      "patch": "snapshots/0039.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 14.395,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 42,
+      "source": "snapshot",
+      "t": 1792141638.965975,
+      "patch": "snapshots/0042.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 14.091,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 46,
+      "source": "snapshot",
+      "t": 1792141645.4594612,
+      "patch": "snapshots/0046.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 14.78,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 47,
+      "source": "snapshot",
+      "t": 1792141655.6971269,
+      "patch": "snapshots/0047.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 14.413,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 49,
+      "source": "snapshot",
+      "t": 1792141657.140218,
+      "patch": "snapshots/0049.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 13.715,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 51,
+      "source": "snapshot",
+      "t": 1792141661.983391,
+      "patch": "snapshots/0051.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 13.929,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 55,
+      "source": "snapshot",
+      "t": 1792141671.220362,
+      "patch": "snapshots/0055.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 13.984,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 57,
+      "source": "snapshot",
+      "t": 1792141682.9878669,
+      "patch": "snapshots/0057.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 14.032,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 59,
+      "source": "snapshot",
+      "t": 1792141692.1274931,
+      "patch": "snapshots/0059.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 13.972,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 60,
+      "source": "snapshot",
+      "t": 1792141695.9951732,
+      "patch": "snapshots/0060.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 13.936,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 61,
+      "source": "snapshot",
+      "t": 1792141704.9091148,
+      "patch": "snapshots/0061.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 13.886,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 65,
+      "source": "snapshot",
+      "t": 1792141720.785334,
+      "patch": "snapshots/0065.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 13.774,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 67,
+      "source": "snapshot",
+      "t": 1792141731.5016692,
+      "patch": "snapshots/0067.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 13.754,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 177,
+      "source": "snapshot",
+      "t": 1792142581.325359,
+      "patch": "snapshots/0177.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 14.147,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 178,
+      "source": "snapshot",
+      "t": 1792142581.434669,
+      "patch": "snapshots/0178.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 14.161,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 2,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 179,
+      "source": "snapshot",
+      "t": 1792142596.2771351,
+      "patch": "snapshots/0179.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 13.859,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 2,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 181,
+      "source": "snapshot",
+      "t": 1792142606.282836,
+      "patch": "snapshots/0181.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 14.789,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 2,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 183,
+      "source": "snapshot",
+      "t": 1792142613.698279,
+      "patch": "snapshots/0183.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 14.228,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 2,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 184,
+      "source": "snapshot",
+      "t": 1792142616.223222,
+      "patch": "snapshots/0184.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 13.801,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 2,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 185,
+      "source": "snapshot",
+      "t": 1792142620.905683,
+      "patch": "snapshots/0185.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 13.622,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 2,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 189,
+      "source": "snapshot",
+      "t": 1792142628.148113,
+      "patch": "snapshots/0189.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 13.666,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 2,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 190,
+      "source": "snapshot",
+      "t": 1792142631.181041,
+      "patch": "snapshots/0190.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 13.783,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 2,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 197,
+      "source": "snapshot",
+      "t": 1792142644.036902,
+      "patch": "snapshots/0197.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 13.9,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 2,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 198,
+      "source": "snapshot",
+      "t": 1792142654.881035,
+      "patch": "snapshots/0198.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 13.877,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 2,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 203,
+      "source": "snapshot",
+      "t": 1792142670.520375,
+      "patch": "snapshots/0203.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 13.769,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 2,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 225,
+      "source": "snapshot",
+      "t": 1792142800.525323,
+      "patch": "snapshots/0225.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 13.867,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 2,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 233,
+      "source": "snapshot",
+      "t": 1792142837.862782,
+      "patch": "snapshots/0233.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 13.701,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 2,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 235,
+      "source": "snapshot",
+      "t": 1792142849.6852071,
+      "patch": "snapshots/0235.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 13.417,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 2,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 242,
+      "source": "snapshot",
+      "t": 1792142921.704581,
+      "patch": "snapshots/0242.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 14.266,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 2,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 243,
+      "source": "snapshot",
+      "t": 1792142921.827789,
+      "patch": "snapshots/0243.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 14.525,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 2,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 244,
+      "source": "snapshot",
+      "t": 1792142921.946476,
+      "patch": "snapshots/0244.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 14.63,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 2,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 247,
+      "source": "snapshot",
+      "t": 1792142937.62926,
+      "patch": "snapshots/0247.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 13.747,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 2,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 249,
+      "source": "snapshot",
+      "t": 1792142947.336879,
+      "patch": "snapshots/0249.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 13.638,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 2,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 255,
+      "source": "snapshot",
+      "t": 1792142978.826339,
+      "patch": "snapshots/0255.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 13.482,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 2,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": null,
+      "source": "final",
+      "t": 1792143030.4001641,
+      "patch": "../artifacts/logs/artifacts/model.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 13.373,
+      "rerun_duration_s": null,
+      "bugs": {
+        "luxon-05032aa9bdd0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-851dc45e86a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-5f239ae6b8f3": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-2067e91b61a0": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-8688e266d051": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "luxon-e125e09755fa": {
+          "status": "fail",
+          "n_passed": 2,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    }
+  ]
+}

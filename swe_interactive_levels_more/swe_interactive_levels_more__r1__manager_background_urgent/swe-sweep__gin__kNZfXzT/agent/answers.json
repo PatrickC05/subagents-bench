@@ -1,0 +1,102 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792142606.1773329,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that JSON.Render panics with the error returned by WriteJSON, matching the reference."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states it returns false and ErrMultiFileHeaderLenInvalid, matching the reference answer."
+    },
+    "5": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states it stores the last value, v[len(v)-1], matching the reference."
+    },
+    "7": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "It states the empty string with no test.v flag falls back to DebugMode, setting ginMode = debugCode and modeName to the debug value."
+    },
+    "9": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states it returns (false, ErrMultiFileHeader), matching the reference answer."
+    },
+    "10": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that the source function returns the package-level dunno slice containing \"???\", matching the reference."
+    },
+    "21": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states ValidateStruct returns nil for a nil object, matching the reference."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792140768.762764,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that JSON.Render panics with the error returned by WriteJSON, matching the reference."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792140768.763296,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states it returns false and ErrMultiFileHeaderLenInvalid, matching the reference answer."
+      }
+    ],
+    "5": [
+      {
+        "t": 1792140768.763602,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states it stores the last value, v[len(v)-1], matching the reference."
+      }
+    ],
+    "7": [
+      {
+        "t": 1792140768.7638028,
+        "verdict": "correct",
+        "correct": true,
+        "why": "It states the empty string with no test.v flag falls back to DebugMode, setting ginMode = debugCode and modeName to the debug value."
+      }
+    ],
+    "9": [
+      {
+        "t": 1792140768.763989,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states it returns (false, ErrMultiFileHeader), matching the reference answer."
+      }
+    ],
+    "10": [
+      {
+        "t": 1792140768.764179,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that the source function returns the package-level dunno slice containing \"???\", matching the reference."
+      }
+    ],
+    "21": [
+      {
+        "t": 1792141469.323224,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states ValidateStruct returns nil for a nil object, matching the reference."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

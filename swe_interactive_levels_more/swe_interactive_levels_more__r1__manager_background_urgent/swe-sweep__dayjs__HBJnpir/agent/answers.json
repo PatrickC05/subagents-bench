@@ -1,0 +1,141 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792142589.572368,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the ordinal function is `n => n` and returns the number unchanged, matching the reference."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states weekStart is 1 in src/locale/my.js, matching the reference answer."
+    },
+    "5": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that `ordinal` is `n => n` and returns the number unchanged, matching the reference exactly."
+    },
+    "9": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that formats.L in bo.js is 'DD/MM/YYYY', matching the reference answer."
+    },
+    "12": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply correctly states that plural('\u043c\u0438\u043d\u0443\u0442\u0430_\u043c\u0438\u043d\u0443\u0442\u044b_\u043c\u0438\u043d\u0443\u0442', 22) returns '\u043c\u0438\u043d\u0443\u0442\u044b' and gives the matching Russian plural rule reasoning."
+    },
+    "14": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that formats.LT is 'a h:mm', matching the reference answer."
+    },
+    "16": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that relativeTimeWithPlural returns '\u043c\u0438\u043d\u0443\u0442\u0430' for key 'm' with withoutSuffix true, matching the reference."
+    },
+    "17": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that `ordinal` is `n => n` and returns the number unchanged, matching the reference."
+    },
+    "19": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the same value for formats.LT as the reference answer, 'A h:mm \u09b8\u09ae\u09af\u09bc'."
+    },
+    "21": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that weekStart is assigned 1, matching the reference answer."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792140008.368892,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the ordinal function is `n => n` and returns the number unchanged, matching the reference."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792140200.452744,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states weekStart is 1 in src/locale/my.js, matching the reference answer."
+      }
+    ],
+    "5": [
+      {
+        "t": 1792140385.630124,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that `ordinal` is `n => n` and returns the number unchanged, matching the reference exactly."
+      }
+    ],
+    "9": [
+      {
+        "t": 1792140493.0113301,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that formats.L in bo.js is 'DD/MM/YYYY', matching the reference answer."
+      }
+    ],
+    "12": [
+      {
+        "t": 1792141160.192214,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply correctly states that plural('\u043c\u0438\u043d\u0443\u0442\u0430_\u043c\u0438\u043d\u0443\u0442\u044b_\u043c\u0438\u043d\u0443\u0442', 22) returns '\u043c\u0438\u043d\u0443\u0442\u044b' and gives the matching Russian plural rule reasoning."
+      }
+    ],
+    "14": [
+      {
+        "t": 1792141160.192041,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that formats.LT is 'a h:mm', matching the reference answer."
+      }
+    ],
+    "16": [
+      {
+        "t": 1792141160.191864,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that relativeTimeWithPlural returns '\u043c\u0438\u043d\u0443\u0442\u0430' for key 'm' with withoutSuffix true, matching the reference."
+      }
+    ],
+    "17": [
+      {
+        "t": 1792141160.1916769,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that `ordinal` is `n => n` and returns the number unchanged, matching the reference."
+      }
+    ],
+    "19": [
+      {
+        "t": 1792141160.191426,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the same value for formats.LT as the reference answer, 'A h:mm \u09b8\u09ae\u09af\u09bc'."
+      }
+    ],
+    "21": [
+      {
+        "t": 1792141305.015688,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that weekStart is assigned 1, matching the reference answer."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

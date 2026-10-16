@@ -1,0 +1,167 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792135543.6058729,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that prompt re-raises click.exceptions.Abort on Ctrl+C or EOF, matching the reference."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that the except branch assigns fs_enc = \"ascii\", matching the reference."
+    },
+    "5": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states RuntimeError is raised with a message built from the joined extra list, matching the reference."
+    },
+    "7": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that the sentinel `_flag_needs_value` is returned, matching the reference answer."
+    },
+    "9": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that `style` raises `TypeError` with the message `Unknown color {fg!r}`, matching the reference."
+    },
+    "10": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states `echo` is imported from `.utils`, matching the reference answer."
+    },
+    "12": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the exact message returned, matching the reference answer."
+    },
+    "14": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that each item is passed through repr() and joined with \" / \", matching the reference."
+    },
+    "16": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that resolve_color_default returns the color argument unchanged when it is not None, matching the reference."
+    },
+    "17": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that get_current_context(silent=True) returns None when there is no active context, matching the reference."
+    },
+    "19": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states __version__ is \"8.0.1\", matching the reference answer."
+    },
+    "21": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the same exception and message as the reference answer."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792133356.4621718,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that prompt re-raises click.exceptions.Abort on Ctrl+C or EOF, matching the reference."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792133435.6734972,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that the except branch assigns fs_enc = \"ascii\", matching the reference."
+      }
+    ],
+    "5": [
+      {
+        "t": 1792133609.175415,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states RuntimeError is raised with a message built from the joined extra list, matching the reference."
+      }
+    ],
+    "7": [
+      {
+        "t": 1792133688.507303,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that the sentinel `_flag_needs_value` is returned, matching the reference answer."
+      }
+    ],
+    "9": [
+      {
+        "t": 1792133838.255842,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that `style` raises `TypeError` with the message `Unknown color {fg!r}`, matching the reference."
+      }
+    ],
+    "10": [
+      {
+        "t": 1792133954.963468,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states `echo` is imported from `.utils`, matching the reference answer."
+      }
+    ],
+    "12": [
+      {
+        "t": 1792134094.037736,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the exact message returned, matching the reference answer."
+      }
+    ],
+    "14": [
+      {
+        "t": 1792134171.571328,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that each item is passed through repr() and joined with \" / \", matching the reference."
+      }
+    ],
+    "16": [
+      {
+        "t": 1792134313.026011,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that resolve_color_default returns the color argument unchanged when it is not None, matching the reference."
+      }
+    ],
+    "17": [
+      {
+        "t": 1792134400.896977,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that get_current_context(silent=True) returns None when there is no active context, matching the reference."
+      }
+    ],
+    "19": [
+      {
+        "t": 1792134560.117461,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states __version__ is \"8.0.1\", matching the reference answer."
+      }
+    ],
+    "21": [
+      {
+        "t": 1792134681.510761,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the same exception and message as the reference answer."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

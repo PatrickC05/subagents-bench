@@ -1,0 +1,128 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792141897.233572,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that JSON.Render panics with the error returned by WriteJSON, matching the reference."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states it returns false with ErrMultiFileHeaderLenInvalid, matching the reference."
+    },
+    "5": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that the last value of the slice is stored, matching the reference answer."
+    },
+    "7": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the same fallback behavior, and modeName = \"debug\" is equivalent to modeName = DebugMode."
+    },
+    "9": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states it returns false and ErrMultiFileHeader, matching the reference answer."
+    },
+    "10": {
+      "correct": false,
+      "verdict": "wrong",
+      "why": "The reply claims source returns an empty string, but the reference states it returns dunno, i.e. []byte(\"???\")."
+    },
+    "12": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states Mode() returns the package-level modeName variable, the current mode string, matching the reference."
+    },
+    "16": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the tag name is \"binding\", matching the reference answer."
+    },
+    "17": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that the Prefix is written only when the marshaled JSON bytes start with \"[\" and end with \"]\" (an array), matching the reference."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792140901.9695108,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that JSON.Render panics with the error returned by WriteJSON, matching the reference."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792140901.96981,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states it returns false with ErrMultiFileHeaderLenInvalid, matching the reference."
+      }
+    ],
+    "5": [
+      {
+        "t": 1792140901.970005,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that the last value of the slice is stored, matching the reference answer."
+      }
+    ],
+    "7": [
+      {
+        "t": 1792140901.970176,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the same fallback behavior, and modeName = \"debug\" is equivalent to modeName = DebugMode."
+      }
+    ],
+    "9": [
+      {
+        "t": 1792140901.970338,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states it returns false and ErrMultiFileHeader, matching the reference answer."
+      }
+    ],
+    "10": [
+      {
+        "t": 1792140901.970546,
+        "verdict": "wrong",
+        "correct": false,
+        "why": "The reply claims source returns an empty string, but the reference states it returns dunno, i.e. []byte(\"???\")."
+      }
+    ],
+    "12": [
+      {
+        "t": 1792140901.970709,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states Mode() returns the package-level modeName variable, the current mode string, matching the reference."
+      }
+    ],
+    "16": [
+      {
+        "t": 1792140968.667883,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the tag name is \"binding\", matching the reference answer."
+      }
+    ],
+    "17": [
+      {
+        "t": 1792141005.670285,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that the Prefix is written only when the marshaled JSON bytes start with \"[\" and end with \"]\" (an array), matching the reference."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

@@ -1,0 +1,154 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792135510.196397,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that prompt catches KeyboardInterrupt/EOFError and raises click.exceptions.Abort, matching the reference."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that fs_enc is set to \"ascii\", matching the reference answer."
+    },
+    "5": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states RuntimeError is raised with a message built by joining extra with two newlines, matching the reference."
+    },
+    "9": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that `style` raises a `TypeError` with the message `Unknown color {fg!r}`, matching the reference."
+    },
+    "10": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that `echo` is imported from the `.utils` module, matching the reference answer."
+    },
+    "12": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the same returned message and formatting as the reference."
+    },
+    "14": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the same return expression as the reference: `\" / \".join(repr(x) for x in param_hint)`."
+    },
+    "16": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that resolve_color_default returns the color argument unchanged when it is not None, matching the reference."
+    },
+    "17": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that get_current_context(silent=True) returns None when there is no active context, matching the reference."
+    },
+    "19": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states __version__ is \"8.0.1\", matching the reference answer."
+    },
+    "21": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that `_unpack_args` raises `TypeError(\"Cannot have two nargs < 0\")`, matching the reference exactly."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792133399.383051,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that prompt catches KeyboardInterrupt/EOFError and raises click.exceptions.Abort, matching the reference."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792133426.261502,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that fs_enc is set to \"ascii\", matching the reference answer."
+      }
+    ],
+    "5": [
+      {
+        "t": 1792133661.537042,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states RuntimeError is raised with a message built by joining extra with two newlines, matching the reference."
+      }
+    ],
+    "9": [
+      {
+        "t": 1792133857.571311,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that `style` raises a `TypeError` with the message `Unknown color {fg!r}`, matching the reference."
+      }
+    ],
+    "10": [
+      {
+        "t": 1792133931.2206788,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that `echo` is imported from the `.utils` module, matching the reference answer."
+      }
+    ],
+    "12": [
+      {
+        "t": 1792134089.338751,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the same returned message and formatting as the reference."
+      }
+    ],
+    "14": [
+      {
+        "t": 1792134243.602187,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the same return expression as the reference: `\" / \".join(repr(x) for x in param_hint)`."
+      }
+    ],
+    "16": [
+      {
+        "t": 1792134352.679422,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that resolve_color_default returns the color argument unchanged when it is not None, matching the reference."
+      }
+    ],
+    "17": [
+      {
+        "t": 1792134425.2680588,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that get_current_context(silent=True) returns None when there is no active context, matching the reference."
+      }
+    ],
+    "19": [
+      {
+        "t": 1792134574.6019359,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states __version__ is \"8.0.1\", matching the reference answer."
+      }
+    ],
+    "21": [
+      {
+        "t": 1792134672.101226,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that `_unpack_args` raises `TypeError(\"Cannot have two nargs < 0\")`, matching the reference exactly."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

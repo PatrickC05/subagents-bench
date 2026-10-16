@@ -1,0 +1,139 @@
+{
+  "episode_id": "c2de3f7e58dc",
+  "condition": "manager_available_web",
+  "topology": "subagents",
+  "strategy": "parallel",
+  "scope": "hard",
+  "orchestrator_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "subagent_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "task_name": "swe-sweep__gin",
+  "trial_name": "swe-sweep__gin__4YsqnY4",
+  "git_commit": "89fb86eb73941cf720af881eceae6e735d63cb28",
+  "config": {
+    "name": "manager_available_web",
+    "orchestrator": {
+      "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "completion_window": "balanced",
+      "temperature": 0.7,
+      "max_output_tokens": 32768,
+      "max_retries": 4,
+      "retry_budget_sec": 120.0,
+      "request_timeout_sec": 180.0,
+      "price_in": 0.07,
+      "price_cache_read": 0.005,
+      "price_out": 0.22
+    },
+    "topology": "subagents",
+    "subagent": {
+      "model": null,
+      "strategy": "parallel",
+      "scope": "hard",
+      "max_concurrent": 60,
+      "max_dispatches": 60,
+      "max_steps": 2000,
+      "max_output_chars": 12000,
+      "delegation_hint": false,
+      "availability_hint": true,
+      "owner_hint": false,
+      "max_children": 0,
+      "spawn_mode": "background",
+      "stop_tool": false,
+      "arbiter": {
+        "n_candidates": 3,
+        "debate_rounds": 1,
+        "confidence_threshold": 0.8
+      }
+    },
+    "budget": {
+      "orchestrator_steps": 2000,
+      "command_timeout_sec": 600,
+      "max_command_timeout_sec": 1800
+    },
+    "tools": {
+      "max_output_chars": 12000,
+      "orchestrator_tools": [
+        "read_file",
+        "list_dir",
+        "search"
+      ]
+    },
+    "interactive": {
+      "wall_clock_sec": 1800,
+      "interval_sec": 1200,
+      "max_hints": 6,
+      "hint_detail": "symptom",
+      "bundle": 3,
+      "order_seed": 0,
+      "vary_order_by_round": false,
+      "scope": "reported",
+      "session_note": null,
+      "end_when_idle": true,
+      "max_context_chars": 400000,
+      "replies": true,
+      "questions_per_interval": 0,
+      "status_every": 0,
+      "urgent_every": 0,
+      "require_eta": true,
+      "change_of_plan": [],
+      "snapshots": true,
+      "snapshot_every_sec": 15.0,
+      "interrupt": false,
+      "interrupt_min_sec": 5.0,
+      "interrupt_max_in_row": 3
+    }
+  },
+  "t_start": 1792141230.628356,
+  "exit_reason": "deadline",
+  "hint_order_seed": 0,
+  "session_t0": 1792141230.629208,
+  "n_elided_results": 0,
+  "t_end": 1792143030.841546,
+  "wall_clock_sec": 1800.2131900787354,
+  "error": null,
+  "orchestrator_steps": 29,
+  "spawn_calls": 9,
+  "dispatches": 9,
+  "arbitrations": 0,
+  "tokens_by_role": {
+    "orchestrator": {
+      "prompt": 866498,
+      "cached": 799232,
+      "completion": 46512,
+      "reasoning": 37607
+    },
+    "subagent": {
+      "prompt": 2399436,
+      "cached": 2021376,
+      "completion": 122220,
+      "reasoning": 85446
+    },
+    "arbiter": {
+      "prompt": 0,
+      "cached": 0,
+      "completion": 0,
+      "reasoning": 0
+    },
+    "debate": {
+      "prompt": 0,
+      "cached": 0,
+      "completion": 0,
+      "reasoning": 0
+    }
+  },
+  "n_calls": 188,
+  "n_provider_errors": 0,
+  "n_interrupts": 0,
+  "n_stream_repairs": 0,
+  "cancel_kill": null,
+  "reward": null,
+  "resolved": null,
+  "n_hints": 6,
+  "n_hints_delivered": 6,
+  "n_questions": 0,
+  "n_replies": 13,
+  "end_kill": {
+    "ok": true,
+    "n_killed": 0,
+    "error": null
+  }
+}

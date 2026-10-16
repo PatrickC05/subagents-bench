@@ -1,0 +1,37 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792142112.996182,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that JSON.Render panics with the error via panic(err), matching the reference."
+    },
+    "5": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that setFormMap stores the last value, v[len(v)-1], matching the reference."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792140264.9509351,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that JSON.Render panics with the error via panic(err), matching the reference."
+      }
+    ],
+    "5": [
+      {
+        "t": 1792140788.427667,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that setFormMap stores the last value, v[len(v)-1], matching the reference."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

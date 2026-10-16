@@ -1,0 +1,2113 @@
+{
+  "version": 1,
+  "trial": "swe_interactive_hard__r1__manager_background_symptom/swe-sweep__echo__6GHUKbL",
+  "task": "swe-sweep__echo",
+  "graded_at": 1792140981.2617228,
+  "image": {
+    "dockerfile": "jobs/swe_interactive_hard/tasks/swe-sweep__echo/tests/Dockerfile",
+    "tests_sha256": "6d7ce2d8d6888008c8499bc87dbae5d4e9c2f568df4ebb7f77f5e7895f9aefe3",
+    "id": "im-GWhq9CDtO0e4sxVqm6cbJk"
+  },
+  "final_matches_verifier": true,
+  "mismatches": [],
+  "sent": [
+    "echo-0508b348e5e8",
+    "echo-c84540d03771",
+    "echo-5fe899e9002a",
+    "echo-91d2b5077dbf",
+    "echo-b5ecaf8d2018",
+    "echo-5910c0014885"
+  ],
+  "states": [
+    {
+      "seq": 0,
+      "source": "snapshot",
+      "t": 1792138848.8489048,
+      "patch": "snapshots/0000.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 9.812,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 16,
+      "source": "snapshot",
+      "t": 1792138982.662076,
+      "patch": "snapshots/0016.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 7.521,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 17,
+      "source": "snapshot",
+      "t": 1792138982.796,
+      "patch": "snapshots/0017.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 7.507,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 29,
+      "source": "snapshot",
+      "t": 1792139010.337278,
+      "patch": "snapshots/0029.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 6.771,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 30,
+      "source": "snapshot",
+      "t": 1792139013.466174,
+      "patch": "snapshots/0030.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 7.122,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 46,
+      "source": "snapshot",
+      "t": 1792139103.860588,
+      "patch": "snapshots/0046.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 7.071,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 47,
+      "source": "snapshot",
+      "t": 1792139118.944185,
+      "patch": "snapshots/0047.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 6.829,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 52,
+      "source": "snapshot",
+      "t": 1792139155.6063738,
+      "patch": "snapshots/0052.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 6.703,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 103,
+      "source": "snapshot",
+      "t": 1792139865.341366,
+      "patch": "snapshots/0103.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 10.004,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 105,
+      "source": "snapshot",
+      "t": 1792139871.158775,
+      "patch": "snapshots/0105.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 9.903,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 111,
+      "source": "snapshot",
+      "t": 1792139887.4949389,
+      "patch": "snapshots/0111.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 6.938,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 112,
+      "source": "snapshot",
+      "t": 1792139892.5046751,
+      "patch": "snapshots/0112.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 6.729,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 113,
+      "source": "snapshot",
+      "t": 1792139893.003511,
+      "patch": "snapshots/0113.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 7.187,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 114,
+      "source": "snapshot",
+      "t": 1792139897.719867,
+      "patch": "snapshots/0114.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 6.813,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 115,
+      "source": "snapshot",
+      "t": 1792139899.185944,
+      "patch": "snapshots/0115.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 6.809,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 116,
+      "source": "snapshot",
+      "t": 1792139904.5421739,
+      "patch": "snapshots/0116.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 6.715,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 123,
+      "source": "snapshot",
+      "t": 1792139921.380772,
+      "patch": "snapshots/0123.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 6.863,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 127,
+      "source": "snapshot",
+      "t": 1792139947.633922,
+      "patch": "snapshots/0127.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 6.66,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 170,
+      "source": "snapshot",
+      "t": 1792140423.9910588,
+      "patch": "snapshots/0170.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 7.46,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 1,
+          "n_failed": 2,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 171,
+      "source": "snapshot",
+      "t": 1792140424.669539,
+      "patch": "snapshots/0171.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 10.108,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 3,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 174,
+      "source": "snapshot",
+      "t": 1792140430.7557771,
+      "patch": "snapshots/0174.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 10.094,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 3,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 175,
+      "source": "snapshot",
+      "t": 1792140430.869499,
+      "patch": "snapshots/0175.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 10.071,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 3,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 176,
+      "source": "snapshot",
+      "t": 1792140431.848753,
+      "patch": "snapshots/0176.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 6.86,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 3,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 178,
+      "source": "snapshot",
+      "t": 1792140437.36221,
+      "patch": "snapshots/0178.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 10.283,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 3,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 179,
+      "source": "snapshot",
+      "t": 1792140437.5244899,
+      "patch": "snapshots/0179.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 10.01,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 3,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 180,
+      "source": "snapshot",
+      "t": 1792140437.665644,
+      "patch": "snapshots/0180.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 10.088,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 3,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 181,
+      "source": "snapshot",
+      "t": 1792140437.8691032,
+      "patch": "snapshots/0181.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 10.119,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 3,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 183,
+      "source": "snapshot",
+      "t": 1792140441.802868,
+      "patch": "snapshots/0183.patch",
+      "applied": true,
+      "visible_ok": false,
+      "error": null,
+      "duration_s": 3.824,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "unknown",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": "targeted tests errored (collection or build failure): middleware::<build>",
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "unknown",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": "targeted tests errored (collection or build failure): .::<build>",
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "unknown",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": "targeted tests errored (collection or build failure): .::<build>",
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "unknown",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": "targeted tests errored (collection or build failure): .::<build>",
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "unknown",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": "targeted tests errored (collection or build failure): .::<build>",
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "unknown",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": "targeted tests errored (collection or build failure): middleware::<build>",
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 184,
+      "source": "snapshot",
+      "t": 1792140441.933703,
+      "patch": "snapshots/0184.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 10.107,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 3,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 192,
+      "source": "snapshot",
+      "t": 1792140475.667541,
+      "patch": "snapshots/0192.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 9.502,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 3,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 193,
+      "source": "snapshot",
+      "t": 1792140483.669266,
+      "patch": "snapshots/0193.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 6.869,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 3,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 195,
+      "source": "snapshot",
+      "t": 1792140494.54058,
+      "patch": "snapshots/0195.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 6.623,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 3,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 203,
+      "source": "snapshot",
+      "t": 1792140507.472533,
+      "patch": "snapshots/0203.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 6.76,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 3,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 205,
+      "source": "snapshot",
+      "t": 1792140511.2314508,
+      "patch": "snapshots/0205.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 6.759,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 3,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 210,
+      "source": "snapshot",
+      "t": 1792140532.208042,
+      "patch": "snapshots/0210.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 9.377,
+      "rerun_duration_s": 2.203,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 3,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": "fail"
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 211,
+      "source": "snapshot",
+      "t": 1792140534.252241,
+      "patch": "snapshots/0211.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 6.859,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 3,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": 219,
+      "source": "snapshot",
+      "t": 1792140612.4361222,
+      "patch": "snapshots/0219.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 6.715,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 3,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    },
+    {
+      "seq": null,
+      "source": "final",
+      "t": 1792140649.001782,
+      "patch": "../artifacts/logs/artifacts/model.patch",
+      "applied": true,
+      "visible_ok": true,
+      "error": null,
+      "duration_s": 6.963,
+      "rerun_duration_s": null,
+      "bugs": {
+        "echo-0508b348e5e8": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-c84540d03771": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5fe899e9002a": {
+          "status": "fail",
+          "n_passed": 813,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-91d2b5077dbf": {
+          "status": "fail",
+          "n_passed": 3,
+          "n_failed": 3,
+          "error": null,
+          "rerun": null
+        },
+        "echo-b5ecaf8d2018": {
+          "status": "pass",
+          "n_passed": 1,
+          "n_failed": 0,
+          "error": null,
+          "rerun": null
+        },
+        "echo-5910c0014885": {
+          "status": "fail",
+          "n_passed": 0,
+          "n_failed": 1,
+          "error": null,
+          "rerun": null
+        }
+      }
+    }
+  ]
+}

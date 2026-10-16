@@ -1,0 +1,18 @@
+{
+    "task": {
+        "path": "jobs/swe_interactive_hard_more/tasks/swe-sweep__dateutil",
+        "source": "tasks"
+    },
+    "trial_name": "swe-sweep__dateutil__WxtqHs4",
+    "trials_dir": "jobs/swe_interactive_hard_more/swe_interactive_hard_more__r1__background_hinted_symptom",
+    "agent_timeout_multiplier": 0.05,
+    "agent": {
+        "name": "subagents_bench.harness.harbor_agent:OrchestratorAgent"
+    },
+    "environment": {
+        "type": "modal",
+        "override_cpus": 3,
+        "override_memory_mb": 7000
+    },
+    "job_id": "7c83f35d-e1dd-49fc-8e7b-a50d9a062b8e"
+}

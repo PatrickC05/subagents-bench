@@ -1,0 +1,172 @@
+{
+  "evaluated_at": "20261016T071750",
+  "version": "v4.2.1",
+  "score": 0.0,
+  "visible_ok": false,
+  "agent_patch_applied": true,
+  "agent_build_ok": true,
+  "agent_patch_error": null,
+  "build_error": null,
+  "regressions": [],
+  "visible_tests": {},
+  "n_subtasks": 6,
+  "n_resolved": 0,
+  "n_partial": 0,
+  "subtasks": [
+    {
+      "subtask_id": "echo-0508b348e5e8",
+      "resolved": false,
+      "partial": false,
+      "test_applied": true,
+      "targeted": [
+        "TestProxyBalancerWithNoTargets"
+      ],
+      "n_passed": 0,
+      "n_failed": 1,
+      "duration_s": 0.447,
+      "detail": {},
+      "has_split": true,
+      "f2p_passed": [],
+      "p2p_passed": [],
+      "f2p_failed": [],
+      "p2p_failed": [
+        "middleware::<build>"
+      ]
+    },
+    {
+      "subtask_id": "echo-5910c0014885",
+      "resolved": false,
+      "partial": false,
+      "test_applied": true,
+      "targeted": [
+        "TestGzipEmpty"
+      ],
+      "n_passed": 0,
+      "n_failed": 1,
+      "duration_s": 0.444,
+      "detail": {},
+      "has_split": true,
+      "f2p_passed": [],
+      "p2p_passed": [],
+      "f2p_failed": [],
+      "p2p_failed": [
+        "middleware::<build>"
+      ]
+    },
+    {
+      "subtask_id": "echo-5fe899e9002a",
+      "resolved": false,
+      "partial": false,
+      "test_applied": true,
+      "targeted": [],
+      "n_passed": 0,
+      "n_failed": 1,
+      "duration_s": 0.436,
+      "detail": {},
+      "has_split": true,
+      "f2p_passed": [],
+      "p2p_passed": [],
+      "f2p_failed": [],
+      "p2p_failed": [
+        ".::<build>"
+      ]
+    },
+    {
+      "subtask_id": "echo-91d2b5077dbf",
+      "resolved": false,
+      "partial": false,
+      "test_applied": true,
+      "targeted": [
+        "TestDefaultBinder_bindDataToMap"
+      ],
+      "n_passed": 0,
+      "n_failed": 1,
+      "duration_s": 0.437,
+      "detail": {},
+      "has_split": true,
+      "f2p_passed": [],
+      "p2p_passed": [],
+      "f2p_failed": [],
+      "p2p_failed": [
+        ".::<build>"
+      ]
+    },
+    {
+      "subtask_id": "echo-b5ecaf8d2018",
+      "resolved": false,
+      "partial": false,
+      "test_applied": true,
+      "targeted": [
+        "TestMultipleGroupSamePathMiddleware"
+      ],
+      "n_passed": 0,
+      "n_failed": 1,
+      "duration_s": 0.454,
+      "detail": {},
+      "has_split": true,
+      "f2p_passed": [],
+      "p2p_passed": [],
+      "f2p_failed": [],
+      "p2p_failed": [
+        ".::<build>"
+      ]
+    },
+    {
+      "subtask_id": "echo-c84540d03771",
+      "resolved": false,
+      "partial": false,
+      "test_applied": true,
+      "targeted": [
+        "TestRouterNoRoutablePath"
+      ],
+      "n_passed": 0,
+      "n_failed": 1,
+      "duration_s": 0.436,
+      "detail": {},
+      "has_split": true,
+      "f2p_passed": [],
+      "p2p_passed": [],
+      "f2p_failed": [],
+      "p2p_failed": [
+        ".::<build>"
+      ]
+    }
+  ],
+  "patch_stats": {
+    "files_edited": [
+      "bind.go",
+      "context.go",
+      "middleware/compress.go",
+      "middleware/proxy.go",
+      "zz_tmp_scheme_test.go"
+    ],
+    "lines_added": 107,
+    "lines_removed": 6,
+    "target_files": [
+      "bind.go",
+      "context.go",
+      "group.go",
+      "middleware/compress.go",
+      "middleware/proxy.go",
+      "router.go"
+    ],
+    "on_target_files": [
+      "bind.go",
+      "context.go",
+      "middleware/compress.go",
+      "middleware/proxy.go"
+    ],
+    "off_target_files": [
+      "zz_tmp_scheme_test.go"
+    ],
+    "target_coverage_pct": 66.7
+  },
+  "timings": {
+    "agent_apply_s": 0.01,
+    "post_suite_s": 0.785,
+    "subtasks_total_s": 2.654,
+    "total_s": 3.474
+  },
+  "error": null,
+  "oracle": false
+}

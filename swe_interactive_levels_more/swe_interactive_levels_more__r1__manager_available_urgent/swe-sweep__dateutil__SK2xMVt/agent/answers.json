@@ -1,0 +1,167 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792142326.473357,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the same exception and message as the reference: ValueError(\"Malformed timezone string.\")."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that get returns the default argument (None when not overridden), matching the reference."
+    },
+    "5": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that transitions returns None when hasdst is false, matching the reference answer."
+    },
+    "7": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply correctly states the assert compares metadata['tzdata_file_sha512'] to the SHA-512 hex digest of the downloaded tzdata file with the message \"SHA failed for\"."
+    },
+    "9": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that it logs an error saying zic could not be found and suggests installing libc-bin or checking PATH, matching the reference."
+    },
+    "10": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that easter() raises ValueError(\"invalid method\"), matching the reference answer."
+    },
+    "12": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the default is EASTER_WESTERN, which equals 3, matching the reference answer."
+    },
+    "14": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that rebuild writes metadata as JSON to METADATA_FN in the generated zoneinfo directory using json.dump(metadata, f, indent=4, sort_keys=True), matching the reference."
+    },
+    "16": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that `utcoffset` returns `None` when `self._isdst(dt)` is `None`, matching the reference."
+    },
+    "17": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that main() raises the last urllib.error.URLError from the failed download attempts, matching the reference."
+    },
+    "19": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that getzoneinfofile_stream() emits a warning and returns None when get_data raises IOError, matching the reference."
+    },
+    "21": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the same TypeError with the exact message from the reference."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792139962.5946739,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the same exception and message as the reference: ValueError(\"Malformed timezone string.\")."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792140026.377701,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that get returns the default argument (None when not overridden), matching the reference."
+      }
+    ],
+    "5": [
+      {
+        "t": 1792140181.999522,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that transitions returns None when hasdst is false, matching the reference answer."
+      }
+    ],
+    "7": [
+      {
+        "t": 1792140271.7565272,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply correctly states the assert compares metadata['tzdata_file_sha512'] to the SHA-512 hex digest of the downloaded tzdata file with the message \"SHA failed for\"."
+      }
+    ],
+    "9": [
+      {
+        "t": 1792140423.109299,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that it logs an error saying zic could not be found and suggests installing libc-bin or checking PATH, matching the reference."
+      }
+    ],
+    "10": [
+      {
+        "t": 1792140504.665233,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that easter() raises ValueError(\"invalid method\"), matching the reference answer."
+      }
+    ],
+    "12": [
+      {
+        "t": 1792140658.450903,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the default is EASTER_WESTERN, which equals 3, matching the reference answer."
+      }
+    ],
+    "14": [
+      {
+        "t": 1792140739.999104,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that rebuild writes metadata as JSON to METADATA_FN in the generated zoneinfo directory using json.dump(metadata, f, indent=4, sort_keys=True), matching the reference."
+      }
+    ],
+    "16": [
+      {
+        "t": 1792140903.572961,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that `utcoffset` returns `None` when `self._isdst(dt)` is `None`, matching the reference."
+      }
+    ],
+    "17": [
+      {
+        "t": 1792140978.907159,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that main() raises the last urllib.error.URLError from the failed download attempts, matching the reference."
+      }
+    ],
+    "19": [
+      {
+        "t": 1792141142.027622,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that getzoneinfofile_stream() emits a warning and returns None when get_data raises IOError, matching the reference."
+      }
+    ],
+    "21": [
+      {
+        "t": 1792141223.45397,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the same TypeError with the exact message from the reference."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

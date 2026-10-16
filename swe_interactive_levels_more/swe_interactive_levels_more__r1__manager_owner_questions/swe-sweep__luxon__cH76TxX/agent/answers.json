@@ -1,0 +1,167 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792142733.362328,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply explicitly states parseDigits returns NaN when there are no parseable digits, matching the reference."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that the match function returns `[null, {}]` when the input does not match, matching the reference answer."
+    },
+    "5": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that hasInvalidWeekData returns unitOutOfRange(\"weekYear\", obj.weekYear) when obj.weekYear is not an integer, matching the reference."
+    },
+    "7": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that the getter returns LocalZone.instance when defaultZone is null, matching the reference."
+    },
+    "9": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that the run function returns the string \"[error]\" after logging the exception, matching the reference answer."
+    },
+    "10": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the examples are joined into an HTML table with a prepended heading and intro paragraph, then assigned to document.body.innerHTML, matching the reference."
+    },
+    "12": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the default is 'latn' with pattern \\d, matching the reference exactly."
+    },
+    "14": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that the setter sets the internal defaultZone variable to null when passed a falsy value, matching the reference."
+    },
+    "16": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the `type` getter throws `new ZoneIsAbstractError()`, matching the reference."
+    },
+    "17": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that the zone is `new FixedOffsetZone(matches.Z)`, matching the reference, with additional correct context."
+    },
+    "19": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states hour 24 is valid only when minute, second, and millisecond are all 0, matching the reference."
+    },
+    "21": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply lists 'narrow', 'short', and 'techie', exactly matching the reference answer."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792139950.118795,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply explicitly states parseDigits returns NaN when there are no parseable digits, matching the reference."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792140025.704541,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that the match function returns `[null, {}]` when the input does not match, matching the reference answer."
+      }
+    ],
+    "5": [
+      {
+        "t": 1792140187.940138,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that hasInvalidWeekData returns unitOutOfRange(\"weekYear\", obj.weekYear) when obj.weekYear is not an integer, matching the reference."
+      }
+    ],
+    "7": [
+      {
+        "t": 1792140262.5041301,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that the getter returns LocalZone.instance when defaultZone is null, matching the reference."
+      }
+    ],
+    "9": [
+      {
+        "t": 1792140425.930819,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that the run function returns the string \"[error]\" after logging the exception, matching the reference answer."
+      }
+    ],
+    "10": [
+      {
+        "t": 1792140500.117147,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the examples are joined into an HTML table with a prepended heading and intro paragraph, then assigned to document.body.innerHTML, matching the reference."
+      }
+    ],
+    "12": [
+      {
+        "t": 1792140658.2592719,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the default is 'latn' with pattern \\d, matching the reference exactly."
+      }
+    ],
+    "14": [
+      {
+        "t": 1792140738.4952881,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that the setter sets the internal defaultZone variable to null when passed a falsy value, matching the reference."
+      }
+    ],
+    "16": [
+      {
+        "t": 1792140902.696496,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the `type` getter throws `new ZoneIsAbstractError()`, matching the reference."
+      }
+    ],
+    "17": [
+      {
+        "t": 1792140979.989727,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that the zone is `new FixedOffsetZone(matches.Z)`, matching the reference, with additional correct context."
+      }
+    ],
+    "19": [
+      {
+        "t": 1792141139.79971,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states hour 24 is valid only when minute, second, and millisecond are all 0, matching the reference."
+      }
+    ],
+    "21": [
+      {
+        "t": 1792141218.1580632,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply lists 'narrow', 'short', and 'techie', exactly matching the reference answer."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

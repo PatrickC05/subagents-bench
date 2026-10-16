@@ -1,0 +1,115 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792142892.099676,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the same exception and message as the reference, adding a correct explanation of the bare except re-raise."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that a missing name returns the default argument, which is None when not overridden, matching the reference."
+    },
+    "5": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that transitions(year) returns None when self.hasdst is false, matching the reference answer."
+    },
+    "7": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the assert compares metadata['tzdata_file_sha512'] to the SHA-512 digest of the downloaded file with the message \"SHA failed for\", matching the reference."
+    },
+    "9": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that on errno == 2 it logs an error saying zic could not be found and suggests installing libc-bin or checking PATH, matching the reference."
+    },
+    "10": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that easter() with method=0 raises ValueError('invalid method'), matching the reference exactly."
+    },
+    "12": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the default is EASTER_WESTERN, equal to 3, matching the reference."
+    },
+    "17": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that main() re-raises the last URLError, matching the reference answer."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792140715.3785012,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the same exception and message as the reference, adding a correct explanation of the bare except re-raise."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792140715.378689,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that a missing name returns the default argument, which is None when not overridden, matching the reference."
+      }
+    ],
+    "5": [
+      {
+        "t": 1792140715.378988,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that transitions(year) returns None when self.hasdst is false, matching the reference answer."
+      }
+    ],
+    "7": [
+      {
+        "t": 1792140715.379785,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the assert compares metadata['tzdata_file_sha512'] to the SHA-512 digest of the downloaded file with the message \"SHA failed for\", matching the reference."
+      }
+    ],
+    "9": [
+      {
+        "t": 1792140715.380417,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that on errno == 2 it logs an error saying zic could not be found and suggests installing libc-bin or checking PATH, matching the reference."
+      }
+    ],
+    "10": [
+      {
+        "t": 1792140715.380844,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that easter() with method=0 raises ValueError('invalid method'), matching the reference exactly."
+      }
+    ],
+    "12": [
+      {
+        "t": 1792140715.3813279,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the default is EASTER_WESTERN, equal to 3, matching the reference."
+      }
+    ],
+    "17": [
+      {
+        "t": 1792141084.555702,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that main() re-raises the last URLError, matching the reference answer."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

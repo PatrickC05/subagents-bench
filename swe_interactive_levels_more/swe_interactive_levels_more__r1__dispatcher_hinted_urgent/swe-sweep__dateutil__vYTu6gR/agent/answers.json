@@ -1,0 +1,167 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792142123.493668,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the same exception and message as the reference."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply correctly states that get returns the default argument (None unless overridden) when name is absent from the zones dictionary."
+    },
+    "5": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that tzwinbase.transitions(year) returns None for a zone with no DST transitions, matching the reference."
+    },
+    "7": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the assert compares metadata['tzdata_file_sha512'] to the computed SHA-512 hex digest of the downloaded tzdata file and raises AssertionError with 'SHA failed for' on mismatch, matching the reference."
+    },
+    "9": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply correctly states that when errno == 2 it logs an error saying zic could not be found and suggests installing libc-bin or checking PATH."
+    },
+    "10": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that easter() raises ValueError(\"invalid method\") for method=0, matching the reference answer."
+    },
+    "12": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the default is EASTER_WESTERN (= 3), matching the reference answer."
+    },
+    "14": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply accurately states that metadata is JSON-dumped with indent=4 and sort_keys=True into the METADATA_FN file inside the generated zoneinfo directory, matching the reference."
+    },
+    "16": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that `tzrangebase.utcoffset` returns `None` when `self._isdst(dt)` is `None`, matching the reference answer."
+    },
+    "17": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that main() re-raises the last urllib_error.URLError stored in last_error after all mirror attempts fail, matching the reference."
+    },
+    "19": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that on IOError the function emits a warning and returns None, matching the reference."
+    },
+    "21": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that `_tzinfo._fromutc` raises `TypeError(\"fromutc() requires a datetime argument\")`, matching the reference exactly."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792140046.6346529,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the same exception and message as the reference."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792140081.9420831,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply correctly states that get returns the default argument (None unless overridden) when name is absent from the zones dictionary."
+      }
+    ],
+    "5": [
+      {
+        "t": 1792140278.5843148,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that tzwinbase.transitions(year) returns None for a zone with no DST transitions, matching the reference."
+      }
+    ],
+    "7": [
+      {
+        "t": 1792140289.878882,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the assert compares metadata['tzdata_file_sha512'] to the computed SHA-512 hex digest of the downloaded tzdata file and raises AssertionError with 'SHA failed for' on mismatch, matching the reference."
+      }
+    ],
+    "9": [
+      {
+        "t": 1792140447.393166,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply correctly states that when errno == 2 it logs an error saying zic could not be found and suggests installing libc-bin or checking PATH."
+      }
+    ],
+    "10": [
+      {
+        "t": 1792140533.605385,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that easter() raises ValueError(\"invalid method\") for method=0, matching the reference answer."
+      }
+    ],
+    "12": [
+      {
+        "t": 1792140762.618304,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the default is EASTER_WESTERN (= 3), matching the reference answer."
+      }
+    ],
+    "14": [
+      {
+        "t": 1792140893.429408,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply accurately states that metadata is JSON-dumped with indent=4 and sort_keys=True into the METADATA_FN file inside the generated zoneinfo directory, matching the reference."
+      }
+    ],
+    "16": [
+      {
+        "t": 1792140982.945384,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that `tzrangebase.utcoffset` returns `None` when `self._isdst(dt)` is `None`, matching the reference answer."
+      }
+    ],
+    "17": [
+      {
+        "t": 1792140978.89219,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that main() re-raises the last urllib_error.URLError stored in last_error after all mirror attempts fail, matching the reference."
+      }
+    ],
+    "19": [
+      {
+        "t": 1792141160.217818,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that on IOError the function emits a warning and returns None, matching the reference."
+      }
+    ],
+    "21": [
+      {
+        "t": 1792141248.82723,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that `_tzinfo._fromutc` raises `TypeError(\"fromutc() requires a datetime argument\")`, matching the reference exactly."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

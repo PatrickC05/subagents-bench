@@ -1,0 +1,18 @@
+{
+    "task": {
+        "path": "jobs/swe_interactive_levels_more/tasks/swe-sweep__luxon",
+        "source": "tasks"
+    },
+    "trial_name": "swe-sweep__luxon__mL97KSy",
+    "trials_dir": "jobs/swe_interactive_levels_more/swe_interactive_levels_more__r1__single_urgent",
+    "agent_timeout_multiplier": 0.05,
+    "agent": {
+        "name": "subagents_bench.harness.harbor_agent:OrchestratorAgent"
+    },
+    "environment": {
+        "type": "modal",
+        "override_cpus": 3,
+        "override_memory_mb": 7000
+    },
+    "job_id": "1c8d60d1-1468-46b5-b0f6-e3887fa90db2"
+}

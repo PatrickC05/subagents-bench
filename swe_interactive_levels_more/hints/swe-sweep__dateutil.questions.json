@@ -1,0 +1,79 @@
+{
+  "task": "swe-sweep__dateutil",
+  "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "generated_at": 1792138130.364366,
+  "questions": [
+    {
+      "id": "q1",
+      "file": "dateutil/zoneinfo/__init__.py",
+      "question": "In dateutil/zoneinfo/__init__.py, what does getzoneinfofile_stream() return if get_data raises IOError?",
+      "answer": "It emits a warning and returns None."
+    },
+    {
+      "id": "q2",
+      "file": "dateutil/zoneinfo/__init__.py",
+      "question": "In dateutil/zoneinfo/__init__.py, what does ZoneInfoFile.get(name, default=None) return when name is not in the zones dictionary?",
+      "answer": "It returns the default argument, which is None unless overridden."
+    },
+    {
+      "id": "q3",
+      "file": "dateutil/tz/_common.py",
+      "question": "In dateutil/tz/_common.py, what exception is raised by `_tzinfo._fromutc` if the `dt` argument is not a `datetime` instance?",
+      "answer": "TypeError with the message \"fromutc() requires a datetime argument\"."
+    },
+    {
+      "id": "q4",
+      "file": "dateutil/tz/_common.py",
+      "question": "In dateutil/tz/_common.py, what does `tzrangebase.utcoffset` return when `self._isdst(dt)` returns `None`?",
+      "answer": "None."
+    },
+    {
+      "id": "q5",
+      "file": "dateutil/easter.py",
+      "question": "In dateutil/easter.py, what exception does easter() raise if I pass method=0?",
+      "answer": "It raises ValueError('invalid method')."
+    },
+    {
+      "id": "q6",
+      "file": "dateutil/easter.py",
+      "question": "In dateutil/easter.py, what is the default value for the method argument to easter()?",
+      "answer": "EASTER_WESTERN (which equals 3)."
+    },
+    {
+      "id": "q7",
+      "file": "dateutil/tz/win.py",
+      "question": "In dateutil/tz/win.py, what does tzwinbase.transitions(year) return for a time zone that has no DST transitions?",
+      "answer": "It returns None when self.hasdst is false."
+    },
+    {
+      "id": "q8",
+      "file": "dateutil/tz/win.py",
+      "question": "In dateutil/tz/win.py, what exception does tzres.name_from_string raise when given a string starting with '@' whose offset cannot be parsed as an integer?",
+      "answer": "It raises ValueError(\"Malformed timezone string.\")."
+    },
+    {
+      "id": "q9",
+      "file": "updatezinfo.py",
+      "question": "In updatezinfo.py, what does main() raise if all mirror download attempts fail?",
+      "answer": "It raises the last urllib_error.URLError caught during the failed download attempts (stored in last_error)."
+    },
+    {
+      "id": "q10",
+      "file": "updatezinfo.py",
+      "question": "In updatezinfo.py, what does the assert statement in main() check?",
+      "answer": "It checks that metadata['tzdata_file_sha512'] equals the SHA-512 hex digest of the downloaded tzdata file, raising AssertionError with message \"SHA failed for\" if they differ."
+    },
+    {
+      "id": "q11",
+      "file": "dateutil/zoneinfo/rebuild.py",
+      "question": "In dateutil/zoneinfo/rebuild.py, what does the `rebuild` function do with the `metadata` argument?",
+      "answer": "It writes it as JSON to the file named METADATA_FN inside the generated zoneinfo directory, using `json.dump(metadata, f, indent=4, sort_keys=True)`."
+    },
+    {
+      "id": "q12",
+      "file": "dateutil/zoneinfo/rebuild.py",
+      "question": "In dateutil/zoneinfo/rebuild.py, what does `_print_on_nosuchfile` do when the passed exception has `errno == 2`?",
+      "answer": "It logs an error message stating that `zic` could not be found and suggesting to install libc-bin or check PATH."
+    }
+  ]
+}

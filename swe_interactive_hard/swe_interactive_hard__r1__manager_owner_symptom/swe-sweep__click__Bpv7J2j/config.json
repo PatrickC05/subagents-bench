@@ -1,0 +1,18 @@
+{
+    "task": {
+        "path": "jobs/swe_interactive_hard/tasks/swe-sweep__click",
+        "source": "tasks"
+    },
+    "trial_name": "swe-sweep__click__Bpv7J2j",
+    "trials_dir": "jobs/swe_interactive_hard/swe_interactive_hard__r1__manager_owner_symptom",
+    "agent_timeout_multiplier": 0.05,
+    "agent": {
+        "name": "subagents_bench.harness.harbor_agent:OrchestratorAgent"
+    },
+    "environment": {
+        "type": "modal",
+        "override_cpus": 3,
+        "override_memory_mb": 7000
+    },
+    "job_id": "88bfe462-8fbf-461c-b8f2-098040a83385"
+}

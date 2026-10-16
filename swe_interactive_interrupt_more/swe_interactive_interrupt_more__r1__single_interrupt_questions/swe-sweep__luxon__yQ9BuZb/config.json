@@ -1,0 +1,18 @@
+{
+    "task": {
+        "path": "jobs/swe_interactive_interrupt_more/tasks/swe-sweep__luxon",
+        "source": "tasks"
+    },
+    "trial_name": "swe-sweep__luxon__yQ9BuZb",
+    "trials_dir": "jobs/swe_interactive_interrupt_more/swe_interactive_interrupt_more__r1__single_interrupt_questions",
+    "agent_timeout_multiplier": 0.05,
+    "agent": {
+        "name": "subagents_bench.harness.harbor_agent:OrchestratorAgent"
+    },
+    "environment": {
+        "type": "modal",
+        "override_cpus": 3,
+        "override_memory_mb": 7000
+    },
+    "job_id": "fbbba0cd-83c4-4d4b-b590-67a71d853af7"
+}

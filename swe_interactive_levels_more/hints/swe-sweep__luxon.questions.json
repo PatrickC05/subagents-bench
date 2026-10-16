@@ -1,0 +1,79 @@
+{
+  "task": "swe-sweep__luxon",
+  "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "generated_at": 1792138397.852965,
+  "questions": [
+    {
+      "id": "q1",
+      "file": "src/impl/tokenParser.js",
+      "question": "In src/impl/tokenParser.js, what does the `match` function return when the input does not match the regex?",
+      "answer": "It returns `[null, {}]` (i.e., `matches` is `null` and the second element is an empty object)."
+    },
+    {
+      "id": "q2",
+      "file": "src/impl/tokenParser.js",
+      "question": "In src/impl/tokenParser.js, what does `dateTimeFromMatches` return for the zone when `matches.Z` is defined?",
+      "answer": "It returns a `FixedOffsetZone` instance constructed from `matches.Z` (i.e., `new FixedOffsetZone(matches.Z)`)."
+    },
+    {
+      "id": "q3",
+      "file": "src/impl/conversions.js",
+      "question": "In src/impl/conversions.js, what does hasInvalidWeekData return when obj.weekYear is not an integer?",
+      "answer": "It returns the Invalid object from unitOutOfRange(\"weekYear\", obj.weekYear)."
+    },
+    {
+      "id": "q4",
+      "file": "src/impl/conversions.js",
+      "question": "In src/impl/conversions.js, in hasInvalidTimeData, what condition makes hour 24 valid?",
+      "answer": "Hour 24 is valid only when minute === 0, second === 0, and millisecond === 0."
+    },
+    {
+      "id": "q5",
+      "file": "src/impl/digits.js",
+      "question": "In src/impl/digits.js, what does parseDigits return when the input string contains no parseable digits?",
+      "answer": "It returns NaN."
+    },
+    {
+      "id": "q6",
+      "file": "src/impl/digits.js",
+      "question": "In digitRegex in src/impl/digits.js, what numbering system is used by default when the numberingSystem argument is not provided?",
+      "answer": "It defaults to 'latn', whose pattern is \\d."
+    },
+    {
+      "id": "q7",
+      "file": "src/zone.js",
+      "question": "In src/zone.js, what does the `type` getter of the `Zone` class do?",
+      "answer": "It throws a `ZoneIsAbstractError`."
+    },
+    {
+      "id": "q8",
+      "file": "src/zone.js",
+      "question": "In src/zone.js, what values does the `format` argument of `formatOffset` accept?",
+      "answer": "'narrow', 'short', or 'techie'."
+    },
+    {
+      "id": "q9",
+      "file": "src/settings.js",
+      "question": "In src/settings.js, what does the Settings.defaultZone getter return when the internal defaultZone variable is null?",
+      "answer": "It returns LocalZone.instance."
+    },
+    {
+      "id": "q10",
+      "file": "src/settings.js",
+      "question": "In src/settings.js, what does the Settings.defaultZoneName setter do when passed a falsy value such as an empty string?",
+      "answer": "It sets the internal defaultZone variable to null."
+    },
+    {
+      "id": "q11",
+      "file": "site/demo/demo.js",
+      "question": "In site/demo/demo.js, what does the run function return if the eval call throws an exception?",
+      "answer": "It logs the error to the console and returns the string \"[error]\"."
+    },
+    {
+      "id": "q12",
+      "file": "site/demo/demo.js",
+      "question": "In site/demo/demo.js, what does the demo function do with the examples array after all example calls?",
+      "answer": "It joins the examples into an HTML table, prepends a heading and description, and assigns the resulting HTML string to document.body.innerHTML."
+    }
+  ]
+}

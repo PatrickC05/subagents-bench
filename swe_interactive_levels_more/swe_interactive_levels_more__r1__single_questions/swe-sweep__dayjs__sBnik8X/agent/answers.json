@@ -1,0 +1,89 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792142864.837033,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that `ordinal` is `n => n` and returns the number unchanged, matching the reference."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that weekStart is 1, matching the reference answer."
+    },
+    "16": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that it returns '\u043c\u0438\u043d\u0443\u0442\u0430', matching the reference answer."
+    },
+    "17": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that ordinal returns the input number unchanged (n => n), matching the reference."
+    },
+    "19": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply gives the exact value 'A h:mm \u09b8\u09ae\u09af\u09bc' for formats.LT, matching the reference."
+    },
+    "21": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states weekStart is 1, matching the reference answer."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792140039.516385,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that `ordinal` is `n => n` and returns the number unchanged, matching the reference."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792140039.516778,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that weekStart is 1, matching the reference answer."
+      }
+    ],
+    "16": [
+      {
+        "t": 1792141372.671826,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that it returns '\u043c\u0438\u043d\u0443\u0442\u0430', matching the reference answer."
+      }
+    ],
+    "17": [
+      {
+        "t": 1792141372.6725051,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that ordinal returns the input number unchanged (n => n), matching the reference."
+      }
+    ],
+    "19": [
+      {
+        "t": 1792141381.071538,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply gives the exact value 'A h:mm \u09b8\u09ae\u09af\u09bc' for formats.LT, matching the reference."
+      }
+    ],
+    "21": [
+      {
+        "t": 1792141267.554487,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states weekStart is 1, matching the reference answer."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

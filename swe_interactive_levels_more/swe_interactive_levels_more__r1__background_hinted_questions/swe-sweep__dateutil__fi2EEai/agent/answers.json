@@ -1,0 +1,128 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792141862.502933,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that name_from_string raises ValueError(\"Malformed timezone string.\"), matching the reference."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that get() returns the default argument (None when not given), matching the reference."
+    },
+    "5": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that transitions() returns None when self.hasdst is false, matching the reference."
+    },
+    "7": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply correctly states the assert compares metadata['tzdata_file_sha512'] to the SHA-512 hash of the downloaded file, with the 'SHA failed for' message."
+    },
+    "9": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that it logs an error saying zic could not be found and suggests installing libc-bin or checking PATH, matching the reference."
+    },
+    "10": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states easter() raises ValueError(\"invalid method\") for method=0, matching the reference."
+    },
+    "12": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the default is EASTER_WESTERN (= 3), matching the reference answer."
+    },
+    "14": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that rebuild writes metadata as JSON to METADATA_FN inside the generated zoneinfo directory using json.dump(metadata, f, indent=4, sort_keys=True), matching the reference's key fact."
+    },
+    "17": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states main() re-raises the last download error (urllib.error.URLError from the final mirror attempt), matching the reference's last_error URLError."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792140359.871656,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that name_from_string raises ValueError(\"Malformed timezone string.\"), matching the reference."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792140359.872549,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that get() returns the default argument (None when not given), matching the reference."
+      }
+    ],
+    "5": [
+      {
+        "t": 1792140359.873106,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that transitions() returns None when self.hasdst is false, matching the reference."
+      }
+    ],
+    "7": [
+      {
+        "t": 1792140359.873864,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply correctly states the assert compares metadata['tzdata_file_sha512'] to the SHA-512 hash of the downloaded file, with the 'SHA failed for' message."
+      }
+    ],
+    "9": [
+      {
+        "t": 1792140659.340819,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that it logs an error saying zic could not be found and suggests installing libc-bin or checking PATH, matching the reference."
+      }
+    ],
+    "10": [
+      {
+        "t": 1792140659.3413372,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states easter() raises ValueError(\"invalid method\") for method=0, matching the reference."
+      }
+    ],
+    "12": [
+      {
+        "t": 1792140765.931205,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the default is EASTER_WESTERN (= 3), matching the reference answer."
+      }
+    ],
+    "14": [
+      {
+        "t": 1792140765.931554,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that rebuild writes metadata as JSON to METADATA_FN inside the generated zoneinfo directory using json.dump(metadata, f, indent=4, sort_keys=True), matching the reference's key fact."
+      }
+    ],
+    "17": [
+      {
+        "t": 1792141091.447617,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states main() re-raises the last download error (urllib.error.URLError from the final mirror attempt), matching the reference's last_error URLError."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

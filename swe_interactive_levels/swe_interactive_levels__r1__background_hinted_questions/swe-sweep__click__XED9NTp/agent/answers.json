@@ -1,0 +1,89 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792135110.6030898,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that prompt raises click.exceptions.Abort on KeyboardInterrupt/EOFError, matching the reference."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that the except branch sets fs_enc = \"ascii\", matching the reference."
+    },
+    "5": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply correctly states that RuntimeError is raised with the mitigation message joined by blank lines (two newlines)."
+    },
+    "7": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that the sentinel `_flag_needs_value` is returned in that case, matching the reference."
+    },
+    "10": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that `echo` is imported from `.utils`, matching the reference answer."
+    },
+    "19": {
+      "correct": false,
+      "verdict": "wrong",
+      "why": "The reply states __version__ is \"8.0.2\", contradicting the reference value of 8.0.1."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792133373.305391,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that prompt raises click.exceptions.Abort on KeyboardInterrupt/EOFError, matching the reference."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792133452.0371258,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that the except branch sets fs_enc = \"ascii\", matching the reference."
+      }
+    ],
+    "5": [
+      {
+        "t": 1792133617.129499,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply correctly states that RuntimeError is raised with the mitigation message joined by blank lines (two newlines)."
+      }
+    ],
+    "7": [
+      {
+        "t": 1792133704.17959,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that the sentinel `_flag_needs_value` is returned in that case, matching the reference."
+      }
+    ],
+    "10": [
+      {
+        "t": 1792133973.8753889,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that `echo` is imported from `.utils`, matching the reference answer."
+      }
+    ],
+    "19": [
+      {
+        "t": 1792134717.4977841,
+        "verdict": "wrong",
+        "correct": false,
+        "why": "The reply states __version__ is \"8.0.2\", contradicting the reference value of 8.0.1."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

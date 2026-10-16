@@ -1,0 +1,18 @@
+{
+    "task": {
+        "path": "jobs/swe_interactive_levels_more/tasks/swe-sweep__gin",
+        "source": "tasks"
+    },
+    "trial_name": "swe-sweep__gin__Fajpo7o",
+    "trials_dir": "jobs/swe_interactive_levels_more/swe_interactive_levels_more__r1__manager_owner_urgent",
+    "agent_timeout_multiplier": 0.05,
+    "agent": {
+        "name": "subagents_bench.harness.harbor_agent:OrchestratorAgent"
+    },
+    "environment": {
+        "type": "modal",
+        "override_cpus": 3,
+        "override_memory_mb": 7000
+    },
+    "job_id": "77f12c91-cca3-4796-bb32-18249f151c07"
+}

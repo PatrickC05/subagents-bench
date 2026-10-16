@@ -1,0 +1,18 @@
+{
+    "task": {
+        "path": "jobs/swe_interactive_levels/tasks/swe-sweep__click",
+        "source": "tasks"
+    },
+    "trial_name": "swe-sweep__click__nHTZD5X",
+    "trials_dir": "jobs/swe_interactive_levels/swe_interactive_levels__r1__dispatcher_hinted_urgent",
+    "agent_timeout_multiplier": 0.05,
+    "agent": {
+        "name": "subagents_bench.harness.harbor_agent:OrchestratorAgent"
+    },
+    "environment": {
+        "type": "modal",
+        "override_cpus": 3,
+        "override_memory_mb": 7000
+    },
+    "job_id": "7e7dcef7-91bc-430c-8e46-eb4fc4d7bdf7"
+}

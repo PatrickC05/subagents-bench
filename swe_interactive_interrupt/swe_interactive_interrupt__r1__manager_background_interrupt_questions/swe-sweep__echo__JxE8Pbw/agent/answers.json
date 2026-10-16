@@ -1,0 +1,167 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792140511.9210901,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that when config.Output is nil the log line is written to c.Logger().Output(), matching the reference answer."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states it returns echo.NewHTTPError with http.StatusInternalServerError and the pooled value's error text, matching the reference."
+    },
+    "5": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that MethodOverride() returns MethodOverrideWithConfig(DefaultMethodOverrideConfig), matching the reference, with additional correct detail."
+    },
+    "7": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that config.Skipper is set to DefaultTrailingSlashConfig.Skipper, matching the reference answer."
+    },
+    "9": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that limitedReader.Read returns n and echo.ErrStatusRequestEntityTooLarge when the cumulative bytes exceed the limit, matching the reference."
+    },
+    "10": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that DefaultBodyDumpConfig.Skipper is DefaultSkipper, matching the reference answer."
+    },
+    "12": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that bytes_in writes the literal string \"0\" when the Content-Length header is absent, matching the reference."
+    },
+    "14": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that MethodFromQuery returns a MethodOverrideGetter that returns c.QueryParam(param), matching the reference."
+    },
+    "16": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that config.Skipper is set to DefaultGzipConfig.Skipper, matching the reference answer."
+    },
+    "17": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that BodyLimitWithConfig panics with fmt.Errorf(\"echo: invalid body-limit=%s\", config.Limit), matching the reference."
+    },
+    "19": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that BodyDumpWithConfig panics with the exact message \"echo: body-dump middleware requires a handler function\", matching the reference."
+    },
+    "21": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the default Code is http.StatusMovedPermanently (301), matching the reference."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792138695.514602,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that when config.Output is nil the log line is written to c.Logger().Output(), matching the reference answer."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792138769.7079968,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states it returns echo.NewHTTPError with http.StatusInternalServerError and the pooled value's error text, matching the reference."
+      }
+    ],
+    "5": [
+      {
+        "t": 1792138928.369169,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that MethodOverride() returns MethodOverrideWithConfig(DefaultMethodOverrideConfig), matching the reference, with additional correct detail."
+      }
+    ],
+    "7": [
+      {
+        "t": 1792139008.0969322,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that config.Skipper is set to DefaultTrailingSlashConfig.Skipper, matching the reference answer."
+      }
+    ],
+    "9": [
+      {
+        "t": 1792139202.815391,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that limitedReader.Read returns n and echo.ErrStatusRequestEntityTooLarge when the cumulative bytes exceed the limit, matching the reference."
+      }
+    ],
+    "10": [
+      {
+        "t": 1792139252.0122602,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that DefaultBodyDumpConfig.Skipper is DefaultSkipper, matching the reference answer."
+      }
+    ],
+    "12": [
+      {
+        "t": 1792139434.948585,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that bytes_in writes the literal string \"0\" when the Content-Length header is absent, matching the reference."
+      }
+    ],
+    "14": [
+      {
+        "t": 1792140213.224502,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that MethodFromQuery returns a MethodOverrideGetter that returns c.QueryParam(param), matching the reference."
+      }
+    ],
+    "16": [
+      {
+        "t": 1792140213.226349,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that config.Skipper is set to DefaultGzipConfig.Skipper, matching the reference answer."
+      }
+    ],
+    "17": [
+      {
+        "t": 1792140213.226868,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that BodyLimitWithConfig panics with fmt.Errorf(\"echo: invalid body-limit=%s\", config.Limit), matching the reference."
+      }
+    ],
+    "19": [
+      {
+        "t": 1792140213.227187,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that BodyDumpWithConfig panics with the exact message \"echo: body-dump middleware requires a handler function\", matching the reference."
+      }
+    ],
+    "21": [
+      {
+        "t": 1792140213.2275681,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the default Code is http.StatusMovedPermanently (301), matching the reference."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

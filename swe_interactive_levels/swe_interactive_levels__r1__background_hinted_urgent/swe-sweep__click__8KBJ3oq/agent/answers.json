@@ -1,0 +1,154 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792135154.532892,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that prompt catches KeyboardInterrupt/EOFError and raises click.exceptions.Abort, matching the reference."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply explicitly states that the except branch sets fs_enc = \"ascii\", matching the reference."
+    },
+    "5": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states RuntimeError is raised with the message built by joining the extra list with two newlines, matching the reference."
+    },
+    "7": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that the sentinel `_flag_needs_value` is returned, matching the reference answer."
+    },
+    "9": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that `style` raises `TypeError` with the message `Unknown color {fg!r}`, matching the reference."
+    },
+    "10": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states echo is imported from click.utils (i.e., .utils), matching the reference."
+    },
+    "12": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the same returned message as the reference, including the `_(\"Invalid value: {message}\").format(message=self.message)` form."
+    },
+    "16": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that resolve_color_default returns the color argument unchanged when it is not None, matching the reference."
+    },
+    "17": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that get_current_context(silent=True) returns None when there is no active context, matching the reference."
+    },
+    "19": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states __version__ is \"8.0.1\", matching the reference answer."
+    },
+    "21": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that `_unpack_args` raises `TypeError(\"Cannot have two nargs < 0\")`, matching the reference exactly."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792133370.489556,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that prompt catches KeyboardInterrupt/EOFError and raises click.exceptions.Abort, matching the reference."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792133435.54967,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply explicitly states that the except branch sets fs_enc = \"ascii\", matching the reference."
+      }
+    ],
+    "5": [
+      {
+        "t": 1792133630.692312,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states RuntimeError is raised with the message built by joining the extra list with two newlines, matching the reference."
+      }
+    ],
+    "7": [
+      {
+        "t": 1792133691.6924381,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that the sentinel `_flag_needs_value` is returned, matching the reference answer."
+      }
+    ],
+    "9": [
+      {
+        "t": 1792133856.857864,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that `style` raises `TypeError` with the message `Unknown color {fg!r}`, matching the reference."
+      }
+    ],
+    "10": [
+      {
+        "t": 1792133914.059862,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states echo is imported from click.utils (i.e., .utils), matching the reference."
+      }
+    ],
+    "12": [
+      {
+        "t": 1792134079.896737,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the same returned message as the reference, including the `_(\"Invalid value: {message}\").format(message=self.message)` form."
+      }
+    ],
+    "16": [
+      {
+        "t": 1792134313.74025,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that resolve_color_default returns the color argument unchanged when it is not None, matching the reference."
+      }
+    ],
+    "17": [
+      {
+        "t": 1792134406.7777479,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that get_current_context(silent=True) returns None when there is no active context, matching the reference."
+      }
+    ],
+    "19": [
+      {
+        "t": 1792134588.206091,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states __version__ is \"8.0.1\", matching the reference answer."
+      }
+    ],
+    "21": [
+      {
+        "t": 1792134633.0282822,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that `_unpack_args` raises `TypeError(\"Cannot have two nargs < 0\")`, matching the reference exactly."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

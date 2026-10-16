@@ -1,0 +1,167 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792135220.509492,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the log line is written to `c.Logger().Output()` rather than `config.Output`, matching the reference."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states it returns echo.NewHTTPError(http.StatusInternalServerError, i.(error).Error()), matching the reference's 500 error with the pooled value's error message."
+    },
+    "5": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that MethodOverride() returns MethodOverrideWithConfig(DefaultMethodOverrideConfig), matching the reference, with additional correct detail."
+    },
+    "7": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that config.Skipper is set to DefaultTrailingSlashConfig.Skipper, matching the reference answer."
+    },
+    "9": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that limitedReader.Read returns (n, echo.ErrStatusRequestEntityTooLarge) when cumulative bytes exceed the limit, matching the reference."
+    },
+    "10": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the default Skipper is DefaultSkipper, matching the reference."
+    },
+    "12": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that when the Content-Length header is empty the code uses the string \"0\" for the bytes_in tag, matching the reference."
+    },
+    "14": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that MethodFromQuery returns a MethodOverrideGetter closure returning c.QueryParam(param), matching the reference."
+    },
+    "16": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that config.Skipper is set to DefaultGzipConfig.Skipper when nil, matching the reference."
+    },
+    "17": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that BodyLimitWithConfig panics with fmt.Errorf(\"echo: invalid body-limit=%s\", config.Limit) when bytes.Parse fails, matching the reference."
+    },
+    "19": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that BodyDumpWithConfig panics with the exact message \"echo: body-dump middleware requires a handler function\" when config.Handler is nil, matching the reference."
+    },
+    "21": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the default RedirectConfig.Code is http.StatusMovedPermanently (301), matching the reference."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792133360.480094,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the log line is written to `c.Logger().Output()` rather than `config.Output`, matching the reference."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792133433.5402188,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states it returns echo.NewHTTPError(http.StatusInternalServerError, i.(error).Error()), matching the reference's 500 error with the pooled value's error message."
+      }
+    ],
+    "5": [
+      {
+        "t": 1792133587.4025931,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that MethodOverride() returns MethodOverrideWithConfig(DefaultMethodOverrideConfig), matching the reference, with additional correct detail."
+      }
+    ],
+    "7": [
+      {
+        "t": 1792133669.933772,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that config.Skipper is set to DefaultTrailingSlashConfig.Skipper, matching the reference answer."
+      }
+    ],
+    "9": [
+      {
+        "t": 1792133827.245694,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that limitedReader.Read returns (n, echo.ErrStatusRequestEntityTooLarge) when cumulative bytes exceed the limit, matching the reference."
+      }
+    ],
+    "10": [
+      {
+        "t": 1792133946.242767,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the default Skipper is DefaultSkipper, matching the reference."
+      }
+    ],
+    "12": [
+      {
+        "t": 1792134063.6758158,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that when the Content-Length header is empty the code uses the string \"0\" for the bytes_in tag, matching the reference."
+      }
+    ],
+    "14": [
+      {
+        "t": 1792134142.998662,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that MethodFromQuery returns a MethodOverrideGetter closure returning c.QueryParam(param), matching the reference."
+      }
+    ],
+    "16": [
+      {
+        "t": 1792134303.6487172,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that config.Skipper is set to DefaultGzipConfig.Skipper when nil, matching the reference."
+      }
+    ],
+    "17": [
+      {
+        "t": 1792134474.938862,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that BodyLimitWithConfig panics with fmt.Errorf(\"echo: invalid body-limit=%s\", config.Limit) when bytes.Parse fails, matching the reference."
+      }
+    ],
+    "19": [
+      {
+        "t": 1792134575.128545,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that BodyDumpWithConfig panics with the exact message \"echo: body-dump middleware requires a handler function\" when config.Handler is nil, matching the reference."
+      }
+    ],
+    "21": [
+      {
+        "t": 1792134624.8530471,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the default RedirectConfig.Code is http.StatusMovedPermanently (301), matching the reference."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

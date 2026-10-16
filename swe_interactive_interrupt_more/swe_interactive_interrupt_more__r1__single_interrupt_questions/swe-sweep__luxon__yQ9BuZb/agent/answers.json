@@ -1,0 +1,128 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792142143.478404,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that parseDigits returns NaN when the input contains no parseable digits, matching the reference."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that `match` returns `[null, {}]` when the input does not match the regex, matching the reference answer."
+    },
+    "9": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that run logs the error with console.error and returns the string \"[error]\", matching the reference."
+    },
+    "10": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply correctly states that the examples array is joined and assigned to document.body.innerHTML as part of the table markup, matching the reference's core action."
+    },
+    "12": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the default is the Latin numbering system ('latn') whose pattern is \\d, matching the reference."
+    },
+    "14": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that a falsy value sets the internal defaultZone variable to null, matching the reference."
+    },
+    "17": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that the zone is set to `new FixedOffsetZone(matches.Z)`, matching the reference answer."
+    },
+    "19": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states hour 24 is valid only when minute, second, and millisecond are all zero, matching the reference."
+    },
+    "21": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply lists the same three accepted values ('narrow', 'short', 'techie') as the reference answer."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792140103.449866,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that parseDigits returns NaN when the input contains no parseable digits, matching the reference."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792140165.0771992,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that `match` returns `[null, {}]` when the input does not match the regex, matching the reference answer."
+      }
+    ],
+    "9": [
+      {
+        "t": 1792140635.725164,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that run logs the error with console.error and returns the string \"[error]\", matching the reference."
+      }
+    ],
+    "10": [
+      {
+        "t": 1792140635.725813,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply correctly states that the examples array is joined and assigned to document.body.innerHTML as part of the table markup, matching the reference's core action."
+      }
+    ],
+    "12": [
+      {
+        "t": 1792140797.8262742,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the default is the Latin numbering system ('latn') whose pattern is \\d, matching the reference."
+      }
+    ],
+    "14": [
+      {
+        "t": 1792140867.307277,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that a falsy value sets the internal defaultZone variable to null, matching the reference."
+      }
+    ],
+    "17": [
+      {
+        "t": 1792141120.174575,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that the zone is set to `new FixedOffsetZone(matches.Z)`, matching the reference answer."
+      }
+    ],
+    "19": [
+      {
+        "t": 1792141293.52644,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states hour 24 is valid only when minute, second, and millisecond are all zero, matching the reference."
+      }
+    ],
+    "21": [
+      {
+        "t": 1792141362.757559,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply lists the same three accepted values ('narrow', 'short', 'techie') as the reference answer."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

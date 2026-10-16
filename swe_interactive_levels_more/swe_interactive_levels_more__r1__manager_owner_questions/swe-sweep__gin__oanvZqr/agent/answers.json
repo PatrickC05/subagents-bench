@@ -1,0 +1,167 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792142708.381404,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that JSON.Render panics with the error via panic(err), matching the reference."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states it returns false and ErrMultiFileHeaderLenInvalid, matching the reference answer."
+    },
+    "5": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that for map[string]string it stores the last value, ptrMap[k] = v[len(v)-1], matching the reference."
+    },
+    "7": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that SetMode(\"\") with no test.v flag falls back to DebugMode, setting ginMode = debugCode and modeName = DebugMode, matching the reference."
+    },
+    "9": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states it returns false and ErrMultiFileHeader, matching the reference."
+    },
+    "10": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that source returns the `dunno` sentinel, the package-level `[]byte(\"???\")`, for out-of-range n, matching the reference."
+    },
+    "12": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that Mode() returns the package-level modeName variable, i.e. the current gin mode string, matching the reference."
+    },
+    "14": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that defaultHandleRecovery calls c.AbortWithStatus(http.StatusInternalServerError), matching the reference."
+    },
+    "16": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply explicitly states the tag name is \"binding\", matching the reference answer."
+    },
+    "17": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that the Prefix is written only when the marshaled JSON bytes both start with \"[\" and end with \"]\" (a JSON array), matching the reference."
+    },
+    "19": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply explicitly states that an empty time_format tag falls back to time.RFC3339, matching the reference answer."
+    },
+    "21": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that ValidateStruct returns nil when obj is nil, matching the reference answer."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792139949.09152,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that JSON.Render panics with the error via panic(err), matching the reference."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792140022.1466298,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states it returns false and ErrMultiFileHeaderLenInvalid, matching the reference answer."
+      }
+    ],
+    "5": [
+      {
+        "t": 1792140187.218168,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that for map[string]string it stores the last value, ptrMap[k] = v[len(v)-1], matching the reference."
+      }
+    ],
+    "7": [
+      {
+        "t": 1792140262.627659,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that SetMode(\"\") with no test.v flag falls back to DebugMode, setting ginMode = debugCode and modeName = DebugMode, matching the reference."
+      }
+    ],
+    "9": [
+      {
+        "t": 1792140418.360717,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states it returns false and ErrMultiFileHeader, matching the reference."
+      }
+    ],
+    "10": [
+      {
+        "t": 1792140504.368124,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that source returns the `dunno` sentinel, the package-level `[]byte(\"???\")`, for out-of-range n, matching the reference."
+      }
+    ],
+    "12": [
+      {
+        "t": 1792140657.400446,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that Mode() returns the package-level modeName variable, i.e. the current gin mode string, matching the reference."
+      }
+    ],
+    "14": [
+      {
+        "t": 1792140737.8923972,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that defaultHandleRecovery calls c.AbortWithStatus(http.StatusInternalServerError), matching the reference."
+      }
+    ],
+    "16": [
+      {
+        "t": 1792140899.6711109,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply explicitly states the tag name is \"binding\", matching the reference answer."
+      }
+    ],
+    "17": [
+      {
+        "t": 1792141070.8886552,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that the Prefix is written only when the marshaled JSON bytes both start with \"[\" and end with \"]\" (a JSON array), matching the reference."
+      }
+    ],
+    "19": [
+      {
+        "t": 1792141142.7022452,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply explicitly states that an empty time_format tag falls back to time.RFC3339, matching the reference answer."
+      }
+    ],
+    "21": [
+      {
+        "t": 1792141217.020329,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that ValidateStruct returns nil when obj is nil, matching the reference answer."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

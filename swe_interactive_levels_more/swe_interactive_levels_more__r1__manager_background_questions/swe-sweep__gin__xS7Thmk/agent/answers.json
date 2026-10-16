@@ -1,0 +1,115 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792142457.403766,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that JSON.Render panics with the error via panic(err), matching the reference."
+    },
+    "7": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that SetMode(\"\") without the test.v flag sets DebugMode, with ginMode = debugCode and modeName = \"debug\", matching the reference."
+    },
+    "12": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states Mode() returns the package-level modeName string, matching the reference answer."
+    },
+    "14": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that defaultHandleRecovery calls c.AbortWithStatus(http.StatusInternalServerError), matching the reference."
+    },
+    "16": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the tag name is \"binding\", matching the reference answer."
+    },
+    "17": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that the Prefix is written only when the marshaled bytes are a JSON array (prefix \"[\" and suffix \"]\"), matching the reference."
+    },
+    "19": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that setTimeField falls back to time.RFC3339 when the time_format tag is empty, matching the reference."
+    },
+    "21": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that ValidateStruct returns nil when obj is nil, matching the reference answer."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792139972.933485,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that JSON.Render panics with the error via panic(err), matching the reference."
+      }
+    ],
+    "7": [
+      {
+        "t": 1792140698.6471198,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that SetMode(\"\") without the test.v flag sets DebugMode, with ginMode = debugCode and modeName = \"debug\", matching the reference."
+      }
+    ],
+    "12": [
+      {
+        "t": 1792140698.647545,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states Mode() returns the package-level modeName string, matching the reference answer."
+      }
+    ],
+    "14": [
+      {
+        "t": 1792140792.896992,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that defaultHandleRecovery calls c.AbortWithStatus(http.StatusInternalServerError), matching the reference."
+      }
+    ],
+    "16": [
+      {
+        "t": 1792141058.766811,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the tag name is \"binding\", matching the reference answer."
+      }
+    ],
+    "17": [
+      {
+        "t": 1792141266.968266,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that the Prefix is written only when the marshaled bytes are a JSON array (prefix \"[\" and suffix \"]\"), matching the reference."
+      }
+    ],
+    "19": [
+      {
+        "t": 1792141266.968003,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that setTimeField falls back to time.RFC3339 when the time_format tag is empty, matching the reference."
+      }
+    ],
+    "21": [
+      {
+        "t": 1792141255.8909252,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that ValidateStruct returns nil when obj is nil, matching the reference answer."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

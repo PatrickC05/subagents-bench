@@ -1,0 +1,2121 @@
+{
+  "name": "swe_interactive_levels_more",
+  "status": "complete",
+  "git_commit": "89fb86eb73941cf720af881eceae6e735d63cb28",
+  "argv": [
+    "<local path>",
+    "sweep",
+    "configs/sweeps/swe_interactive_levels_more.yaml",
+    "--jobs-at-once",
+    "24"
+  ],
+  "t_start": 1792139851.448137,
+  "t_update": 1792141695.556795,
+  "spec": {
+    "name": "swe_interactive_levels_more",
+    "base": "configs/sail/base.yaml",
+    "dataset_path": "../class-6-swe-sweep/swe-sweep/tasks",
+    "platform": "linux/amd64",
+    "tasks": [
+      "swe-sweep__dateutil",
+      "swe-sweep__gin",
+      "swe-sweep__dayjs",
+      "swe-sweep__luxon"
+    ],
+    "rounds": 1,
+    "order_seed": 0,
+    "overrides": {
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 0,
+        "status_every": 0,
+        "urgent_every": 0,
+        "snapshots": true,
+        "require_eta": true
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "subagent": {
+        "max_dispatches": 60,
+        "max_concurrent": 60,
+        "max_steps": 2000,
+        "model": null
+      }
+    },
+    "harbor": {
+      "n_concurrent": 4,
+      "agent_timeout_multiplier": 0.05,
+      "extra_args": [
+        "--override-cpus",
+        "3",
+        "--override-memory-mb",
+        "7000"
+      ],
+      "environment": "modal"
+    },
+    "conditions": {
+      "single_baseline": {
+        "topology": "single"
+      },
+      "manager_background_baseline": {
+        "subagent": {
+          "strategy": "parallel",
+          "scope": "hard",
+          "spawn_mode": "background"
+        },
+        "tools": {
+          "orchestrator_tools": [
+            "read_file",
+            "list_dir",
+            "search"
+          ]
+        }
+      },
+      "background_hinted_baseline": {
+        "subagent": {
+          "strategy": "parallel",
+          "scope": "hard",
+          "spawn_mode": "background",
+          "delegation_hint": true
+        }
+      },
+      "manager_available_baseline": {
+        "subagent": {
+          "strategy": "parallel",
+          "scope": "hard",
+          "spawn_mode": "background",
+          "availability_hint": true
+        },
+        "tools": {
+          "orchestrator_tools": [
+            "read_file",
+            "list_dir",
+            "search"
+          ]
+        }
+      },
+      "manager_owner_baseline": {
+        "subagent": {
+          "strategy": "parallel",
+          "scope": "hard",
+          "spawn_mode": "background",
+          "availability_hint": true,
+          "owner_hint": true,
+          "max_children": 10
+        },
+        "tools": {
+          "orchestrator_tools": [
+            "read_file",
+            "list_dir",
+            "search"
+          ]
+        }
+      },
+      "dispatcher_hinted_baseline": {
+        "subagent": {
+          "strategy": "parallel",
+          "scope": "hard",
+          "spawn_mode": "background",
+          "delegation_hint": true
+        },
+        "tools": {
+          "orchestrator_tools": []
+        }
+      },
+      "single_eta": {
+        "topology": "single",
+        "interactive": {
+          "status_every": 2
+        }
+      },
+      "manager_background_eta": {
+        "subagent": {
+          "strategy": "parallel",
+          "scope": "hard",
+          "spawn_mode": "background"
+        },
+        "tools": {
+          "orchestrator_tools": [
+            "read_file",
+            "list_dir",
+            "search"
+          ]
+        },
+        "interactive": {
+          "status_every": 2
+        }
+      },
+      "background_hinted_eta": {
+        "subagent": {
+          "strategy": "parallel",
+          "scope": "hard",
+          "spawn_mode": "background",
+          "delegation_hint": true
+        },
+        "interactive": {
+          "status_every": 2
+        }
+      },
+      "single_questions": {
+        "topology": "single",
+        "interactive": {
+          "status_every": 2,
+          "questions_per_interval": 2
+        }
+      },
+      "manager_background_questions": {
+        "subagent": {
+          "strategy": "parallel",
+          "scope": "hard",
+          "spawn_mode": "background"
+        },
+        "tools": {
+          "orchestrator_tools": [
+            "read_file",
+            "list_dir",
+            "search"
+          ]
+        },
+        "interactive": {
+          "status_every": 2,
+          "questions_per_interval": 2
+        }
+      },
+      "background_hinted_questions": {
+        "subagent": {
+          "strategy": "parallel",
+          "scope": "hard",
+          "spawn_mode": "background",
+          "delegation_hint": true
+        },
+        "interactive": {
+          "status_every": 2,
+          "questions_per_interval": 2
+        }
+      },
+      "single_urgent": {
+        "topology": "single",
+        "interactive": {
+          "status_every": 2,
+          "questions_per_interval": 2,
+          "urgent_every": 3
+        }
+      },
+      "manager_background_urgent": {
+        "subagent": {
+          "strategy": "parallel",
+          "scope": "hard",
+          "spawn_mode": "background"
+        },
+        "tools": {
+          "orchestrator_tools": [
+            "read_file",
+            "list_dir",
+            "search"
+          ]
+        },
+        "interactive": {
+          "status_every": 2,
+          "questions_per_interval": 2,
+          "urgent_every": 3
+        }
+      },
+      "background_hinted_urgent": {
+        "subagent": {
+          "strategy": "parallel",
+          "scope": "hard",
+          "spawn_mode": "background",
+          "delegation_hint": true
+        },
+        "interactive": {
+          "status_every": 2,
+          "questions_per_interval": 2,
+          "urgent_every": 3
+        }
+      },
+      "manager_available_eta": {
+        "subagent": {
+          "strategy": "parallel",
+          "scope": "hard",
+          "spawn_mode": "background",
+          "availability_hint": true
+        },
+        "tools": {
+          "orchestrator_tools": [
+            "read_file",
+            "list_dir",
+            "search"
+          ]
+        },
+        "interactive": {
+          "status_every": 2
+        }
+      },
+      "manager_owner_eta": {
+        "subagent": {
+          "strategy": "parallel",
+          "scope": "hard",
+          "spawn_mode": "background",
+          "availability_hint": true,
+          "owner_hint": true,
+          "max_children": 10
+        },
+        "tools": {
+          "orchestrator_tools": [
+            "read_file",
+            "list_dir",
+            "search"
+          ]
+        },
+        "interactive": {
+          "status_every": 2
+        }
+      },
+      "manager_available_questions": {
+        "subagent": {
+          "strategy": "parallel",
+          "scope": "hard",
+          "spawn_mode": "background",
+          "availability_hint": true
+        },
+        "tools": {
+          "orchestrator_tools": [
+            "read_file",
+            "list_dir",
+            "search"
+          ]
+        },
+        "interactive": {
+          "status_every": 2,
+          "questions_per_interval": 2
+        }
+      },
+      "manager_owner_questions": {
+        "subagent": {
+          "strategy": "parallel",
+          "scope": "hard",
+          "spawn_mode": "background",
+          "availability_hint": true,
+          "owner_hint": true,
+          "max_children": 10
+        },
+        "tools": {
+          "orchestrator_tools": [
+            "read_file",
+            "list_dir",
+            "search"
+          ]
+        },
+        "interactive": {
+          "status_every": 2,
+          "questions_per_interval": 2
+        }
+      },
+      "manager_available_urgent": {
+        "subagent": {
+          "strategy": "parallel",
+          "scope": "hard",
+          "spawn_mode": "background",
+          "availability_hint": true
+        },
+        "tools": {
+          "orchestrator_tools": [
+            "read_file",
+            "list_dir",
+            "search"
+          ]
+        },
+        "interactive": {
+          "status_every": 2,
+          "questions_per_interval": 2,
+          "urgent_every": 3
+        }
+      },
+      "manager_owner_urgent": {
+        "subagent": {
+          "strategy": "parallel",
+          "scope": "hard",
+          "spawn_mode": "background",
+          "availability_hint": true,
+          "owner_hint": true,
+          "max_children": 10
+        },
+        "tools": {
+          "orchestrator_tools": [
+            "read_file",
+            "list_dir",
+            "search"
+          ]
+        },
+        "interactive": {
+          "status_every": 2,
+          "questions_per_interval": 2,
+          "urgent_every": 3
+        }
+      },
+      "dispatcher_hinted_eta": {
+        "subagent": {
+          "strategy": "parallel",
+          "scope": "hard",
+          "spawn_mode": "background",
+          "delegation_hint": true
+        },
+        "tools": {
+          "orchestrator_tools": []
+        },
+        "interactive": {
+          "status_every": 2
+        }
+      },
+      "dispatcher_hinted_questions": {
+        "subagent": {
+          "strategy": "parallel",
+          "scope": "hard",
+          "spawn_mode": "background",
+          "delegation_hint": true
+        },
+        "tools": {
+          "orchestrator_tools": []
+        },
+        "interactive": {
+          "status_every": 2,
+          "questions_per_interval": 2
+        }
+      },
+      "dispatcher_hinted_urgent": {
+        "subagent": {
+          "strategy": "parallel",
+          "scope": "hard",
+          "spawn_mode": "background",
+          "delegation_hint": true
+        },
+        "tools": {
+          "orchestrator_tools": []
+        },
+        "interactive": {
+          "status_every": 2,
+          "questions_per_interval": 2,
+          "urgent_every": 3
+        }
+      }
+    }
+  },
+  "configs": {
+    "single_baseline": {
+      "name": "single_baseline",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "single",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": false,
+        "availability_hint": false,
+        "owner_hint": false,
+        "max_children": 0,
+        "spawn_mode": "blocking",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": null
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 0,
+        "status_every": 0,
+        "urgent_every": 0,
+        "require_eta": true,
+        "change_of_plan": [],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "manager_background_baseline": {
+      "name": "manager_background_baseline",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "subagents",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": false,
+        "availability_hint": false,
+        "owner_hint": false,
+        "max_children": 0,
+        "spawn_mode": "background",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": [
+          "read_file",
+          "list_dir",
+          "search"
+        ]
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 0,
+        "status_every": 0,
+        "urgent_every": 0,
+        "require_eta": true,
+        "change_of_plan": [],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "background_hinted_baseline": {
+      "name": "background_hinted_baseline",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "subagents",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": true,
+        "availability_hint": false,
+        "owner_hint": false,
+        "max_children": 0,
+        "spawn_mode": "background",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": null
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 0,
+        "status_every": 0,
+        "urgent_every": 0,
+        "require_eta": true,
+        "change_of_plan": [],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "manager_available_baseline": {
+      "name": "manager_available_baseline",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "subagents",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": false,
+        "availability_hint": true,
+        "owner_hint": false,
+        "max_children": 0,
+        "spawn_mode": "background",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": [
+          "read_file",
+          "list_dir",
+          "search"
+        ]
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 0,
+        "status_every": 0,
+        "urgent_every": 0,
+        "require_eta": true,
+        "change_of_plan": [],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "manager_owner_baseline": {
+      "name": "manager_owner_baseline",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "subagents",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": false,
+        "availability_hint": true,
+        "owner_hint": true,
+        "max_children": 10,
+        "spawn_mode": "background",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": [
+          "read_file",
+          "list_dir",
+          "search"
+        ]
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 0,
+        "status_every": 0,
+        "urgent_every": 0,
+        "require_eta": true,
+        "change_of_plan": [],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "dispatcher_hinted_baseline": {
+      "name": "dispatcher_hinted_baseline",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "subagents",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": true,
+        "availability_hint": false,
+        "owner_hint": false,
+        "max_children": 0,
+        "spawn_mode": "background",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": []
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 0,
+        "status_every": 0,
+        "urgent_every": 0,
+        "require_eta": true,
+        "change_of_plan": [],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "single_eta": {
+      "name": "single_eta",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "single",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": false,
+        "availability_hint": false,
+        "owner_hint": false,
+        "max_children": 0,
+        "spawn_mode": "blocking",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": null
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 0,
+        "status_every": 2,
+        "urgent_every": 0,
+        "require_eta": true,
+        "change_of_plan": [],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "manager_background_eta": {
+      "name": "manager_background_eta",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "subagents",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": false,
+        "availability_hint": false,
+        "owner_hint": false,
+        "max_children": 0,
+        "spawn_mode": "background",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": [
+          "read_file",
+          "list_dir",
+          "search"
+        ]
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 0,
+        "status_every": 2,
+        "urgent_every": 0,
+        "require_eta": true,
+        "change_of_plan": [],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "background_hinted_eta": {
+      "name": "background_hinted_eta",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "subagents",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": true,
+        "availability_hint": false,
+        "owner_hint": false,
+        "max_children": 0,
+        "spawn_mode": "background",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": null
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 0,
+        "status_every": 2,
+        "urgent_every": 0,
+        "require_eta": true,
+        "change_of_plan": [],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "single_questions": {
+      "name": "single_questions",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "single",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": false,
+        "availability_hint": false,
+        "owner_hint": false,
+        "max_children": 0,
+        "spawn_mode": "blocking",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": null
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 2,
+        "status_every": 2,
+        "urgent_every": 0,
+        "require_eta": true,
+        "change_of_plan": [],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "manager_background_questions": {
+      "name": "manager_background_questions",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "subagents",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": false,
+        "availability_hint": false,
+        "owner_hint": false,
+        "max_children": 0,
+        "spawn_mode": "background",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": [
+          "read_file",
+          "list_dir",
+          "search"
+        ]
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 2,
+        "status_every": 2,
+        "urgent_every": 0,
+        "require_eta": true,
+        "change_of_plan": [],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "background_hinted_questions": {
+      "name": "background_hinted_questions",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "subagents",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": true,
+        "availability_hint": false,
+        "owner_hint": false,
+        "max_children": 0,
+        "spawn_mode": "background",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": null
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 2,
+        "status_every": 2,
+        "urgent_every": 0,
+        "require_eta": true,
+        "change_of_plan": [],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "single_urgent": {
+      "name": "single_urgent",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "single",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": false,
+        "availability_hint": false,
+        "owner_hint": false,
+        "max_children": 0,
+        "spawn_mode": "blocking",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": null
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 2,
+        "status_every": 2,
+        "urgent_every": 3,
+        "require_eta": true,
+        "change_of_plan": [],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "manager_background_urgent": {
+      "name": "manager_background_urgent",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "subagents",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": false,
+        "availability_hint": false,
+        "owner_hint": false,
+        "max_children": 0,
+        "spawn_mode": "background",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": [
+          "read_file",
+          "list_dir",
+          "search"
+        ]
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 2,
+        "status_every": 2,
+        "urgent_every": 3,
+        "require_eta": true,
+        "change_of_plan": [],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "background_hinted_urgent": {
+      "name": "background_hinted_urgent",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "subagents",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": true,
+        "availability_hint": false,
+        "owner_hint": false,
+        "max_children": 0,
+        "spawn_mode": "background",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": null
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 2,
+        "status_every": 2,
+        "urgent_every": 3,
+        "require_eta": true,
+        "change_of_plan": [],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "manager_available_eta": {
+      "name": "manager_available_eta",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "subagents",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": false,
+        "availability_hint": true,
+        "owner_hint": false,
+        "max_children": 0,
+        "spawn_mode": "background",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": [
+          "read_file",
+          "list_dir",
+          "search"
+        ]
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 0,
+        "status_every": 2,
+        "urgent_every": 0,
+        "require_eta": true,
+        "change_of_plan": [],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "manager_owner_eta": {
+      "name": "manager_owner_eta",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "subagents",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": false,
+        "availability_hint": true,
+        "owner_hint": true,
+        "max_children": 10,
+        "spawn_mode": "background",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": [
+          "read_file",
+          "list_dir",
+          "search"
+        ]
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 0,
+        "status_every": 2,
+        "urgent_every": 0,
+        "require_eta": true,
+        "change_of_plan": [],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "manager_available_questions": {
+      "name": "manager_available_questions",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "subagents",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": false,
+        "availability_hint": true,
+        "owner_hint": false,
+        "max_children": 0,
+        "spawn_mode": "background",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": [
+          "read_file",
+          "list_dir",
+          "search"
+        ]
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 2,
+        "status_every": 2,
+        "urgent_every": 0,
+        "require_eta": true,
+        "change_of_plan": [],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "manager_owner_questions": {
+      "name": "manager_owner_questions",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "subagents",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": false,
+        "availability_hint": true,
+        "owner_hint": true,
+        "max_children": 10,
+        "spawn_mode": "background",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": [
+          "read_file",
+          "list_dir",
+          "search"
+        ]
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 2,
+        "status_every": 2,
+        "urgent_every": 0,
+        "require_eta": true,
+        "change_of_plan": [],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "manager_available_urgent": {
+      "name": "manager_available_urgent",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "subagents",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": false,
+        "availability_hint": true,
+        "owner_hint": false,
+        "max_children": 0,
+        "spawn_mode": "background",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": [
+          "read_file",
+          "list_dir",
+          "search"
+        ]
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 2,
+        "status_every": 2,
+        "urgent_every": 3,
+        "require_eta": true,
+        "change_of_plan": [],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "manager_owner_urgent": {
+      "name": "manager_owner_urgent",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "subagents",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": false,
+        "availability_hint": true,
+        "owner_hint": true,
+        "max_children": 10,
+        "spawn_mode": "background",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": [
+          "read_file",
+          "list_dir",
+          "search"
+        ]
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 2,
+        "status_every": 2,
+        "urgent_every": 3,
+        "require_eta": true,
+        "change_of_plan": [],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "dispatcher_hinted_eta": {
+      "name": "dispatcher_hinted_eta",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "subagents",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": true,
+        "availability_hint": false,
+        "owner_hint": false,
+        "max_children": 0,
+        "spawn_mode": "background",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": []
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 0,
+        "status_every": 2,
+        "urgent_every": 0,
+        "require_eta": true,
+        "change_of_plan": [],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "dispatcher_hinted_questions": {
+      "name": "dispatcher_hinted_questions",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "subagents",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": true,
+        "availability_hint": false,
+        "owner_hint": false,
+        "max_children": 0,
+        "spawn_mode": "background",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": []
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 2,
+        "status_every": 2,
+        "urgent_every": 0,
+        "require_eta": true,
+        "change_of_plan": [],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "dispatcher_hinted_urgent": {
+      "name": "dispatcher_hinted_urgent",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "subagents",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": true,
+        "availability_hint": false,
+        "owner_hint": false,
+        "max_children": 0,
+        "spawn_mode": "background",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": []
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 2,
+        "status_every": 2,
+        "urgent_every": 3,
+        "require_eta": true,
+        "change_of_plan": [],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    }
+  }
+}

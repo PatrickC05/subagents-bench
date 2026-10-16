@@ -1,0 +1,167 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792142658.496537,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that tzres.name_from_string raises ValueError(\"Malformed timezone string.\"), matching the reference."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that a missing name returns the default argument (None unless overridden), matching the reference."
+    },
+    "5": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that tzwinbase.transitions(year) returns None when self.hasdst is false, matching the reference."
+    },
+    "7": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply correctly states the assert compares metadata['tzdata_file_sha512'] with the SHA-512 hash of the downloaded tzdata file, including the 'SHA failed for' message."
+    },
+    "9": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply accurately states that it logs an error saying zic could not be found and suggests installing libc-bin or checking PATH."
+    },
+    "10": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that method=0 raises ValueError('invalid method'), matching the reference exactly."
+    },
+    "12": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the default is EASTER_WESTERN (equal to 3), matching the reference answer."
+    },
+    "14": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that metadata is serialized as JSON and written to METADATA_FN in the generated zoneinfo directory using json.dump(metadata, f, indent=4, sort_keys=True), matching the reference."
+    },
+    "16": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that tzrangebase.utcoffset returns None when self._isdst(dt) is None, matching the reference."
+    },
+    "17": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states main() re-raises the last stored urllib.error.URLError from the final mirror attempt, matching the reference."
+    },
+    "19": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that on IOError it emits a warning and returns None, matching the reference answer."
+    },
+    "21": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that `_tzinfo._fromutc` raises `TypeError` with the message \"fromutc() requires a datetime argument\", matching the reference."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792139956.300381,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that tzres.name_from_string raises ValueError(\"Malformed timezone string.\"), matching the reference."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792140022.2984462,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that a missing name returns the default argument (None unless overridden), matching the reference."
+      }
+    ],
+    "5": [
+      {
+        "t": 1792140182.854492,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that tzwinbase.transitions(year) returns None when self.hasdst is false, matching the reference."
+      }
+    ],
+    "7": [
+      {
+        "t": 1792140272.6801128,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply correctly states the assert compares metadata['tzdata_file_sha512'] with the SHA-512 hash of the downloaded tzdata file, including the 'SHA failed for' message."
+      }
+    ],
+    "9": [
+      {
+        "t": 1792140450.104392,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply accurately states that it logs an error saying zic could not be found and suggests installing libc-bin or checking PATH."
+      }
+    ],
+    "10": [
+      {
+        "t": 1792140502.02157,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that method=0 raises ValueError('invalid method'), matching the reference exactly."
+      }
+    ],
+    "12": [
+      {
+        "t": 1792140656.6908212,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the default is EASTER_WESTERN (equal to 3), matching the reference answer."
+      }
+    ],
+    "14": [
+      {
+        "t": 1792140739.684869,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that metadata is serialized as JSON and written to METADATA_FN in the generated zoneinfo directory using json.dump(metadata, f, indent=4, sort_keys=True), matching the reference."
+      }
+    ],
+    "16": [
+      {
+        "t": 1792140903.247108,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that tzrangebase.utcoffset returns None when self._isdst(dt) is None, matching the reference."
+      }
+    ],
+    "17": [
+      {
+        "t": 1792140979.48705,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states main() re-raises the last stored urllib.error.URLError from the final mirror attempt, matching the reference."
+      }
+    ],
+    "19": [
+      {
+        "t": 1792141141.667352,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that on IOError it emits a warning and returns None, matching the reference answer."
+      }
+    ],
+    "21": [
+      {
+        "t": 1792141223.633218,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that `_tzinfo._fromutc` raises `TypeError` with the message \"fromutc() requires a datetime argument\", matching the reference."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

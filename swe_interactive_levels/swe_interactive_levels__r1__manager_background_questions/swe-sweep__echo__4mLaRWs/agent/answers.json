@@ -1,0 +1,141 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792135343.685091,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that when config.Output is nil the log line is written via c.Logger().Output(), matching the reference."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states it returns echo.NewHTTPError with http.StatusInternalServerError (500) using the pooled value asserted to error, matching the reference."
+    },
+    "9": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that limitedReader.Read returns n and echo.ErrStatusRequestEntityTooLarge, matching the reference answer."
+    },
+    "10": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that DefaultBodyDumpConfig.Skipper is DefaultSkipper, matching the reference answer."
+    },
+    "12": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that bytes_in writes \"0\" when the Content-Length header is absent/empty, matching the reference."
+    },
+    "14": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that MethodFromQuery returns a MethodOverrideGetter closure returning c.QueryParam(param), matching the reference."
+    },
+    "16": {
+      "correct": false,
+      "verdict": "wrong",
+      "why": "The reply states it sets config.Skipper to DefaultDecompressConfig.Skipper, but the reference says it sets it to DefaultGzipConfig.Skipper."
+    },
+    "17": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the exact panic with fmt.Errorf(\"echo: invalid body-limit=%s\", config.Limit), matching the reference."
+    },
+    "19": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that BodyDumpWithConfig panics with the exact message \"echo: body-dump middleware requires a handler function\", matching the reference."
+    },
+    "21": {
+      "correct": false,
+      "verdict": "wrong",
+      "why": "The reply states the default is http.StatusFound (302), contradicting the reference value of http.StatusMovedPermanently."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792133374.375941,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that when config.Output is nil the log line is written via c.Logger().Output(), matching the reference."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792133432.313962,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states it returns echo.NewHTTPError with http.StatusInternalServerError (500) using the pooled value asserted to error, matching the reference."
+      }
+    ],
+    "9": [
+      {
+        "t": 1792134293.280174,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that limitedReader.Read returns n and echo.ErrStatusRequestEntityTooLarge, matching the reference answer."
+      }
+    ],
+    "10": [
+      {
+        "t": 1792134293.2810009,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that DefaultBodyDumpConfig.Skipper is DefaultSkipper, matching the reference answer."
+      }
+    ],
+    "12": [
+      {
+        "t": 1792134293.281496,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that bytes_in writes \"0\" when the Content-Length header is absent/empty, matching the reference."
+      }
+    ],
+    "14": [
+      {
+        "t": 1792134293.282275,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that MethodFromQuery returns a MethodOverrideGetter closure returning c.QueryParam(param), matching the reference."
+      }
+    ],
+    "16": [
+      {
+        "t": 1792134887.09671,
+        "verdict": "wrong",
+        "correct": false,
+        "why": "The reply states it sets config.Skipper to DefaultDecompressConfig.Skipper, but the reference says it sets it to DefaultGzipConfig.Skipper."
+      }
+    ],
+    "17": [
+      {
+        "t": 1792134887.097472,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the exact panic with fmt.Errorf(\"echo: invalid body-limit=%s\", config.Limit), matching the reference."
+      }
+    ],
+    "19": [
+      {
+        "t": 1792134878.266586,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that BodyDumpWithConfig panics with the exact message \"echo: body-dump middleware requires a handler function\", matching the reference."
+      }
+    ],
+    "21": [
+      {
+        "t": 1792134878.268656,
+        "verdict": "wrong",
+        "correct": false,
+        "why": "The reply states the default is http.StatusFound (302), contradicting the reference value of http.StatusMovedPermanently."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

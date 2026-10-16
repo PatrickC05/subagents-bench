@@ -1,0 +1,128 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792142855.003359,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that tzres.name_from_string raises ValueError(\"Malformed timezone string.\") for an '@' string with an unparseable offset, matching the reference."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that get returns the default argument (None when not supplied), matching the reference."
+    },
+    "7": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the assert compares metadata['tzdata_file_sha512'] to the downloaded file's SHA-512 digest with the message \"SHA failed for\", matching the reference."
+    },
+    "9": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that on errno == 2 it logs an error saying zic could not be found and suggests installing libc-bin or checking PATH, matching the reference."
+    },
+    "10": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that method=0 raises ValueError(\"invalid method\"), matching the reference."
+    },
+    "12": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the default is EASTER_WESTERN (3), matching the reference answer."
+    },
+    "14": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that rebuild writes the metadata as JSON via json.dump(metadata, f, indent=4, sort_keys=True) to the METADATA_FN file inside the generated zoneinfo directory, matching the reference."
+    },
+    "16": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that `tzrangebase.utcoffset` returns `None` when `self._isdst(dt)` is `None`, matching the reference."
+    },
+    "21": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the exact exception type and message from the reference."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792140037.057034,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that tzres.name_from_string raises ValueError(\"Malformed timezone string.\") for an '@' string with an unparseable offset, matching the reference."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792140037.057479,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that get returns the default argument (None when not supplied), matching the reference."
+      }
+    ],
+    "7": [
+      {
+        "t": 1792140297.717258,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the assert compares metadata['tzdata_file_sha512'] to the downloaded file's SHA-512 digest with the message \"SHA failed for\", matching the reference."
+      }
+    ],
+    "9": [
+      {
+        "t": 1792140433.770231,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that on errno == 2 it logs an error saying zic could not be found and suggests installing libc-bin or checking PATH, matching the reference."
+      }
+    ],
+    "10": [
+      {
+        "t": 1792140518.9261608,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that method=0 raises ValueError(\"invalid method\"), matching the reference."
+      }
+    ],
+    "12": [
+      {
+        "t": 1792140806.6771781,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the default is EASTER_WESTERN (3), matching the reference answer."
+      }
+    ],
+    "14": [
+      {
+        "t": 1792140829.532201,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that rebuild writes the metadata as JSON via json.dump(metadata, f, indent=4, sort_keys=True) to the METADATA_FN file inside the generated zoneinfo directory, matching the reference."
+      }
+    ],
+    "16": [
+      {
+        "t": 1792140939.610023,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that `tzrangebase.utcoffset` returns `None` when `self._isdst(dt)` is `None`, matching the reference."
+      }
+    ],
+    "21": [
+      {
+        "t": 1792141349.3482199,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the exact exception type and message from the reference."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

@@ -1,0 +1,553 @@
+{
+  "name": "swe_interactive_change_more",
+  "status": "complete",
+  "git_commit": "89fb86eb73941cf720af881eceae6e735d63cb28",
+  "argv": [
+    "<local path>",
+    "sweep",
+    "configs/sweeps/swe_interactive_change_more.yaml",
+    "--only",
+    "manager_available_stop_change"
+  ],
+  "t_start": 1792141813.1168299,
+  "t_update": 1792143654.498834,
+  "spec": {
+    "name": "swe_interactive_change_more",
+    "base": "configs/sail/base.yaml",
+    "dataset_path": "../class-6-swe-sweep/swe-sweep/tasks",
+    "platform": "linux/amd64",
+    "tasks": [
+      "swe-sweep__dateutil",
+      "swe-sweep__gin",
+      "swe-sweep__dayjs",
+      "swe-sweep__luxon"
+    ],
+    "rounds": 1,
+    "order_seed": 0,
+    "overrides": {
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 0,
+        "status_every": 0,
+        "urgent_every": 0,
+        "snapshots": true,
+        "require_eta": true,
+        "change_of_plan": [
+          {
+            "kind": "cancel",
+            "bug": 3,
+            "at_sec": 810
+          },
+          {
+            "kind": "undo",
+            "bug": 0,
+            "at_sec": 960
+          }
+        ]
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "subagent": {
+        "max_dispatches": 60,
+        "max_concurrent": 60,
+        "max_steps": 2000,
+        "model": null
+      }
+    },
+    "harbor": {
+      "n_concurrent": 4,
+      "agent_timeout_multiplier": 0.05,
+      "extra_args": [
+        "--override-cpus",
+        "3",
+        "--override-memory-mb",
+        "7000"
+      ],
+      "environment": "modal"
+    },
+    "conditions": {
+      "single_change": {
+        "topology": "single"
+      },
+      "manager_background_change": {
+        "subagent": {
+          "strategy": "parallel",
+          "scope": "hard",
+          "spawn_mode": "background"
+        },
+        "tools": {
+          "orchestrator_tools": [
+            "read_file",
+            "list_dir",
+            "search"
+          ]
+        }
+      },
+      "background_hinted_change": {
+        "subagent": {
+          "strategy": "parallel",
+          "scope": "hard",
+          "spawn_mode": "background",
+          "delegation_hint": true
+        }
+      },
+      "manager_available_change": {
+        "subagent": {
+          "strategy": "parallel",
+          "scope": "hard",
+          "spawn_mode": "background",
+          "availability_hint": true
+        },
+        "tools": {
+          "orchestrator_tools": [
+            "read_file",
+            "list_dir",
+            "search"
+          ]
+        }
+      },
+      "manager_available_stop_change": {
+        "subagent": {
+          "strategy": "parallel",
+          "scope": "hard",
+          "spawn_mode": "background",
+          "availability_hint": true,
+          "stop_tool": true
+        },
+        "tools": {
+          "orchestrator_tools": [
+            "read_file",
+            "list_dir",
+            "search"
+          ]
+        }
+      }
+    }
+  },
+  "configs": {
+    "single_change": {
+      "name": "single_change",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "single",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": false,
+        "availability_hint": false,
+        "owner_hint": false,
+        "max_children": 0,
+        "spawn_mode": "blocking",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": null
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 0,
+        "status_every": 0,
+        "urgent_every": 0,
+        "require_eta": true,
+        "change_of_plan": [
+          {
+            "kind": "cancel",
+            "bug": 3,
+            "at_sec": 810
+          },
+          {
+            "kind": "undo",
+            "bug": 0,
+            "at_sec": 960
+          }
+        ],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "manager_background_change": {
+      "name": "manager_background_change",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "subagents",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": false,
+        "availability_hint": false,
+        "owner_hint": false,
+        "max_children": 0,
+        "spawn_mode": "background",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": [
+          "read_file",
+          "list_dir",
+          "search"
+        ]
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 0,
+        "status_every": 0,
+        "urgent_every": 0,
+        "require_eta": true,
+        "change_of_plan": [
+          {
+            "kind": "cancel",
+            "bug": 3,
+            "at_sec": 810
+          },
+          {
+            "kind": "undo",
+            "bug": 0,
+            "at_sec": 960
+          }
+        ],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "background_hinted_change": {
+      "name": "background_hinted_change",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "subagents",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": true,
+        "availability_hint": false,
+        "owner_hint": false,
+        "max_children": 0,
+        "spawn_mode": "background",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": null
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 0,
+        "status_every": 0,
+        "urgent_every": 0,
+        "require_eta": true,
+        "change_of_plan": [
+          {
+            "kind": "cancel",
+            "bug": 3,
+            "at_sec": 810
+          },
+          {
+            "kind": "undo",
+            "bug": 0,
+            "at_sec": 960
+          }
+        ],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "manager_available_change": {
+      "name": "manager_available_change",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "subagents",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": false,
+        "availability_hint": true,
+        "owner_hint": false,
+        "max_children": 0,
+        "spawn_mode": "background",
+        "stop_tool": false,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": [
+          "read_file",
+          "list_dir",
+          "search"
+        ]
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 0,
+        "status_every": 0,
+        "urgent_every": 0,
+        "require_eta": true,
+        "change_of_plan": [
+          {
+            "kind": "cancel",
+            "bug": 3,
+            "at_sec": 810
+          },
+          {
+            "kind": "undo",
+            "bug": 0,
+            "at_sec": 960
+          }
+        ],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    },
+    "manager_available_stop_change": {
+      "name": "manager_available_stop_change",
+      "orchestrator": {
+        "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "completion_window": "balanced",
+        "temperature": 0.7,
+        "max_output_tokens": 32768,
+        "max_retries": 4,
+        "retry_budget_sec": 120.0,
+        "request_timeout_sec": 180.0,
+        "price_in": 0.07,
+        "price_cache_read": 0.005,
+        "price_out": 0.22
+      },
+      "topology": "subagents",
+      "subagent": {
+        "model": null,
+        "strategy": "parallel",
+        "scope": "hard",
+        "max_concurrent": 60,
+        "max_dispatches": 60,
+        "max_steps": 2000,
+        "max_output_chars": 12000,
+        "delegation_hint": false,
+        "availability_hint": true,
+        "owner_hint": false,
+        "max_children": 0,
+        "spawn_mode": "background",
+        "stop_tool": true,
+        "arbiter": {
+          "n_candidates": 3,
+          "debate_rounds": 1,
+          "confidence_threshold": 0.8
+        }
+      },
+      "budget": {
+        "orchestrator_steps": 2000,
+        "command_timeout_sec": 600,
+        "max_command_timeout_sec": 1800
+      },
+      "tools": {
+        "max_output_chars": 12000,
+        "orchestrator_tools": [
+          "read_file",
+          "list_dir",
+          "search"
+        ]
+      },
+      "interactive": {
+        "wall_clock_sec": 1800,
+        "interval_sec": 240,
+        "max_hints": 6,
+        "hint_detail": "tests",
+        "bundle": 1,
+        "order_seed": 0,
+        "vary_order_by_round": false,
+        "scope": "reported",
+        "session_note": null,
+        "end_when_idle": true,
+        "max_context_chars": 400000,
+        "replies": true,
+        "questions_per_interval": 0,
+        "status_every": 0,
+        "urgent_every": 0,
+        "require_eta": true,
+        "change_of_plan": [
+          {
+            "kind": "cancel",
+            "bug": 3,
+            "at_sec": 810
+          },
+          {
+            "kind": "undo",
+            "bug": 0,
+            "at_sec": 960
+          }
+        ],
+        "snapshots": true,
+        "snapshot_every_sec": 15.0,
+        "interrupt": false,
+        "interrupt_min_sec": 5.0,
+        "interrupt_max_in_row": 3
+      }
+    }
+  }
+}

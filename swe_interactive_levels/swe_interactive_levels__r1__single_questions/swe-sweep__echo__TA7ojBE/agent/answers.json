@@ -1,0 +1,89 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792135521.294153,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that when config.Output is nil the log line is written to c.Logger().Output(), matching the reference."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that it returns echo.NewHTTPError with http.StatusInternalServerError and the pooled value's error message, matching the reference."
+    },
+    "5": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that MethodOverride() returns MethodOverrideWithConfig(DefaultMethodOverrideConfig), matching the reference exactly, with additional correct detail."
+    },
+    "7": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that the nil-Skipper default is set to DefaultTrailingSlashConfig.Skipper, matching the reference answer."
+    },
+    "12": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that bytes_in writes \"0\" when the Content-Length header is empty, matching the reference."
+    },
+    "14": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that MethodFromQuery returns a MethodOverrideGetter closure returning c.QueryParam(param), matching the reference."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792133367.216356,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that when config.Output is nil the log line is written to c.Logger().Output(), matching the reference."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792133536.47177,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that it returns echo.NewHTTPError with http.StatusInternalServerError and the pooled value's error message, matching the reference."
+      }
+    ],
+    "5": [
+      {
+        "t": 1792133981.3734221,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that MethodOverride() returns MethodOverrideWithConfig(DefaultMethodOverrideConfig), matching the reference exactly, with additional correct detail."
+      }
+    ],
+    "7": [
+      {
+        "t": 1792133981.373982,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that the nil-Skipper default is set to DefaultTrailingSlashConfig.Skipper, matching the reference answer."
+      }
+    ],
+    "12": [
+      {
+        "t": 1792134274.063404,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that bytes_in writes \"0\" when the Content-Length header is empty, matching the reference."
+      }
+    ],
+    "14": [
+      {
+        "t": 1792134274.0644212,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that MethodFromQuery returns a MethodOverrideGetter closure returning c.QueryParam(param), matching the reference."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

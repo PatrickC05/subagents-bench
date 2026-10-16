@@ -1,0 +1,196 @@
+{
+    "id": "6462fc6f-2087-47f2-a496-1316154dd307",
+    "task_name": "swe-sweep__gin",
+    "trial_name": "swe-sweep__gin__QFYS9c2",
+    "trial_uri": "file://<local path>",
+    "task_id": {
+        "path": "jobs/swe_interactive_change_more/tasks/swe-sweep__gin"
+    },
+    "source": "tasks",
+    "task_checksum": "5f51062b25241594693f2720c08073461b1f60db336f7b497651558264763080",
+    "config": {
+        "task": {
+            "path": "jobs/swe_interactive_change_more/tasks/swe-sweep__gin",
+            "git_url": null,
+            "git_commit_id": null,
+            "name": null,
+            "ref": null,
+            "overwrite": false,
+            "download_dir": null,
+            "source": "tasks"
+        },
+        "trial_name": "swe-sweep__gin__QFYS9c2",
+        "trials_dir": "jobs/swe_interactive_change_more/swe_interactive_change_more__r1__manager_available_change",
+        "install_only": false,
+        "timeout_multiplier": 1.0,
+        "agent_timeout_multiplier": 0.05,
+        "verifier_timeout_multiplier": null,
+        "agent_setup_timeout_multiplier": null,
+        "environment_build_timeout_multiplier": null,
+        "agent": {
+            "name": "subagents_bench.harness.harbor_agent:OrchestratorAgent",
+            "import_path": null,
+            "model_name": null,
+            "n_concurrent": null,
+            "concurrency_group": null,
+            "skills": [],
+            "override_timeout_sec": null,
+            "override_setup_timeout_sec": null,
+            "max_timeout_sec": null,
+            "resume_trajectory": false,
+            "load_trajectory": null,
+            "extra_allowed_hosts": [],
+            "kwargs": {},
+            "mcp_servers": []
+        },
+        "user_agent": null,
+        "environment": {
+            "type": "modal",
+            "import_path": null,
+            "force_build": false,
+            "delete": true,
+            "stream": false,
+            "cpu_enforcement_policy": "auto",
+            "memory_enforcement_policy": "auto",
+            "override_cpus": 3,
+            "override_memory_mb": 7000,
+            "override_storage_mb": null,
+            "override_gpus": null,
+            "override_tpu": null,
+            "mounts": null,
+            "extra_docker_compose": [],
+            "kwargs": {},
+            "extra_allowed_hosts": []
+        },
+        "verifier": {
+            "override_timeout_sec": null,
+            "max_timeout_sec": null,
+            "disable": false
+        },
+        "artifacts": [],
+        "extra_instruction_paths": [],
+        "extra_instructions": [],
+        "job_id": "c01502b9-e537-4a3f-b267-aa766f5046a3",
+        "source_trial": null
+    },
+    "agent_info": {
+        "name": "subagents-orchestrator",
+        "version": "0.1.0",
+        "model_info": null
+    },
+    "agent_result": {
+        "n_input_tokens": 13422447,
+        "n_cache_tokens": 11392256,
+        "n_output_tokens": 562177,
+        "cost_usd": 0.32275359000000026,
+        "model_usage": {
+            "deepseek-ai/DeepSeek-V4.1-Flash": {
+                "n_input_tokens": 13422447,
+                "n_cache_tokens": 11392256,
+                "n_output_tokens": 562177,
+                "cost_usd": 0.32275359000000026
+            }
+        },
+        "rollout_details": null,
+        "metadata": {
+            "episode_id": "43215087b48d",
+            "condition": "manager_available_change",
+            "topology": "subagents",
+            "strategy": "parallel",
+            "scope": "hard",
+            "orchestrator_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+            "subagent_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+            "task_name": "swe-sweep__gin",
+            "trial_name": "swe-sweep__gin__QFYS9c2",
+            "git_commit": "89fb86eb73941cf720af881eceae6e735d63cb28",
+            "t_start": 1792139909.398616,
+            "exit_reason": "deadline",
+            "hint_order_seed": 0,
+            "session_t0": 1792139909.3996549,
+            "n_elided_results": 34,
+            "t_end": 1792141709.5232918,
+            "wall_clock_sec": 1800.1246757507324,
+            "error": null,
+            "orchestrator_steps": 27,
+            "spawn_calls": 5,
+            "dispatches": 19,
+            "arbitrations": 0,
+            "tokens_by_role": {
+                "orchestrator": {
+                    "prompt": 1062186,
+                    "cached": 628992,
+                    "completion": 108151,
+                    "reasoning": 101298
+                },
+                "subagent": {
+                    "prompt": 12360261,
+                    "cached": 10763264,
+                    "completion": 454026,
+                    "reasoning": 357391
+                },
+                "arbiter": {
+                    "prompt": 0,
+                    "cached": 0,
+                    "completion": 0,
+                    "reasoning": 0
+                },
+                "debate": {
+                    "prompt": 0,
+                    "cached": 0,
+                    "completion": 0,
+                    "reasoning": 0
+                }
+            },
+            "n_calls": 461,
+            "n_provider_errors": 0,
+            "n_interrupts": 0,
+            "n_stream_repairs": 0,
+            "cancel_kill": null,
+            "reward": null,
+            "resolved": null,
+            "n_hints": 6,
+            "n_hints_delivered": 6,
+            "n_questions": 0,
+            "n_replies": 5,
+            "end_kill": {
+                "ok": true,
+                "n_killed": 0,
+                "error": null
+            }
+        }
+    },
+    "verifier_result": {
+        "rewards": {
+            "reward": 0.1818,
+            "n_subtasks": 11.0,
+            "n_resolved": 2.0,
+            "n_partial": 0.0,
+            "visible_ok": 1.0,
+            "n_regressions": 0.0,
+            "agent_patch_applied": 1.0,
+            "agent_build_ok": 1.0,
+            "grader_failed": 0.0
+        }
+    },
+    "verifier_environment_mode": "separate",
+    "exception_info": null,
+    "started_at": "2026-10-16T08:38:28.519666Z",
+    "finished_at": "2026-10-16T09:08:51.824031Z",
+    "environment_setup": {
+        "started_at": "2026-10-16T08:38:28.548731Z",
+        "finished_at": "2026-10-16T08:38:29.362347Z"
+    },
+    "agent_setup": {
+        "started_at": "2026-10-16T08:38:29.362379Z",
+        "finished_at": "2026-10-16T08:38:29.362404Z"
+    },
+    "agent_execution": {
+        "started_at": "2026-10-16T08:38:29.362451Z",
+        "finished_at": "2026-10-16T09:08:29.564587Z"
+    },
+    "verifier": {
+        "started_at": "2026-10-16T09:08:30.503151Z",
+        "finished_at": "2026-10-16T09:08:51.823993Z"
+    },
+    "step_results": null
+}

@@ -1,0 +1,154 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792142427.748928,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that tzres.name_from_string raises ValueError(\"Malformed timezone string.\"), matching the reference exactly."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that get returns the default argument (None when not overridden), matching the reference."
+    },
+    "5": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that transitions(year) returns None when the zone has no DST (hasdst false), matching the reference."
+    },
+    "9": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply accurately states that on errno == 2 it logs an error saying zic could not be found and suggests installing libc-bin or checking PATH."
+    },
+    "10": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states easter() raises ValueError(\"invalid method\") for method=0, matching the reference."
+    },
+    "12": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the default is EASTER_WESTERN (= 3), matching the reference answer."
+    },
+    "14": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that rebuild writes metadata as JSON to METADATA_FN in the generated zoneinfo directory using json.dump(metadata, f, indent=4, sort_keys=True), matching the reference."
+    },
+    "16": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that tzrangebase.utcoffset returns None when self._isdst(dt) is None, matching the reference."
+    },
+    "17": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states main() re-raises the last caught urllib.error.URLError stored in last_error, matching the reference."
+    },
+    "19": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that getzoneinfofile_stream() catches the IOError, emits a warning, and returns None, matching the reference."
+    },
+    "21": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that `_tzinfo._fromutc` raises `TypeError(\"fromutc() requires a datetime argument\")`, matching the reference exactly."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792140075.3529532,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that tzres.name_from_string raises ValueError(\"Malformed timezone string.\"), matching the reference exactly."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792140075.3534,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that get returns the default argument (None when not overridden), matching the reference."
+      }
+    ],
+    "5": [
+      {
+        "t": 1792140281.076488,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that transitions(year) returns None when the zone has no DST (hasdst false), matching the reference."
+      }
+    ],
+    "9": [
+      {
+        "t": 1792140434.143453,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply accurately states that on errno == 2 it logs an error saying zic could not be found and suggests installing libc-bin or checking PATH."
+      }
+    ],
+    "10": [
+      {
+        "t": 1792140586.964524,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states easter() raises ValueError(\"invalid method\") for method=0, matching the reference."
+      }
+    ],
+    "12": [
+      {
+        "t": 1792140674.0317922,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the default is EASTER_WESTERN (= 3), matching the reference answer."
+      }
+    ],
+    "14": [
+      {
+        "t": 1792140802.581192,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that rebuild writes metadata as JSON to METADATA_FN in the generated zoneinfo directory using json.dump(metadata, f, indent=4, sort_keys=True), matching the reference."
+      }
+    ],
+    "16": [
+      {
+        "t": 1792141020.223375,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that tzrangebase.utcoffset returns None when self._isdst(dt) is None, matching the reference."
+      }
+    ],
+    "17": [
+      {
+        "t": 1792141047.707592,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states main() re-raises the last caught urllib.error.URLError stored in last_error, matching the reference."
+      }
+    ],
+    "19": [
+      {
+        "t": 1792141273.0129669,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that getzoneinfofile_stream() catches the IOError, emits a warning, and returns None, matching the reference."
+      }
+    ],
+    "21": [
+      {
+        "t": 1792141276.506449,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that `_tzinfo._fromutc` raises `TypeError(\"fromutc() requires a datetime argument\")`, matching the reference exactly."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

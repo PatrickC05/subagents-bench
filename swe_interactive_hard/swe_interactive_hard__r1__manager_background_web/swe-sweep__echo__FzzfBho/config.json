@@ -1,0 +1,18 @@
+{
+    "task": {
+        "path": "jobs/swe_interactive_hard/tasks/swe-sweep__echo",
+        "source": "tasks"
+    },
+    "trial_name": "swe-sweep__echo__FzzfBho",
+    "trials_dir": "jobs/swe_interactive_hard/swe_interactive_hard__r1__manager_background_web",
+    "agent_timeout_multiplier": 0.05,
+    "agent": {
+        "name": "subagents_bench.harness.harbor_agent:OrchestratorAgent"
+    },
+    "environment": {
+        "type": "modal",
+        "override_cpus": 3,
+        "override_memory_mb": 7000
+    },
+    "job_id": "4ff9945b-b4ba-4f9c-bba4-a8c81eb97915"
+}

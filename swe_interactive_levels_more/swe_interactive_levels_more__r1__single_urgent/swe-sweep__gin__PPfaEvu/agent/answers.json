@@ -1,0 +1,115 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792143007.450639,
+  "answers": {
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states it returns false and ErrMultiFileHeaderLenInvalid, matching the reference exactly."
+    },
+    "7": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that SetMode(\"\") falls back to DebugMode, setting ginMode = debugCode and modeName = \"debug\", matching the reference."
+    },
+    "9": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states it returns false and ErrMultiFileHeader, matching the reference exactly."
+    },
+    "10": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply correctly states that the source function returns dunno, i.e. []byte(\"???\"), when n is out of bounds."
+    },
+    "12": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that Mode() returns the package-level modeName string, the current gin mode, matching the reference."
+    },
+    "16": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that defaultValidator.lazyinit sets the tag name to \"binding\", matching the reference."
+    },
+    "19": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that setTimeField defaults to time.RFC3339 when the time_format tag is empty, matching the reference."
+    },
+    "21": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that ValidateStruct returns nil when obj is nil, matching the reference."
+    }
+  },
+  "replies": {
+    "3": [
+      {
+        "t": 1792140132.4344718,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states it returns false and ErrMultiFileHeaderLenInvalid, matching the reference exactly."
+      }
+    ],
+    "7": [
+      {
+        "t": 1792140459.369907,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that SetMode(\"\") falls back to DebugMode, setting ginMode = debugCode and modeName = \"debug\", matching the reference."
+      }
+    ],
+    "9": [
+      {
+        "t": 1792140459.3702059,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states it returns false and ErrMultiFileHeader, matching the reference exactly."
+      }
+    ],
+    "10": [
+      {
+        "t": 1792140533.231701,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply correctly states that the source function returns dunno, i.e. []byte(\"???\"), when n is out of bounds."
+      }
+    ],
+    "12": [
+      {
+        "t": 1792140719.079024,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that Mode() returns the package-level modeName string, the current gin mode, matching the reference."
+      }
+    ],
+    "16": [
+      {
+        "t": 1792141009.7264209,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that defaultValidator.lazyinit sets the tag name to \"binding\", matching the reference."
+      }
+    ],
+    "19": [
+      {
+        "t": 1792141323.839351,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that setTimeField defaults to time.RFC3339 when the time_format tag is empty, matching the reference."
+      }
+    ],
+    "21": [
+      {
+        "t": 1792141329.442027,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that ValidateStruct returns nil when obj is nil, matching the reference."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

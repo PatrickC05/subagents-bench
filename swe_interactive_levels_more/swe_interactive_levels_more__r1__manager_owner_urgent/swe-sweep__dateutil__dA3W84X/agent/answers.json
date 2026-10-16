@@ -1,0 +1,167 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792142758.936867,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that tzres.name_from_string raises ValueError(\"Malformed timezone string.\"), matching the reference exactly."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that get returns the default argument (None by default) when name is absent, matching the reference."
+    },
+    "5": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that tzwinbase.transitions(year) returns None when self.hasdst is false, matching the reference."
+    },
+    "7": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the assert compares metadata['tzdata_file_sha512'] to the computed SHA-512 digest of the downloaded file, raising AssertionError with 'SHA failed for', matching the reference."
+    },
+    "9": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that on errno == 2 it logs an error saying zic could not be found and suggests installing libc-bin or checking PATH, matching the reference."
+    },
+    "10": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that easter() raises ValueError(\"invalid method\") for method=0, matching the reference answer."
+    },
+    "12": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the default is EASTER_WESTERN (3), matching the reference answer."
+    },
+    "14": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that rebuild writes the metadata dict as JSON to METADATA_FN in the generated zoneinfo directory using json.dump(metadata, f, indent=4, sort_keys=True), matching the reference."
+    },
+    "16": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that `tzrangebase.utcoffset` returns `None` when `self._isdst(dt)` is `None`, matching the reference."
+    },
+    "17": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that main() raises the last urllib_error.URLError stored in last_error after all mirrors fail, matching the reference."
+    },
+    "19": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that on IOError it issues a warning and returns None, matching the reference."
+    },
+    "21": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the same exception type and message as the reference."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792139976.499681,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that tzres.name_from_string raises ValueError(\"Malformed timezone string.\"), matching the reference exactly."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792140053.981984,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that get returns the default argument (None by default) when name is absent, matching the reference."
+      }
+    ],
+    "5": [
+      {
+        "t": 1792140187.054931,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that tzwinbase.transitions(year) returns None when self.hasdst is false, matching the reference."
+      }
+    ],
+    "7": [
+      {
+        "t": 1792140265.689687,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the assert compares metadata['tzdata_file_sha512'] to the computed SHA-512 digest of the downloaded file, raising AssertionError with 'SHA failed for', matching the reference."
+      }
+    ],
+    "9": [
+      {
+        "t": 1792140424.023965,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that on errno == 2 it logs an error saying zic could not be found and suggests installing libc-bin or checking PATH, matching the reference."
+      }
+    ],
+    "10": [
+      {
+        "t": 1792140502.172683,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that easter() raises ValueError(\"invalid method\") for method=0, matching the reference answer."
+      }
+    ],
+    "12": [
+      {
+        "t": 1792140658.362666,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the default is EASTER_WESTERN (3), matching the reference answer."
+      }
+    ],
+    "14": [
+      {
+        "t": 1792140743.520837,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that rebuild writes the metadata dict as JSON to METADATA_FN in the generated zoneinfo directory using json.dump(metadata, f, indent=4, sort_keys=True), matching the reference."
+      }
+    ],
+    "16": [
+      {
+        "t": 1792140901.3566122,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that `tzrangebase.utcoffset` returns `None` when `self._isdst(dt)` is `None`, matching the reference."
+      }
+    ],
+    "17": [
+      {
+        "t": 1792140978.75405,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that main() raises the last urllib_error.URLError stored in last_error after all mirrors fail, matching the reference."
+      }
+    ],
+    "19": [
+      {
+        "t": 1792141139.277401,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that on IOError it issues a warning and returns None, matching the reference."
+      }
+    ],
+    "21": [
+      {
+        "t": 1792141224.9129422,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the same exception type and message as the reference."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

@@ -1,0 +1,89 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792135354.621664,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that prompt raises click.Abort (click.exceptions.Abort) on Ctrl+C/EOF, matching the reference."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that fs_enc is set to \"ascii\", matching the reference answer."
+    },
+    "5": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply correctly identifies RuntimeError raised via `\"\\n\\n\".join(extra)` when fs_enc is ascii."
+    },
+    "10": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states echo is imported from click.utils via `from .utils import echo`, matching the reference's `.utils`."
+    },
+    "19": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states __version__ is \"8.0.1\", matching the reference value."
+    },
+    "21": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the same exception and message as the reference: TypeError('Cannot have two nargs < 0')."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792133374.680637,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that prompt raises click.Abort (click.exceptions.Abort) on Ctrl+C/EOF, matching the reference."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792133523.699619,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that fs_enc is set to \"ascii\", matching the reference answer."
+      }
+    ],
+    "5": [
+      {
+        "t": 1792133620.531361,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply correctly identifies RuntimeError raised via `\"\\n\\n\".join(extra)` when fs_enc is ascii."
+      }
+    ],
+    "10": [
+      {
+        "t": 1792134001.512104,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states echo is imported from click.utils via `from .utils import echo`, matching the reference's `.utils`."
+      }
+    ],
+    "19": [
+      {
+        "t": 1792134668.4156811,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states __version__ is \"8.0.1\", matching the reference value."
+      }
+    ],
+    "21": [
+      {
+        "t": 1792134674.362253,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the same exception and message as the reference: TypeError('Cannot have two nargs < 0')."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

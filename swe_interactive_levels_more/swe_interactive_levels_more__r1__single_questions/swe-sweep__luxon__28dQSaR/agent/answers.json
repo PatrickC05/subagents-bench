@@ -1,0 +1,37 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792142876.603261,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that parseDigits returns NaN when there are no parseable digits, matching the reference."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the function returns [matches, {}] with the first element being null and the second an empty object, matching the reference."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792140777.0225239,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that parseDigits returns NaN when there are no parseable digits, matching the reference."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792140777.023233,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the function returns [matches, {}] with the first element being null and the second an empty object, matching the reference."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

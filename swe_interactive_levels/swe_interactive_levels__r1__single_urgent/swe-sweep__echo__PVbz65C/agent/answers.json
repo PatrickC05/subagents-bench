@@ -1,0 +1,128 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792135561.13516,
+  "answers": {
+    "2": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the log line is written to c.Logger().Output() when config.Output is nil, matching the reference."
+    },
+    "3": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states it returns echo.NewHTTPError with http.StatusInternalServerError and the pooled value cast to error's message, matching the reference."
+    },
+    "5": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that MethodOverride() returns MethodOverrideWithConfig(DefaultMethodOverrideConfig), matching the reference."
+    },
+    "9": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that limitedReader.Read returns the number of bytes read (n) along with echo.ErrStatusRequestEntityTooLarge when the cumulative read exceeds the limit, matching the reference."
+    },
+    "10": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that DefaultBodyDumpConfig.Skipper is DefaultSkipper, matching the reference answer."
+    },
+    "16": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states config.Skipper is set to DefaultGzipConfig.Skipper, matching the reference."
+    },
+    "17": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that BodyLimitWithConfig panics with fmt.Errorf(\"echo: invalid body-limit=%s\", config.Limit) when bytes.Parse fails, matching the reference."
+    },
+    "19": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that BodyDumpWithConfig panics with the exact message \"echo: body-dump middleware requires a handler function\" when config.Handler is nil, matching the reference."
+    },
+    "21": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the default RedirectConfig.Code is http.StatusMovedPermanently (301), matching the reference."
+    }
+  },
+  "replies": {
+    "2": [
+      {
+        "t": 1792133416.825553,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the log line is written to c.Logger().Output() when config.Output is nil, matching the reference."
+      }
+    ],
+    "3": [
+      {
+        "t": 1792133429.982728,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states it returns echo.NewHTTPError with http.StatusInternalServerError and the pooled value cast to error's message, matching the reference."
+      }
+    ],
+    "5": [
+      {
+        "t": 1792133613.31516,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that MethodOverride() returns MethodOverrideWithConfig(DefaultMethodOverrideConfig), matching the reference."
+      }
+    ],
+    "9": [
+      {
+        "t": 1792133843.0158238,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that limitedReader.Read returns the number of bytes read (n) along with echo.ErrStatusRequestEntityTooLarge when the cumulative read exceeds the limit, matching the reference."
+      }
+    ],
+    "10": [
+      {
+        "t": 1792133951.446403,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that DefaultBodyDumpConfig.Skipper is DefaultSkipper, matching the reference answer."
+      }
+    ],
+    "16": [
+      {
+        "t": 1792134393.9881449,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states config.Skipper is set to DefaultGzipConfig.Skipper, matching the reference."
+      }
+    ],
+    "17": [
+      {
+        "t": 1792134393.9898582,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that BodyLimitWithConfig panics with fmt.Errorf(\"echo: invalid body-limit=%s\", config.Limit) when bytes.Parse fails, matching the reference."
+      }
+    ],
+    "19": [
+      {
+        "t": 1792134904.570723,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that BodyDumpWithConfig panics with the exact message \"echo: body-dump middleware requires a handler function\" when config.Handler is nil, matching the reference."
+      }
+    ],
+    "21": [
+      {
+        "t": 1792134904.571661,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the default RedirectConfig.Code is http.StatusMovedPermanently (301), matching the reference."
+      }
+    ]
+  },
+  "elsewhere": {}
+}

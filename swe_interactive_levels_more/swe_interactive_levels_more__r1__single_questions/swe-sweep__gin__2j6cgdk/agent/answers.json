@@ -1,0 +1,63 @@
+{
+  "version": 2,
+  "judge_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "judge_temperature": 0.0,
+  "graded_at": 1792142872.897981,
+  "answers": {
+    "5": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states that setFormMap stores the last value, v[len(v)-1], matching the reference."
+    },
+    "7": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply correctly states that with an empty string and no test.v flag, SetMode falls back to DebugMode with ginMode = debugCode and modeName = \"debug\"."
+    },
+    "9": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states it returns false and ErrMultiFileHeader, matching the reference."
+    },
+    "10": {
+      "correct": true,
+      "verdict": "correct",
+      "why": "The reply states the function returns dunno, the byte slice \"???\", matching the reference answer."
+    }
+  },
+  "replies": {
+    "5": [
+      {
+        "t": 1792140720.306886,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states that setFormMap stores the last value, v[len(v)-1], matching the reference."
+      }
+    ],
+    "7": [
+      {
+        "t": 1792140720.3073559,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply correctly states that with an empty string and no test.v flag, SetMode falls back to DebugMode with ginMode = debugCode and modeName = \"debug\"."
+      }
+    ],
+    "9": [
+      {
+        "t": 1792140720.30754,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states it returns false and ErrMultiFileHeader, matching the reference."
+      }
+    ],
+    "10": [
+      {
+        "t": 1792140720.307688,
+        "verdict": "correct",
+        "correct": true,
+        "why": "The reply states the function returns dunno, the byte slice \"???\", matching the reference answer."
+      }
+    ]
+  },
+  "elsewhere": {}
+}
