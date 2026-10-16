@@ -403,9 +403,10 @@ def judge_answer(client: Any, question: str, reference: str, answer: str) -> tup
     the start of the judge's reply as ``why``, when that reply is unreadable. The judge's sampling
     is the client's (``grade-answers`` runs it at temperature 0). The pre-version-2 shape
     ``{"correct": true|false}`` (a boolean or the string "true"/"false") reads as correct/wrong; a
-    readable ``verdict`` wins over it. A reply that reads neither way but has a ``"verdict":
-    "<verdict word>"`` pair (near-JSON: text with a brace after the object, two objects, a stray
-    quote in ``why``) reads as that verdict, with its ``"why"`` string when one can be found."""
+    readable ``verdict`` wins over it. A reply that reads neither way but has ``"verdict":
+    "<verdict word>"`` pairs that all name one verdict (near-JSON: text with a brace after the
+    object, two objects, a stray quote in ``why``) reads as that verdict, with its ``"why"`` string
+    when one can be found; pairs naming different verdicts leave it unreadable."""
     r = client.complete(QUESTION_JUDGE, [Message("user", f"Question: {question}\n\nReference answer: {reference}\n\n"
                                                          f"Reply to grade: {answer}")], [])
     try:
@@ -421,11 +422,12 @@ def judge_answer(client: Any, question: str, reference: str, answer: str) -> tup
     except (ValueError, KeyError, TypeError, AttributeError):  # AttributeError: a JSON list
         pass
     # near-JSON whose verdict is plain to see: trailing text with a brace, two objects, a "[" before
-    # the object, a stray quote or a raw newline inside ``why``
-    m = re.search(r'"verdict"\s*:\s*"\s*(correct|wrong|none)\s*"', r.text, re.I)
-    if m:
+    # the object, a stray quote or a raw newline inside ``why``; never one of two different verdicts
+    # (the prompt's format echoed before the object, a verdict taken back): that stays unread
+    found = {m.lower() for m in re.findall(r'"verdict"\s*:\s*"\s*(correct|wrong|none)\s*"', r.text, re.I)}
+    if len(found) == 1:
         why = re.search(r'"why"\s*:\s*"(.*?)"\s*[,}]', r.text, re.S)
-        return m.group(1).lower(), why.group(1) if why else r.text[:300]
+        return found.pop(), why.group(1) if why else r.text[:300]
     return None, r.text[:300]
 
 

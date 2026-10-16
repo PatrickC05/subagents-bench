@@ -107,6 +107,11 @@ def test_judge_answer_prompt():
      ("wrong", 'It says "Abort" but the reference says Retry')),
     ('{"verdict": "none", "why": "a plan,\nnot an answer"}', ("none", "a plan,\nnot an answer")),
     ('{"verdict": " Wrong ", "why": "w"} trailing }', ("wrong", "w")),
+    ('{"verdict": "correct", "why": "a"}\n{"verdict": "Correct", "why": "b"}', ("correct", "a")),  # one verdict
+    # near-JSON naming two different verdicts: which one is meant is not plain, so unreadable
+    ('Format: {"verdict": "correct" or "wrong" or "none", "why": "<one sentence>"}\n'
+     '{"verdict": "wrong", "why": "misses the key fact"}', None),
+    ('{"verdict": "correct", "why": "a"}\nOn reflection: {"verdict": "wrong", "why": "b"}', None),
 ])
 def test_judge_answer_verdicts(text, want):
     assert judge_answer(judge(text), "q", "r", "a") == (want if want is not None else (None, text))
