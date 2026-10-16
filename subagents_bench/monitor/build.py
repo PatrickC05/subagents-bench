@@ -70,6 +70,8 @@ SETTINGS = {  # an orchestration: (label, description); the levels sweep's condi
                           "each bug at once to a subagent with a short instruction (the subagent works out the problem)."),
     "manager_owner": ("Manager, owner + helpers", "Stay available, and each bug's subagent is in charge of it and may "
                       "start up to 10 helper subagents of its own."),
+    "dispatcher_hinted": ("Dispatcher, no tools, hinted", "No tools of its own (not even reading): only spawn_subagents, "
+                          "wait and reply, and told that delegating keeps it free to answer the user."),
 }
 LEVELS = {  # condition suffix -> (level, short name, what the user sends), each level the one above plus one kind
     "baseline": ("L0", "bugs only", "Bugs only, with the reply tool: PR #13's baseline."),

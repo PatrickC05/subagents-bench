@@ -2,7 +2,7 @@
 # comment; Jonathan's follow-up). Every level keeps the baseline's system prompt (replies: true puts
 # the whole "Replying to the user" section in it) and differs from the level below only in the
 # messages it sends:
-#   L0 *_baseline   swe_interactive_baseline's five conditions, run again in this sweep
+#   L0 *_baseline   swe_interactive_baseline's six conditions, run again in this sweep
 #   L1 *_eta        + a status check 2 min after bugs 1, 3 and 5 (6:00, 14:00, 22:00) listing the bugs so far
 #   L2 *_questions  + 2 code questions after each bug (+80 s, +160 s; 12 per session)
 #   L3 *_urgent     + bug 3 (12:00) is urgent ("fix it before the earlier ones")
@@ -10,12 +10,13 @@
 # For every condition: workspace snapshots (interactive.snapshots), so `subagents-bench fix-times`
 # can grade each bug's real fix time afterwards, and reply rejects a reply to a bug that has neither
 # eta_min nor done: true (interactive.require_eta). L0 runs again here because require_eta changes it.
-# Five settings: single, manager_background, background_hinted, manager_available (told to stay
-# available) and manager_owner (a subagent in charge of each bug, with helpers), as in the baseline.
+# Six settings: single, manager_background, background_hinted, manager_available (told to stay
+# available), manager_owner (a subagent in charge of each bug, with helpers) and dispatcher_hinted
+# (no tools of its own, hinted), as in the baseline.
 # On Modal (swe_interactive_baseline_modal.yaml), 1 round: with the bug order fixed, more rounds would
-# repeat the same sessions. 5 settings x 4 levels = 20 jobs, 40 sessions, all at once:
+# repeat the same sessions. 6 settings x 4 levels = 24 jobs, 48 sessions, all at once:
 #   .venv/bin/subagents-bench questions configs/sweeps/swe_interactive_levels.yaml
-#   scripts/run_experiment.sh configs/sweeps/swe_interactive_levels.yaml --jobs-at-once 20
+#   scripts/run_experiment.sh configs/sweeps/swe_interactive_levels.yaml --jobs-at-once 24
 #   .venv/bin/subagents-bench fix-times configs/sweeps/swe_interactive_levels.yaml
 #   .venv/bin/subagents-bench grade-answers configs/sweeps/swe_interactive_levels.yaml
 #   scripts/analyze.sh jobs/swe_interactive_levels
@@ -28,7 +29,7 @@ overrides:
     snapshots: true
     require_eta: true
 
-# The five settings, as in swe_interactive_baseline.yaml (its *_baseline conditions are inherited
+# The six settings, as in swe_interactive_baseline.yaml (its *_baseline conditions are inherited
 # from it), at each level.
 conditions:
   single_eta:
@@ -87,4 +88,16 @@ conditions:
     subagent: {strategy: parallel, scope: hard, spawn_mode: background, availability_hint: true, owner_hint: true,
                max_children: 10}
     tools: {orchestrator_tools: [read_file, list_dir, search]}
+    interactive: {status_every: 2, questions_per_interval: 2, urgent_every: 3}
+  dispatcher_hinted_eta:
+    subagent: {strategy: parallel, scope: hard, spawn_mode: background, delegation_hint: true}
+    tools: {orchestrator_tools: []}
+    interactive: {status_every: 2}
+  dispatcher_hinted_questions:
+    subagent: {strategy: parallel, scope: hard, spawn_mode: background, delegation_hint: true}
+    tools: {orchestrator_tools: []}
+    interactive: {status_every: 2, questions_per_interval: 2}
+  dispatcher_hinted_urgent:
+    subagent: {strategy: parallel, scope: hard, spawn_mode: background, delegation_hint: true}
+    tools: {orchestrator_tools: []}
     interactive: {status_every: 2, questions_per_interval: 2, urgent_every: 3}

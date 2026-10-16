@@ -991,7 +991,7 @@ def test_a_job_threads_error_stops_the_other_harbor_and_the_queue(fake, spec4, m
 
 LEVELS = {"baseline": {}, "eta": {"status_every": 2}, "questions": {"status_every": 2, "questions_per_interval": 2},
           "urgent": {"status_every": 2, "questions_per_interval": 2, "urgent_every": 3}}
-SETTINGS = ("single", "manager_background", "background_hinted", "manager_available", "manager_owner")
+SETTINGS = ("single", "manager_background", "background_hinted", "manager_available", "manager_owner", "dispatcher_hinted")
 
 
 def test_swe_interactive_levels_spec(tmp_path):
@@ -1015,7 +1015,7 @@ def test_swe_interactive_levels_spec(tmp_path):
                 assert d["interactive"].pop(k) == knobs.get(k, 0), (st, lv, k)
                 twin["interactive"].pop(k, None)
             assert {**d, "name": twin["name"]} == twin, (st, lv)
-    assert len(sweep.plan(s)) == 20
+    assert len(sweep.plan(s)) == 24
     if s.dataset_path.is_dir():
         for t in s.tasks:
             write_questions(tmp_path, t, "m", [Question(f"q{i}", "x.py", f"Q{i}?", "a") for i in range(12)])
@@ -1028,7 +1028,7 @@ def test_swe_interactive_levels_spec(tmp_path):
             assert urgent == [3], t
     smoke = sweep.load_spec(REPO / "configs/sweeps/swe_interactive_levels_smoke.yaml")
     i = smoke.configs["single_urgent"].interactive
-    assert (smoke.environment, smoke.rounds, len(smoke.configs), i.wall_clock_sec, i.interval_sec) == ("modal", 1, 20, 120, 30)
+    assert (smoke.environment, smoke.rounds, len(smoke.configs), i.wall_clock_sec, i.interval_sec) == ("modal", 1, 24, 120, 30)
     assert 120 + sweep.SESSION_GRACE_SEC <= 43200 * smoke.timeout_multiplier
 
 
