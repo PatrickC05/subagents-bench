@@ -172,6 +172,26 @@ def test_the_end_cuts_a_streak_and_confirms_a_final_failure(tmp_path):
     assert (r["fixed_sec"], r["stable_sec"], r["first_pass_sec"], r["n_breaks"]) == (None, None, None, 0)
 
 
+@pytest.mark.parametrize("final", ["unknown", ("fail", "pass"), ("fail", "fail")])
+def test_an_unknown_or_flaky_final_state_is_unresolved(tmp_path, final):
+    """The final state reproduces the verifier's unresolved verdict (timing_ok): an unknown or a
+    flaky (rerun passed) final status counts as the plain final fail does, so no streak lasts 'to the
+    end' through it and a late pass gets no fix without the 120 s hold."""
+    inbox = [bug(1, 0, 0, "b0"), bug(2, 1, 240, "b1")]
+    sts = timeline([(0, {"b0": "fail", "b1": "fail"}), (300, {"b0": "pass", "b1": "fail"}),
+                    (1750, {"b0": "pass", "b1": "pass"})], final={"b0": final, "b1": final})
+    t = make_trial(tmp_path, inbox, states_=sts, verdicts={"b0": False, "b1": False})
+    b0, b1 = fix_times(t)["b0"], fix_times(t)["b1"]
+    assert b0["timing_ok"] is True
+    assert (b0["fixed_sec"], b0["stable_sec"], b0["first_pass_sec"], b0["n_breaks"]) == (300, None, 300, 1)
+    assert (b1["fixed_sec"], b1["stable_sec"], b1["first_pass_sec"]) == (None, None, 1510)  # 60 s before the end
+    raw = final if isinstance(final, str) else final[0]
+    assert (b0["final_status"], b0["n_unknown"]) == (raw, int(raw == "unknown"))  # the replayed status
+    got = states(json.loads((t.dir / "agent" / "fix_states.json").read_text()), [])
+    assert (got[-1].final, got[-1].raw["b0"], got[-1].status["b0"]) == (True, raw, "fail")
+    assert [s.status["b0"] for s in got[:-1]] == ["fail", "pass", "pass"]  # only the final state
+
+
 def test_a_pass_before_the_bug_was_sent_is_flagged_and_clipped(tmp_path):
     r = one_bug(tmp_path / "a", [(0, {"b0": "fail"}), (200, {"b0": "pass"})], sent=480)
     assert (r["fixed_sec"], r["stable_sec"], r["first_pass_sec"], r["pass_before_sent"]) == (0, 0, 0, True)

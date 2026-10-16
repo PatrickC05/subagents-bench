@@ -315,6 +315,36 @@ def test_win_and_order():
     assert order_score(s, "b4", ["b0"]) == 0.5  # neither fixed
 
 
+BROKEN_B0 = [(0, {"b0": "fail", "b3": "fail"}), (100, {"b0": "pass", "b3": "fail"}),
+             (500, {"b0": ("fail", "fail"), "b3": "fail"}), (600, {"b0": "fail", "b3": "fail"})]
+
+
+@pytest.mark.parametrize("later, again, want", [
+    # b0 fixed again at 1000 s, after b3's fix at 800 s
+    ([(800, {"b0": "fail", "b3": "pass"}), (1000, {"b0": "pass", "b3": "pass"})], 1000, 1.0),
+    # b0 fixed again at 760 s and held to 1100 s (then broke for good): before b3's fix
+    ([(760, {"b0": "pass", "b3": "fail"}), (800, {"b0": "pass", "b3": "pass"}), (1100, {"b0": "fail", "b3": "pass"}),
+      (1200, {"b0": "fail", "b3": "pass"})], 760, 0.0),
+])
+def test_order_uses_an_open_earlier_bugs_fix_after_the_send_time(tmp_path, later, again, want):
+    """Earlier bug b0 is fixed at 100 s (its fixed_sec: it held 400 s), breaks at 500 s (seen twice
+    over 100 s) and is fixed again at ``again``; urgent b3 is sent at 720 s, when b0 fails, and fixed
+    at 800 s. The order compares 800 s with b0's first fix after 720 s, not with 100 s."""
+    from test_fixes import bug as fbug, make_trial as fix_trial, timeline
+    inbox = [fbug(1, 0, 0, "b0"), fbug(2, 1, 720, "b3", urgent=True)]
+    t = fix_trial(tmp_path, inbox, states_=timeline(BROKEN_B0 + later), job="lv__r1__single_urgent",
+                  verdicts={"b0": later[-1][1]["b0"] == "pass", "b3": True})
+    rows = {r["subtask_id"]: r for r in bug_rows(t, fixes_mod.keys(t), True, hints=[])}
+    b0, b3 = rows["b0"], rows["b3"]
+    assert (b0["fixed_sec"], b3["fixed_sec"], b3["urgent"], b3["level"]) == (100, 80, True, "L3")
+    assert b3["open_before"] == ["b0"] and b3["open_fixed_session_sec"] == {"b0": again}
+    assert b0["open_fixed_session_sec"] is None
+    assert fixes_mod.fixed_after(t, 720) == {"b0": again, "b3": 800}
+    assert order_score(rows, "b3", ["b0"]) == want
+    # a session without the column (or a bug not open then) keeps its fixed_sec fix
+    assert order_score({**rows, "b3": {**b3, "open_fixed_session_sec": None}}, "b3", ["b0"]) == 0.0
+
+
 def test_urgency_rows_against_twins():
     rows = {(r["trial_name"], r["twin_level"]): r for r in urgency_rows(urgency_bugs())}
     assert sorted(rows) == [("u1", "L0"), ("u1", "L2"), ("u2", "L0"), ("u2", "L2")]
