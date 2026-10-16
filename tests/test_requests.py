@@ -924,11 +924,11 @@ def judge(text: str):
 
 def test_judge_answer():
     client = judge('{"correct": true, "why": "Same value."}')
-    assert judge_answer(client, "What does f return?", "1", "It returns 1.") == (True, "Same value.")
+    assert judge_answer(client, "What does f return?", "1", "It returns 1.") == ("correct", "Same value.")
     prompt = client.requests[0]["messages"][0].content
-    assert prompt == "Question: What does f return?\n\nReference answer: 1\n\nAnswer to grade: It returns 1."
+    assert prompt == "Question: What does f return?\n\nReference answer: 1\n\nReply to grade: It returns 1."
     assert client.requests[0]["tools"] == [] and "You grade answers" in client.requests[0]["system"]
-    assert judge_answer(judge('Verdict:\n{"correct": false}'), "q", "r", "a") == (False, "")
+    assert judge_answer(judge('Verdict:\n{"correct": false}'), "q", "r", "a") == ("wrong", "")
     assert judge_answer(judge("I think it is right."), "q", "r", "a") == (None, "I think it is right.")
     assert judge_answer(judge('{"why": "no verdict"}'), "q", "r", "a")[0] is None
     assert judge_answer(judge("[1, 2]"), "q", "r", "a")[0] is None
@@ -939,10 +939,10 @@ def test_judge_answer():
     ('"yes"', None), ('"no"', None), ("1", None), ("0", None), ("null", None), ('""', None), ("[true]", None),
 ])
 def test_judge_answer_needs_a_boolean_verdict(verdict, want):
-    """Only a boolean or the strings "true"/"false" are verdicts: {"correct": "false"} is not truthy."""
+    """The old shape: only a boolean or the strings "true"/"false" are verdicts: {"correct": "false"} is not truthy."""
     text = f'{{"correct": {verdict}, "why": "w"}}'
     got = judge_answer(judge(text), "q", "r", "a")
-    assert got == ((want, "w") if want is not None else (None, text))
+    assert got == (("correct" if want else "wrong", "w") if want is not None else (None, text))
 
 
 # --- sweep: questions and grade-answers ----------------------------------------------------------------
@@ -988,9 +988,11 @@ def test_sweep_questions_and_grade_answers(tmp_path, monkeypatch, capsys):
         (trial / "agent" / f"{name}.jsonl").write_text("".join(json.dumps(x) + "\n" for x in rows))
     assert cli.main(["grade-answers", str(path)]) == 1  # #6's verdict is unreadable
     out = capsys.readouterr().out
-    assert "1 of 3 questions answered correctly (2 answered)" in out
+    assert "1 of 3 questions answered correctly (1 by the first reply; 2 answered; 2 replies judged; 1 verdicts " \
+           "unreadable)" in out  # #2's later reply not judged: the first was correct
     graded = json.loads((trial / "agent" / "answers.json").read_text())
-    assert graded["answers"] == {"2": {"correct": True, "why": "w"}, "6": {"correct": None, "why": "unsure"}}
+    assert graded["answers"] == {"2": {"correct": True, "verdict": "correct", "why": "w"},
+                                 "6": {"correct": None, "verdict": None, "why": "unsure"}}
     assert cli.main(["grade-answers", str(path)]) == 0 and "questions answered" not in capsys.readouterr().out  # kept
     (trial / "result.json").unlink()
     assert cli.main(["grade-answers", str(path), "--force"]) == 0  # an unfinished trial is skipped
