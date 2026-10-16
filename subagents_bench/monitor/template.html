@@ -1,0 +1,181 @@
+<title>Requests Sweep Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a run log. Summary strip, what changed, a per-condition table, then one timeline card per session. */
+:root {{
+  --bg: #f6f7f9; --surface: #ffffff; --ink: #14171c; --ink2: #4a5260; --muted: #848b97; --rule: #dde1e7; --grid: #eceef2;
+  --think: #2a78d6; --tool: #e09a00; --wait: #b8bec8; --sub: #1baf7a; --sub-bad: #c9cdd4; --bug: #14171c; --bugtext: #ffffff;
+  --question: #7a4fd0; --status: #0f8a8a; --urgent: #d0342c; --eta: #8fb4e3; --eta-late: #e9a29d;
+  --ok-bg: #e3f4ea; --ok-fg: #17663a; --warn-bg: #fff2d6; --warn-fg: #7a5200; --live-bg: #e2edfb; --live-fg: #1b4f91; --bad-fg: #b3261e;
+  --display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}}
+@media (prefers-color-scheme: dark) {{ :root:not([data-theme="light"]) {{
+  --bg: #0f1216; --surface: #171b21; --ink: #e8ebf0; --ink2: #aeb5c0; --muted: #7b8390; --rule: #2a3039; --grid: #20262e;
+  --think: #5b9be6; --tool: #f0b429; --wait: #4a525e; --sub: #2fc48e; --sub-bad: #3b424c; --bug: #e8ebf0; --bugtext: #0f1216;
+  --question: #a98cf0; --status: #3cc4c4; --urgent: #ff6a5f; --eta: #3d5f8c; --eta-late: #8a3b36;
+  --ok-bg: #143323; --ok-fg: #7fdca6; --warn-bg: #3a2c0c; --warn-fg: #f5cd6b; --live-bg: #14273f; --live-fg: #8fbcf2; --bad-fg: #ff8a80; color-scheme: dark; }} }}
+:root[data-theme="dark"] {{
+  --bg: #0f1216; --surface: #171b21; --ink: #e8ebf0; --ink2: #aeb5c0; --muted: #7b8390; --rule: #2a3039; --grid: #20262e;
+  --think: #5b9be6; --tool: #f0b429; --wait: #4a525e; --sub: #2fc48e; --sub-bad: #3b424c; --bug: #e8ebf0; --bugtext: #0f1216;
+  --question: #a98cf0; --status: #3cc4c4; --urgent: #ff6a5f; --eta: #3d5f8c; --eta-late: #8a3b36;
+  --ok-bg: #143323; --ok-fg: #7fdca6; --warn-bg: #3a2c0c; --warn-fg: #f5cd6b; --live-bg: #14273f; --live-fg: #8fbcf2; --bad-fg: #ff8a80; color-scheme: dark; }}
+body {{ background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.5; margin: 0; }}
+.wrap {{ grid-template-columns: minmax(0, 1fr); max-width: 1080px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 56px; display: grid; gap: 28px; }}
+h1, h2 {{ font-family: var(--display); font-weight: 600; letter-spacing: 0.01em; text-wrap: balance; margin: 0; }}
+h1 {{ font-size: 28px; line-height: 1.15; }}
+h2 {{ font-size: 20px; }}
+h3 {{ font-family: var(--display); font-weight: 600; font-size: 16px; margin: 8px 0 0; }}
+code {{ font-family: var(--mono); font-size: 12px; }}
+.eyebrow {{ font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }}
+header {{ display: grid; gap: 10px; }}
+header p {{ margin: 0; color: var(--ink2); max-width: 72ch; }}
+.strip {{ display: flex; flex-wrap: wrap; gap: 8px 22px; font-family: var(--mono); font-size: 12.5px; color: var(--ink2); font-variant-numeric: tabular-nums; }}
+.strip b {{ color: var(--ink); font-weight: 500; }}
+.conds {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }}
+.cond {{ background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; }}
+.cond p {{ margin: 4px 0 0; color: var(--ink2); font-size: 13px; }}
+.who {{ font-weight: 600; }}
+.cond.control {{ background: transparent; border-style: dashed; }}
+.card.control {{ border-style: dashed; }}
+.muted {{ color: var(--muted); }}
+section {{ display: grid; gap: 12px; min-width: 0; }}
+.sechead {{ display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }}
+.prog {{ font-family: var(--mono); font-size: 12px; color: var(--muted); }}
+.empty {{ margin: 0; color: var(--muted); }}
+.scroll {{ overflow-x: auto; min-width: 0; }}
+table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
+th {{ text-align: left; font-weight: 500; color: var(--muted); font-size: 11.5px; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--rule); vertical-align: bottom; }}
+td {{ padding: 6px 10px 6px 0; border-bottom: 1px solid var(--grid); vertical-align: top; }}
+td.num, .num {{ font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }}
+.mono {{ font-family: var(--mono); font-size: 12px; word-break: break-word; }}
+table.all td:first-child, table.twins td {{ white-space: nowrap; }}
+table.twins {{ width: auto; min-width: 0; }}
+table.twins td[rowspan] {{ font-weight: 500; padding-right: 18px; vertical-align: middle; }}
+table.twins tr.twin-top td {{ border-top: 1px solid var(--rule); }}
+table.diff td {{ min-width: 120px; }}
+table.diff td:first-child {{ min-width: 130px; font-weight: 500; }}
+table.msgs:not(.ctl) td:nth-child(6), table.msgs:not(.ctl) td:nth-child(7) {{ min-width: 180px; font-size: 12.5px; }}
+table.msgs tr.k-question td:nth-child(2) {{ color: var(--question); }}
+table.msgs tr.k-status td:nth-child(2) {{ color: var(--status); }}
+.tag {{ font-size: 10.5px; font-weight: 600; color: var(--urgent); text-transform: uppercase; letter-spacing: 0.05em; }}
+.v {{ font-weight: 500; }}
+.v.ok {{ color: var(--ok-fg); }}
+.v.bad {{ color: var(--bad-fg); }}
+.pill {{ display: inline-block; font-size: 11.5px; font-weight: 500; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }}
+.pill.ok {{ background: var(--ok-bg); color: var(--ok-fg); }}
+.pill.warn {{ background: var(--warn-bg); color: var(--warn-fg); }}
+.pill.live {{ background: var(--live-bg); color: var(--live-fg); }}
+.legend {{ display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12px; color: var(--ink2); }}
+.legend span {{ display: inline-flex; align-items: center; gap: 6px; }}
+.sw {{ width: 14px; height: 10px; border-radius: 2px; display: inline-block; }}
+.card {{ background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 10px 14px; display: block; }}
+.card {{ min-width: 0; }}
+.card[open] {{ display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; padding-bottom: 14px; }}
+.card summary {{ cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; list-style-position: outside; }}
+.card summary:focus-visible {{ outline: 2px solid var(--think); outline-offset: 3px; }}
+.repo {{ font-family: var(--mono); font-size: 12.5px; color: var(--ink2); }}
+.meta {{ font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }}
+svg.tl {{ width: 100%; min-width: 680px; height: auto; display: block; }}
+svg .grid {{ stroke: var(--grid); stroke-width: 1; }}
+svg .tick {{ fill: var(--muted); font: 10px var(--mono); }}
+svg .lane {{ fill: var(--ink2); font: 500 11px var(--body); }}
+svg .think {{ fill: var(--think); }}
+svg .tool {{ fill: var(--tool); }}
+svg .waitbar {{ fill: var(--wait); }}
+svg .sub {{ fill: var(--sub); }}
+svg .sub-cancelled, svg .sub-error, svg .sub-max_steps, svg .sub-no_tool_call {{ fill: var(--sub-bad); stroke: var(--sub); stroke-width: 1; }}
+svg .bug {{ fill: var(--bug); }}
+svg .bug.urgent {{ fill: var(--urgent); stroke: var(--surface); stroke-width: 1.5; }}
+svg .urgentlab {{ fill: var(--urgent); font: 600 9px var(--mono); text-transform: uppercase; }}
+svg .bugn {{ fill: var(--bugtext); font: 600 9px var(--mono); }}
+svg .waitline {{ stroke: var(--bug); stroke-width: 2; stroke-dasharray: 3 2; }}
+svg .q {{ fill: var(--question); }}
+svg .st {{ fill: var(--status); }}
+svg .q.open {{ fill: var(--surface); stroke: var(--question); stroke-width: 1.5; }}
+svg .st.open {{ fill: var(--surface); stroke: var(--status); stroke-width: 1.5; }}
+svg .qlink {{ stroke: var(--question); stroke-width: 1; opacity: 0.55; }}
+svg .r-bug {{ fill: var(--ink2); }}
+svg .r-question {{ fill: var(--question); }}
+svg .r-status {{ fill: var(--status); }}
+svg .eta {{ fill: var(--eta); }}
+svg .eta.late {{ fill: var(--eta-late); }}
+svg .etawait {{ stroke: var(--rule); stroke-width: 1; stroke-dasharray: 2 2; }}
+svg .etanever {{ stroke: var(--eta-late); stroke-width: 1.5; stroke-dasharray: 1 3; stroke-linecap: round; }}
+svg .etaupd {{ fill: var(--surface); stroke: var(--think); stroke-width: 1.2; }}
+svg .done {{ fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }}
+svg .done.ok {{ stroke: var(--ok-fg); }}
+svg .done.bad {{ stroke: var(--bad-fg); }}
+svg .done.unk {{ stroke: var(--ink); }}
+svg .now {{ stroke: var(--live-fg); stroke-width: 1.5; stroke-dasharray: 4 3; }}
+.said {{ border-left: 2px solid var(--rule); padding-left: 12px; }}
+.said p {{ margin: 4px 0 0; color: var(--ink2); white-space: pre-wrap; overflow-wrap: anywhere; max-width: 90ch; font-size: 13px; }}
+.recent {{ list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 3px; font-size: 12.5px; }}
+.recent code, .notes code {{ color: var(--ink2); overflow-wrap: anywhere; }}
+.recent li, .meta, .strip span {{ overflow-wrap: anywhere; min-width: 0; }}
+.notes {{ margin: 0; padding-left: 18px; display: grid; gap: 8px; max-width: 80ch; color: var(--ink2); }}
+.lede {{ margin: 0; color: var(--ink2); max-width: 80ch; }}
+.lede b {{ color: var(--ink); font-weight: 600; }}
+.note {{ margin: 0; color: var(--muted); font-size: 12.5px; max-width: 84ch; }}
+.note.caveat {{ color: var(--ink2); border-left: 2px solid var(--warn-fg); padding-left: 10px; }}
+.pill.past {{ background: var(--grid); color: var(--ink2); }}
+table.cmp td:nth-child(2) .pill, table.cmp tr:not(.twin-top) td:first-child .pill {{ margin-left: 4px; }}
+table.cmp tr.this td {{ background: color-mix(in srgb, var(--live-bg) 35%, transparent); }}
+table.cmp td[rowspan] {{ background: transparent !important; }}
+table.cmp tr.grp-head td {{ border-top: 1px solid var(--rule); padding-top: 14px; white-space: normal; color: var(--ink); }}
+table.cmp tr.grp-head:first-child td {{ border-top: 0; padding-top: 6px; }}
+table.cmp tr.grp-head .muted {{ font-weight: 400; }}
+table.cmp .glab {{ position: sticky; left: 0; width: max-content; max-width: min(84ch, calc(100vw - 32px)); white-space: normal; }}
+table.cmp tbody tr:not(.grp-head) td:first-child, table.cmp thead th:first-child {{ position: sticky; left: 0; z-index: 1; background: var(--bg); }}
+table.cmp tr.this td:first-child {{ background: color-mix(in srgb, var(--live-bg) 35%, var(--bg)) !important; }}
+table.cmp td:nth-child(2), table.cmp th:nth-child(2) {{ padding-left: 8px; }}
+@media (max-width: 520px) {{ table.cmp tbody tr:not(.grp-head) td:first-child {{ white-space: normal; min-width: 104px; max-width: 120px; }} }}
+table.cmp th sup, .note sup {{ font-size: 10px; margin-left: 1px; }}
+table.grid {{ width: auto; }}
+table.grid th {{ white-space: nowrap; text-align: center; padding: 4px 6px; }}
+table.grid th:nth-child(-n+4) {{ text-align: left; }}
+table.grid th.grp {{ border-bottom: 1px solid var(--rule); color: var(--ink2); font-weight: 600; }}
+table.grid td {{ white-space: nowrap; padding: 4px 8px 4px 0; }}
+table.grid td.g {{ text-align: center; font-family: var(--mono); padding: 4px 6px; min-width: 34px; cursor: default; }}
+table.grid td.g.ok {{ color: var(--ok-fg); }}
+table.grid td.g.bad {{ color: var(--bad-fg); }}
+table.grid td.g.none {{ color: var(--muted); }}
+table.grid td.g.this, table.grid th.this {{ background: color-mix(in srgb, var(--live-bg) 45%, transparent); }}
+table.grid tr.diffrow td {{ font-weight: 700; background: var(--warn-bg); }}
+table.grid tr.diffrow td:first-child {{ box-shadow: inset 3px 0 0 var(--warn-fg); padding-left: 6px; }}
+footer {{ color: var(--muted); font-size: 12px; max-width: 84ch; display: grid; gap: 6px; }}
+footer p {{ margin: 0; }}
+@media (max-width: 520px) {{ h1 {{ font-size: 23px; }} .wrap {{ padding-inline: 16px; }} .conds {{ grid-template-columns: 1fr; }} }}
+</style>
+<div class="wrap">
+<header>
+  <div class="eyebrow">subagents-bench · requests sweep</div>
+  <h1>Is the agent there when you ask?</h1>
+  <p>A simulated user works with the agent on one repository for {minutes} minutes. A bug arrives every {interval} minutes ({n_bugs} in all), two questions about the code come between bugs, a status check asks how long the open bugs will take, and bug 3 is urgent. The user sees only what the agent sends with <code>reply</code>, so this measures how fast and how well questions are answered, whether bugs get fixed, and whether the agent's estimates of its own work hold. Two bugs-only controls get the same bugs at the same times and nothing else, so the gap to them is what the requests cost. Orchestrator: DeepSeek-V4.1-Flash. Subagents: Gemma-4-31B, 20 steps each, up to 3 at once.</p>
+  <div class="strip"><span>Snapshot <b>{snap}</b></span><span><b>{live}</b> live</span><span><b>{grading}</b> grading</span><span><b>{graded}</b> of {total} graded</span><span><b>${cost:.2f}</b> spent so far</span><span>Questions ready: {questions}</span></div>
+</header>
+<div class="conds">{conds}</div>
+{differences}
+<div class="legend" aria-label="Timeline legend">
+  <span><svg width="16" height="16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="var(--bug)"/></svg>bug, numbered by message id (dashed: waiting to be read)</span>
+  <span><svg width="16" height="16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="var(--urgent)"/></svg>urgent bug</span>
+  <span><svg width="14" height="14" aria-hidden="true"><path d="M7 1 l6 6 l-6 6 l-6 -6 z" fill="var(--question)"/></svg>question (hollow: no answer yet), line to its answer</span>
+  <span><svg width="12" height="12" aria-hidden="true"><rect x="1" y="1" width="10" height="10" fill="var(--status)"/></svg>status check</span>
+  <span><i class="sw" style="width:3px;height:14px;background:var(--ink2)"></i>reply, colored by what it answers (dot: done)</span>
+  <span><i class="sw" style="height:5px;background:var(--eta)"></i>estimate: from the reply to the time it promised (red: missed; dotted tail: never said done)</span>
+  <span><svg width="14" height="12" aria-hidden="true"><path d="M2 6 l3 4 l7 -8" fill="none" stroke="var(--ok-fg)" stroke-width="2.2"/></svg>said done (green fixed, red not, dark not graded)</span>
+  <span><i class="sw" style="background:var(--think)"></i>thinking</span>
+  <span><i class="sw" style="background:var(--tool)"></i>running tools</span>
+  <span><i class="sw" style="background:var(--wait)"></i>waiting</span>
+  <span><i class="sw" style="background:var(--sub)"></i>subagent run (pale: no report)</span>
+</div>
+{body}
+<footer>
+  <p>Replied after: from the message being sent to the agent's first <code>reply</code> to it; for a status check, to its first reply of any kind. Waited to be read: until the message entered the agent's conversation (it arrives between steps). Medians count a message never answered as infinitely late. Controls (dashed cards) have no ids or replies: their bugs are numbered by position and show only pickup (waited to be read, first edit after) and fixes.</p>
+  <p>Correct: an LLM judge compares the first reply to each question with a reference answer, after the session (<code>subagents-bench grade-answers</code>); "–" until a session has <code>answers.json</code>. Shown over answered questions, and over every question asked. Fixed: SWE-sweep's hidden tests, after the session; live sessions count for latency and estimates, not fixes. Bugs only vs with requests: per-bug pickup from <code>interactivity.csv</code>, over the bugs after the first.</p>
+  <p>|log2 ETA error|: log2 of the actual over the estimated time from a bug's first estimate (sent before it was said done) to its done claim (1 means off by a factor of 2); a bug estimated and never said done counts as infinitely late ("never done") unless the session's deadline came before its due time. Done by the ETA: said done before the time the first estimate promised. Done claims true: the share of done claims the grader confirms. Urgent bug first: of the earlier bugs still open when the urgent one arrived, the share it was said done before.</p>
+</footer>
+</div>
+{viewer}

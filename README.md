@@ -255,6 +255,163 @@ commands that may break SWE-sweep's fairplay rules (git history, network,
 installed copies: `fairplay` in tools.csv, `[WARN]` in the output); the first
 smoke's stuck single agent ran `git cat-file --batch-all-objects`.
 
+### Requests: answers, fixes and estimates
+
+The runs above sent only bugs, and read a bug's latency off the agent's tool
+calls (`touch_sec`, `edit_sec`): an agent that keeps working on the bugs it
+knows looks responsive without ever telling the user anything, and nothing
+asks it to stay available for requests it cannot see yet. A user wants three
+things from a session: their questions answered, their bugs fixed, and to
+know when each fix will be ready.
+[`swe_interactive_requests.yaml`](configs/sweeps/swe_interactive_requests.yaml)
+sends all three kinds of message in one 30-minute session
+(`interactive.replies`):
+- a bug every 4 minutes, 6 in all, with the hints above (`hint_detail:
+  tests`); bug 3 (0-based, at 12:00) is urgent: "fix it before the earlier
+  ones" (`urgent_every: 3`);
+- two questions about the code between consecutive bugs, 80 s and 160 s after
+  each (`questions_per_interval: 2`; 12 in all), such as what a function
+  returns in a given case or a default value, written beforehand from files
+  no subtask's fix or tests change;
+- a status check 120 s after bugs 1, 3 and 5 asking how long each open bug
+  will take (`status_every: 2`).
+
+Every message has an id (`Request #4`, `Question #5`, `Status check #6`) and
+the agent answers with a new tool, `reply(to, text, eta_min, done)`; the user
+sees nothing else it writes. The prompt asks it to answer each question (its
+first reply to a question is taken as the answer, and that reply's result says
+so), to reply to a bug with an
+estimate in minutes (`eta_min`) in its first response after the bug arrives
+and again whenever the estimate changes, with `done: true` once it is fixed
+and checked, and to fix the urgent bug before the earlier ones. So a question
+is answered when its reply arrives, and a bug's replies say when the agent
+expects it fixed and when it says it is. Three conditions get the requests,
+the same prompt in each: `single_requests`, `manager_background_requests` (a
+read-only orchestrator with background subagents) and
+`background_hinted_requests` (all tools, background subagents, the delegation
+hint). Two controls, `single_bugsonly` and `manager_background_bugsonly`, get
+the same bugs at the same times and nothing else (no ids, no `reply`, no
+questions, status checks or urgency): the in-sweep baseline for what the
+requests cost in bugs fixed and in how fast a new bug is picked up
+(`hints.csv`, `interactivity.csv`), on the same day and provider. The
+arrival-rate runs above are a looser second reference. Click and pint, 2
+rounds: 5 conditions, 20 sessions.
+
+| The user's question | `requests.csv` columns (per condition) |
+|---|---|
+| Are my questions answered, and how fast? | `answered_frac`, `answer_median_sec`, `answered_60s`, `answered_180s` |
+| Are the answers right? | `correct_of_answered`, `correct_of_asked` (an LLM judge against a reference answer, first reply only; unanswered questions count only in the second) |
+| Are my bugs fixed? | `fixed_frac` |
+| Are the estimates right? | `eta_given_frac`, `eta_abs_log2_median` (1: off by a factor of 2), `eta_log2_median` (> 0: late; a bug estimated and never said done counts as infinitely late unless the session's deadline came before the predicted time), `eta_total_abs_log2_median` (the same prediction scored from the bug's arrival, against the user's whole wait: a late estimate has a short horizon), `n_eta_never_done`, `on_time_frac` |
+| Is a bug done when the agent says so? | `claim_precision` (done claims the grader confirms) |
+| Does an urgent bug go first? | `urgent_first_frac` |
+| Is a status check answered? | `status_reply_median_sec` |
+
+`messages.csv` has one row per message. Questions are written once, before
+the run, and answers are graded after it; rerun `analyze.sh` after grading
+to fill `correct_of_answered` and `correct_of_asked`:
+
+```bash
+.venv/bin/subagents-bench questions configs/sweeps/swe_interactive_requests.yaml      # 12 per task, jobs/<sweep>/hints/
+scripts/run_experiment.sh configs/sweeps/swe_interactive_requests.yaml
+.venv/bin/subagents-bench grade-answers configs/sweeps/swe_interactive_requests.yaml  # <trial>/agent/answers.json
+scripts/analyze.sh jobs/swe_interactive_requests
+```
+
+Design and caveats (question generation, the judge, the ETA metrics,
+censoring): docs/DESIGN.md, *Requests*; columns: docs/DATA.md.
+
+A monitor page follows the sweep while it runs and after (it only reads the
+jobs dir, so rerun it for a new snapshot):
+`.venv/bin/python -m subagents_bench.monitor jobs/swe_interactive_requests
+--compare jobs/swe_interactive_rate --out OUT_DIR` writes `OUT_DIR/index.html`
+and `OUT_DIR/transcripts/` (serve or publish the folder). It shows the
+per-condition table above, each control against its twin, the same bugs
+against the arrival-rate run (per condition, on the repository and round pairs
+it has graded, and bug by bug), and one card per session (live, grading or
+graded) with its timeline of messages, replies, estimates and subagent runs,
+its messages table, and its full transcript on request. The design comes from
+the jobs dir's `sweep.json` (`--spec` instead), so it works on any interactive
+sweep; files: docs/DATA.md, *Monitor page*.
+
+First run (2026-10-15, one Mac; all 20 sessions valid, $2.47; 4 sessions per
+condition, so these are directions, not effects; jobs 7-10, round 2's hinted,
+manager and both controls, ran two jobs at a time, `jobs_at_once` in the
+manifest):
+
+| Per condition (4 sessions) | Single agent | Background manager | All tools + background, hinted |
+|---|---|---|---|
+| Questions answered | 27 of 48 (56%) | 39 of 48 (81%) | 39 of 48 (81%) |
+| Answer time, median (unanswered = never) | 293 s | 55 s | 61 s |
+| Answered within 60 s | 27% | 52% | 50% |
+| Answers correct, of those answered | 96% | 97% | 100% |
+| Status check answered, median | 142 s | 42 s | 42 s |
+| Requested bugs fixed | 9 of 24 | 9 of 24 | 11 of 24 |
+| Same bugs, bugs-only control | 10 of 24 | 8 of 24 | – |
+| Bugs given an estimate | 21% | 29% | 38% |
+| Estimated bugs done on time | 0 of 5 | 4 of 6 | 1 of 9 |
+| Done claims the grader confirms | 2 of 3 | 6 of 6 | 10 of 13 |
+| Urgent bug done before the earlier open ones | 0% | 22% | 50% |
+| Cost per session | $0.07 | $0.22 | $0.10 |
+
+- The single agent was the least available: it left 44% of the questions
+  unanswered and took a median 293 s to answer, five times the subagent
+  conditions, and answered status checks three times slower. It was not
+  stuck behind its own commands: the questions reached it a median 13 s
+  after they were sent (it was in a model call for 24 of the 25 questions it
+  left unanswered or answered after 180 s; LLM calls took 82-92% of each
+  session, its own tools 7-18%). It then kept working on its bugs: for 17 of
+  those 25 its reasoning says it will answer ("Let me answer #9 quickly"),
+  often with the answer worked out, and it ran 10-57 more steps without
+  calling `reply`. In one session its last reply came at 2:47 of 30:00.
+  The earlier bugs-only runs could not show this: it picked up new bugs as
+  fast as the others (a median 10-12 s to receive one here too).
+- The requests cost few fixes in total: 9 against 10 bugs fixed for the
+  single agent, 9 against 8 for the manager, on the same bugs at the same
+  times. Per repository and round the differences are larger (r2 pint,
+  single: 1 against 3), so this is noise-level.
+- With questions to answer, the all-tools orchestrator delegated in 3 of 4
+  sessions, each a single burst (one `spawn_subagents` call of 1-3
+  subagents); in the first bugs-only smoke 1 of 6 all-tools sessions did. It
+  answered as fast as the manager, fixed the most and claimed done most
+  often, at half the manager's cost.
+- The agents mostly did not estimate, although the prompt asks for an
+  estimate in the first response after a bug arrives (21-38% of bugs; median
+  estimate 8-9 minutes). Only the manager's estimates were usable: off by a
+  factor of about 3 at the median, mostly early (4 of the 5 bugs it said done
+  beat the estimate). The single agent never said done any bug it estimated;
+  the hinted orchestrator 4 of 9.
+- Fairplay: 11 sessions probed git history (the images hold only the
+  `baseline` commit, so there was nothing to find); two bugs-only sessions
+  looked for an installed copy and one also tried `pip download` (no network,
+  it failed). No command obtained a fix (`fairplay` in tools.csv).
+
+### Baseline, and running on Modal
+
+[`swe_interactive_baseline.yaml`](configs/sweeps/swe_interactive_baseline.yaml)
+is the bugs-only baseline: 30-minute sessions, 6 bugs every 4 minutes in one
+fixed order for every condition, the reply tool on, every model
+DeepSeek-V4.1-Flash, for the orchestrator alone, the orchestrator with
+background subagents (hinted), and a read-only orchestrator whose work all
+goes to subagents, on click and echo, 1 round (6 sessions). With the order
+fixed, a second round would only repeat the same sessions.
+
+`harbor.environment: modal` in a spec runs the task containers (the agent's
+sandbox and the separate verifier) in Modal sandboxes, built from the tasks'
+Dockerfiles on x86-64 machines, instead of the local Docker: no emulation, and
+sessions don't share one machine, so more run at once. The agent loop stays
+here and calls Sail. It needs the `modal` extra (`scripts/setup.sh` installs
+it) and a Modal token (`modal token new`); the sweep sets Modal's 2025.06 image
+builder, since the legacy one fails on images without pip (echo's).
+[`swe_interactive_baseline_modal.yaml`](configs/sweeps/swe_interactive_baseline_modal.yaml)
+is the baseline on Modal, and `swe_interactive_baseline_modal_smoke.yaml` a
+2-minute version of it for a quick check:
+
+```bash
+scripts/run_experiment.sh configs/sweeps/swe_interactive_baseline_modal_smoke.yaml --jobs-at-once 3
+scripts/run_experiment.sh configs/sweeps/swe_interactive_baseline_modal.yaml --jobs-at-once 3
+```
+
 ## Where data and figures land
 
 ```
@@ -384,16 +541,18 @@ subagents_bench/
   tools.py            bash, edit_file, read_file, list_dir, search via a per-agent shell
   prompts.py          orchestrator, subagent, judge and debate prompts
   orchestrator.py     the step loop and spawn_subagents
-  interactive.py      timed sessions: hints as user messages, background subagents, wait
-  hints.py            SWE-sweep subtasks -> the hint schedule; generated bug reports
+  interactive.py      timed sessions: hints as user messages, background subagents, wait, reply
+  hints.py            SWE-sweep subtasks -> the message schedule; generated bug reports and code questions
   subagent.py         one subagent run (a dispatch)
   arbiter.py          candidates, judge, debate, copy isolation and apply
   records.py          the episode records
   harness/harbor_agent.py   harbor's external agent (OrchestratorAgent)
   sweep.py, cli.py    sweep specs, preflight, harbor jobs; `subagents-bench`
-  analysis/           validity, cost, critical path, tables, delegation gate
+  analysis/           validity, cost, critical path, tables, delegation gate; interactivity.py (hints),
+                      requests.py (replies: answers, estimates, done claims)
+  monitor/            the HTML monitor of an interactive sweep (python -m subagents_bench.monitor)
   plots/              the nine figures
-configs/              sail/base.yaml, sweeps/{pilot,smoke,swe_sweep,swe_interactive}.yaml, pricing.yaml
+configs/              sail/base.yaml, sweeps/{pilot,smoke,swe_sweep,swe_interactive*}.yaml, pricing.yaml
 scripts/              setup.sh, run_experiment.sh, analyze.sh
 tests/                offline tests (fake models, fake harbor); RUN_DOCKER=1, RUN_LIVE=1 opt in
 ```
