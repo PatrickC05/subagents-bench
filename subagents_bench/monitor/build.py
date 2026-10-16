@@ -66,6 +66,10 @@ SETTINGS = {  # an orchestration: (label, description); the levels sweep's condi
                            "test goes to subagents that run in the background and report as messages."),
     "background_hinted": ("All tools + background, hinted", "All tools and background subagents, and told that "
                           "delegating keeps it free to answer the user."),
+    "manager_available": ("Manager, stay available", "The background manager, told to keep each step short and hand "
+                          "each bug at once to a subagent with a short instruction (the subagent works out the problem)."),
+    "manager_owner": ("Manager, owner + helpers", "Stay available, and each bug's subagent is in charge of it and may "
+                      "start up to 10 helper subagents of its own."),
 }
 LEVELS = {  # condition suffix -> (level, short name, what the user sends), each level the one above plus one kind
     "baseline": ("L0", "bugs only", "Bugs only, with the reply tool: PR #13's baseline."),

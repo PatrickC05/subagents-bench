@@ -3,7 +3,8 @@ main numbers (ETA on time, questions answered, urgency).
 
 **Levels.** Parsed from the condition name: ``<setting>_baseline`` is L0 (bugs only), ``_eta`` L1
 (+ status checks), ``_questions`` L2 (+ questions about the code), ``_urgent`` L3 (+ an urgent
-bug); the setting is the rest (``single``, ``manager_background``, ``background_hinted``). Other
+bug); the setting is the rest (``single``, ``manager_background``, ``background_hinted``,
+``manager_available``, ``manager_owner``). Other
 conditions have neither and are left out of ``urgency.csv`` and ``levels.csv``. Everything groups
 by sweep too, so two runs of a level in different sweeps (the two baselines) never pool. Times
 are seconds after the message was sent unless named ``*_session_sec``.
@@ -90,7 +91,7 @@ from .stats import cluster_bootstrap
 
 LEVELS = {"baseline": "L0", "eta": "L1", "questions": "L2", "urgent": "L3"}
 LEVEL_RE = re.compile(rf"^(?P<setting>.+)_(?P<suffix>{'|'.join(LEVELS)})$")
-SETTINGS = ("single", "manager_background", "background_hinted")
+SETTINGS = ("single", "manager_background", "background_hinted", "manager_available", "manager_owner")
 THRESHOLDS = (30, 60, 120, 300)
 URGENT_WITHIN = (240, 480)
 TIE_SEC = 30.0  # fix times closer than this are a tie in the win rate
