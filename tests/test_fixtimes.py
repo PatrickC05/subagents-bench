@@ -603,7 +603,7 @@ def test_modal_runner_calls(monkeypatch):
     seen: dict = {}
 
     class Proc:
-        stdout = SimpleNamespace(read=lambda: "tail")
+        stdout = SimpleNamespace(read=lambda: "tail ☃".encode()[:-1])  # bytes: tail -c cut a character
 
         def wait(self):
             return 0
@@ -638,10 +638,10 @@ def test_modal_runner_calls(monkeypatch):
     assert args == ("sleep", "infinity") and kw == {"app": r.app, "image": image, "cpu": 3, "memory": 7000,
                                                     "block_network": True, "timeout": 3 * 3600}
     r.upload(box, Path("/x/in.tar.gz"), "/fixtimes/input.tar.gz")
-    assert r.exec(box, ["py", "s.py", "--out", "o"], "/tests", 99) == (0, "tail")
+    assert r.exec(box, ["py", "s.py", "--out", "o"], "/tests", 99) == (0, "tail \ufffd")  # decoded, not raised
     (cmd, *argv), kw = seen["exec"]
     assert cmd == "bash" and argv[:2] == ["-c", fixtimes.RUN_SH] and argv[2:] == ["bash", "py", "s.py", "--out", "o"]
-    assert kw == {"workdir": "/tests", "timeout": 99} and "ulimit -n" in fixtimes.RUN_SH
+    assert kw == {"workdir": "/tests", "timeout": 99, "text": False} and "ulimit -n" in fixtimes.RUN_SH
     r.download(box, "/fixtimes/out.json", Path("/x/out.json"))
     r.terminate(box)
     assert seen["up"] == ("/x/in.tar.gz", "/fixtimes/input.tar.gz") and seen["down"] == ("/fixtimes/out.json", "/x/out.json")
@@ -657,3 +657,36 @@ def test_bash_wrapper_returns_the_exit_code_and_the_log_tail(tmp_path):
     r = subprocess.run(["bash", "-c", sh, "bash", sys.executable, "-c", "import sys; print('x' * 5000); sys.exit(3)"],
                        capture_output=True, text=True)
     assert r.returncode == 3 and r.stdout == ("x" * 5000 + "\n")[-4000:] and (tmp_path / "replay.log").stat().st_size == 5001
+
+
+def test_bash_wrapper_caps_the_graders_run_timeouts(tmp_path):
+    """The grader reads its per-run timeouts from the environment: the wrapper caps them far below
+    its defaults (3600 s visible, 900 s per bug), so a state that hangs cannot use up the exec budget."""
+    sh = fixtimes.RUN_SH.replace(fixtimes.REMOTE, str(tmp_path))
+    code = "import os; print(os.environ['SWESWEEP_VISIBLE_SUITE_TIMEOUT'], os.environ['SWESWEEP_TEST_TIMEOUT'])"
+    r = subprocess.run(["bash", "-c", sh, "bash", sys.executable, "-c", code], capture_output=True, text=True,
+                       env={k: v for k, v in os.environ.items() if not k.startswith("SWESWEEP_")})
+    assert r.returncode == 0 and r.stdout == "120 60\n"
+    assert fixtimes.RUN_TIMEOUTS == {"SWESWEEP_VISIBLE_SUITE_TIMEOUT": "120", "SWESWEEP_TEST_TIMEOUT": "60"}
+    worst = int(fixtimes.RUN_TIMEOUTS["SWESWEEP_VISIBLE_SUITE_TIMEOUT"]) + 13 * int(fixtimes.RUN_TIMEOUTS["SWESWEEP_TEST_TIMEOUT"])
+    assert worst * 2 < fixtimes.EXEC_TIMEOUT_SEC / 4  # a hung state and its rerun, 13 bugs: well within budget
+
+
+def test_bash_wrapper_tail_cut_through_a_character_is_read_leniently(tmp_path):
+    """``tail -c 4000`` cuts by bytes: the cut can fall inside a multi-byte character. The tail is
+    read as bytes and decoded with replacement (modal's text reader is strict UTF-8 and would raise)."""
+    sh = fixtimes.RUN_SH.replace(fixtimes.REMOTE, str(tmp_path))
+    code = "import sys; sys.stdout.buffer.write('林'.encode() + b'x' * 3998)"  # the cut: 2 of 3 bytes of 林
+    r = subprocess.run(["bash", "-c", sh, "bash", sys.executable, "-c", code], capture_output=True)
+    assert r.returncode == 0 and r.stdout[:2] == "林".encode()[1:]
+    with pytest.raises(UnicodeDecodeError):
+        r.stdout.decode("utf-8")
+
+    class Box:
+        def exec(self, *args, **kw):
+            assert kw["text"] is False
+            return SimpleNamespace(stdout=SimpleNamespace(read=lambda: r.stdout), wait=lambda: 0)
+
+    runner = fixtimes.ModalRunner.__new__(fixtimes.ModalRunner)  # no modal needed for exec
+    rc, tail = runner.exec(Box(), ["true"], "/tests", 10)
+    assert rc == 0 and tail == "\ufffd\ufffd" + "x" * 3998

@@ -18,7 +18,11 @@ are skipped) that has ``agent/snapshots.jsonl`` and, unless ``force``, no ``agen
   ``artifacts/logs/artifacts/model.patch`` (``source`` ``final``) at the episode's ``t_end``. The
   sent bugs: the inbox's bug (``hint``) records ready by ``t_end``, in sending order.
 - :mod:`subagents_bench.replay_states` grades them in the sandbox; its docstring has the statuses,
-  the reruns and the output. This side adds ``trial`` (``<job>/<trial>``), ``graded_at``, ``image``
+  the reruns and the output. The grader's own per-run timeouts are capped there (``RUN_TIMEOUTS``:
+  ``SWESWEEP_VISIBLE_SUITE_TIMEOUT`` 120 s, ``SWESWEEP_TEST_TIMEOUT`` 60 s, against its defaults of
+  up to 3600 s and 900 s; a normal state grades in seconds): a mid-edit state that hangs costs at
+  most 120 s + 60 s per sent bug, and a bug whose targeted run timed out is ``unknown`` in that
+  state, instead of the state using up the trial's exec budget. This side adds ``trial`` (``<job>/<trial>``), ``graded_at``, ``image``
   (the Dockerfile, a hash of the ``tests/`` dir, Modal's image id) and ``final_matches_verifier``:
   whether the final state's per-bug resolved (status ``pass``) equals ``verifier/eval.json``'s for
   every sent bug, None without a readable eval.json or when the verifier errored; ``mismatches``
@@ -59,9 +63,16 @@ REMOTE = "/fixtimes"  # the replay's files in the sandbox
 FIX_STATES = "fix_states.json"
 FINAL_PATCH = Path("artifacts") / "logs" / "artifacts" / "model.patch"  # the collect hook's, as harbor stores it
 SCRIPT = Path(__file__).with_name("replay_states.py")
+# The grader's own per-run timeouts (it reads them at call time; replay_states runs it in-process). Normal
+# states grade in seconds (verifier eval.json on Modal: visible suite <= 2.7 s, one bug's targeted run
+# <= 1.9 s); a mid-edit state that loops forever would otherwise cost the grader's defaults (3600 s
+# visible + 900 s per bug for click), use up EXEC_TIMEOUT_SEC and lose the whole trial on every run.
+# A capped targeted run is "timed out": the bug is unknown in that state. At most 120 s + 60 s per sent bug.
+RUN_TIMEOUTS = {"SWESWEEP_VISIBLE_SUITE_TIMEOUT": "120", "SWESWEEP_TEST_TIMEOUT": "60"}
 # The open-files limit raised as tests/test.sh does; the grader's chatter goes to a log, whose tail is returned.
-RUN_SH = (f'ulimit -n "$(ulimit -Hn)" 2>/dev/null || true; "$@" > {REMOTE}/replay.log 2>&1; rc=$?; '
-          f"tail -c 4000 {REMOTE}/replay.log; exit $rc")
+RUN_SH = ('ulimit -n "$(ulimit -Hn)" 2>/dev/null || true; '
+          + "".join(f"export {k}={v}; " for k, v in RUN_TIMEOUTS.items())
+          + f'"$@" > {REMOTE}/replay.log 2>&1; rc=$?; tail -c 4000 {REMOTE}/replay.log; exit $rc')
 
 
 class FixTimesError(RuntimeError):
@@ -371,8 +382,10 @@ class ModalRunner:
         box.filesystem.copy_from_local(str(local), remote)
 
     def exec(self, box: Any, argv: list[str], cwd: str, timeout: int) -> tuple[int, str]:
-        proc = box.exec("bash", "-c", RUN_SH, "bash", *argv, workdir=cwd, timeout=timeout)
-        output = proc.stdout.read()
+        # Bytes, decoded leniently: ``tail -c`` can cut through a multi-byte character, which modal's
+        # strict text reader would raise on even when the replay succeeded (the tail is only diagnostic).
+        proc = box.exec("bash", "-c", RUN_SH, "bash", *argv, workdir=cwd, timeout=timeout, text=False)
+        output = proc.stdout.read().decode("utf-8", "replace")
         return proc.wait(), output
 
     def download(self, box: Any, remote: str, local: Path) -> None:
