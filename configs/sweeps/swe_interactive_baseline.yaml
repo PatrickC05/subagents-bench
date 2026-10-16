@@ -18,7 +18,9 @@
 #                                at once to a subagent with a short instruction (it works out the problem)
 #   manager_owner_baseline       manager_available, and that subagent is in charge of its bug and may
 #                                start up to 10 helper subagents of its own (one level deep)
-# 5 conditions x 2 repositories x 1 round = 5 harbor jobs, 10 thirty-minute sessions.
+#   dispatcher_hinted_baseline   no tools of its own at all (not even reading): only spawn_subagents,
+#                                wait and reply, and told delegating keeps it free
+# 6 conditions x 2 repositories x 1 round = 6 harbor jobs, 12 thirty-minute sessions.
 #   scripts/run_experiment.sh configs/sweeps/swe_interactive_baseline.yaml
 name: swe_interactive_baseline
 base: configs/sail/base.yaml
@@ -78,3 +80,6 @@ conditions:
     subagent: {strategy: parallel, scope: hard, spawn_mode: background, availability_hint: true, owner_hint: true,
                max_children: 10}
     tools: {orchestrator_tools: [read_file, list_dir, search]}
+  dispatcher_hinted_baseline:
+    subagent: {strategy: parallel, scope: hard, spawn_mode: background, delegation_hint: true}
+    tools: {orchestrator_tools: []}
