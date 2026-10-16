@@ -524,6 +524,26 @@ scripts/run_experiment.sh configs/sweeps/swe_interactive_interrupt.yaml --jobs-a
 scripts/analyze.sh jobs/swe_interactive_interrupt
 ```
 
+The smoke,
+[`swe_interactive_interrupt_smoke.yaml`](configs/sweeps/swe_interactive_interrupt_smoke.yaml)
+(2026-10-16), ran the 6 conditions in 2-minute sessions on click and echo:
+12 of 12 sessions valid, no provider errors, $0.040 in all.
+- 67 calls were interrupted, 2-11 per session. Each aborted call ended a
+  median 0.25 s after the rule held (at most 0.42 s). Every one was
+  followed by a call that had the message, and none left a reply in the
+  conversation.
+- Median delivery fell from 2-13 s in the levels smoke to 0.2-3.4 s. The
+  slowest was 15.6 s, behind a call protected by the 3-in-a-row cap. With a
+  message every 10 s, 3 interrupts in a row came often. In both
+  `manager_background_interrupt_questions` sessions the protected 4th call
+  then reasoned for its last 40-50 s, until the deadline. That left 9
+  messages undelivered, and that condition never delegated, so the
+  delegation gate failed. Messages that close together
+  are a smoke artefact: the full session's gaps are 40 s or more.
+- The aborted calls were 38% of the cost. Their tokens are estimates. The
+  smoke recorded one token a chunk; the code now uses 16 tokens a chunk,
+  which puts them at about $0.021.
+
 ## Where data and figures land
 
 ```

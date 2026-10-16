@@ -286,8 +286,9 @@ and a message that arrives meanwhile waits that long to be read. The
 recorder runs the orchestrator's call with a `CallCancel` (`llm.py`) and
 checks the interrupt rule every 0.2 s (`records.POLL_SEC`). When the rule
 holds, the stream stops at its next SSE line, which closes the HTTP
-response, and `CallInterrupted` is raised. The reply streams a chunk every
-few milliseconds, so the abort lands within about 0.3 s. A stream that
+response, and `CallInterrupted` is raised. A streaming reply sends a chunk (about 16
+tokens) every 0.2 s or so: in the smoke's 67 interrupts the call ended a
+median 0.25 s after the rule held (at most 0.42 s). A stream that
 sends nothing for 2 s after the cancel (`ABORT_GRACE_SEC`) is abandoned
 and closes on its next line. A cancel during a retry's backoff ends the
 backoff, and nothing is retried after a cancel. The partial reply is
@@ -324,10 +325,13 @@ request's characters (`prompt_chars`) at the ratio of the orchestrator's
 last call that reported usage (4 characters a token before any). Cached
 tokens are that call's prompt tokens (the prefix the provider has seen), at
 most the estimate. Sail's cache covered the previous prompt in 256-token blocks in the
-levels sessions. Completion tokens are the streamed chunks (`n_chunks`,
-about one token each); reasoning tokens are the reasoning chunks. Every
-call records `n_chunks`, so the chunk-per-token ratio can be checked on the
-completed calls. In the interactivity analysis an interrupted call ends at
+levels sessions. Completion tokens are the streamed chunks (`n_chunks`)
+at the tokens per chunk of the orchestrator's completed calls, and
+reasoning tokens the reasoning chunks at the same rate. Sail sends about 16
+tokens a chunk: in the smoke's 128 completed calls the median was 16, the
+10th-90th percentile 14-20, and 16 is the rate before any completed call
+(`TOKENS_PER_CHUNK`). Every call records `n_chunks`, so the rate can be
+checked offline. In the interactivity analysis an interrupted call ends at
 its abort: a hint's `busy_at_arrival` is `llm`, `blocked_sec` is what was
 left of the call, about 0 to 5 s. `orch_llm_median_sec` counts only
 completed calls.

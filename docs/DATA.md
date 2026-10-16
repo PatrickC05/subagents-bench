@@ -88,7 +88,7 @@ still unwinding after harbor's cancel) are dropped.
 | `stream_repairs` | re-sent or clashing tool calls repaired in the stream (docs/DESIGN.md) |
 | `one_call_retry` | the reply came from a retry that asked for exactly one tool call, after a stream error once a tool call had started (Sail's Gemma-4 parsing of several tool calls in one reply; docs/DESIGN.md) |
 | `error` | null; `cancelled` (the episode stopped during the call); `interrupted` (`interactive.interrupt`: a user message aborted the orchestrator's call; not a failure); else `<ErrorClass>: <message>` (`ProviderError`, `BillingError`, `ContextLengthError`, ...) |
-| `n_chunks` | stream chunks carrying content, reasoning or a tool call (about one token each); null for a failed call |
+| `n_chunks` | stream chunks carrying content, reasoning or a tool call (Sail: about 16 tokens each); null for a failed call |
 | `tokens_estimated` | the token counts are estimates: an interrupted call whose stream ended before the provider's usage chunk (docs/DESIGN.md, *Interrupts*); false otherwise |
 | `partial_text_chars`, `partial_reasoning_chars`, `prompt_chars` | interrupted calls only: the characters of text and reasoning streamed before the abort (dropped from the conversation), and of the request (the prompt estimate's basis) |
 
