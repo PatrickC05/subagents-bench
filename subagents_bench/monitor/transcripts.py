@@ -1,8 +1,10 @@
 """Each session's transcript as compact JSON for the monitor's transcript viewer (``transcript_viewer.html``).
 
-One file per trial: ``<out>/<job>__<trial>.json``. A file is rewritten only when its sources
-(transcript.jsonl, dispatches.jsonl, spawns.jsonl, episode.json, inbox.jsonl) changed since the last
-write (``manifest.json`` lists every file with its source signature), so a republish sends little.
+One file per trial: ``<out>/<job>__<trial>.json`` (``file_name``: job names start with the sweep's
+name, so the pages of several sweeps can share one ``<out>``). A file is rewritten only when its
+sources (transcript.jsonl, dispatches.jsonl, spawns.jsonl, episode.json, inbox.jsonl) changed since
+the last write (``manifest.json`` lists every file with its source signature, the other pages' files
+included), so a republish sends little.
 
 Format (short keys keep it small)::
 
@@ -156,12 +158,18 @@ def export_trial(trial_dir: Path) -> dict:
 
 
 def file_name(trial_dir: Path) -> str:
-    return f"{trial_dir.parent.name}__{trial_dir.name}.json"
+    """``<job>__<trial>.json``, with the jobs dir's name in front unless the job's name starts with it.
+    A sweep's jobs are ``<sweep>__r<k>__<condition>`` in ``jobs/<sweep>`` (unless its spec sets
+    ``jobs_dir``), so the pages of several sweeps written to one out dir never share a file."""
+    job, jobs = trial_dir.parent.name, trial_dir.parent.parent.name
+    return f"{'' if job.startswith(f'{jobs}__') else f'{jobs}__'}{job}__{trial_dir.name}.json"
 
 
 def export_all(trial_dirs: list[Path], out_dir: Path) -> tuple[dict[str, dict], int]:
     """Write the changed transcripts (trials with a transcript.jsonl) and the manifest; return
-    ``{str(trial_dir): {"file", "job", "trial", "sig", "bytes"}}`` and how many files were rewritten."""
+    ``{str(trial_dir): {"file", "job", "trial", "sig", "bytes"}}`` and how many files were rewritten.
+    The manifest keeps the entries of other jobs whose file is still there (another sweep's page in
+    the same ``out_dir``), so writing one page never makes the next rewrite every file of another."""
     out_dir.mkdir(parents=True, exist_ok=True)
     man_p = out_dir / "manifest.json"
     try:
@@ -182,5 +190,9 @@ def export_all(trial_dirs: list[Path], out_dir: Path) -> tuple[dict[str, dict], 
         e = {"file": name, "job": td.parent.name, "trial": td.name, "sig": sig, "bytes": p.stat().st_size}
         entries.append(e)
         by_dir[str(td)] = e
-    man_p.write_text(json.dumps({"files": entries}, indent=1))
+    jobs = {td.parent.name for td in trial_dirs}
+    names = {e["file"] for e in entries}
+    others = [e for f, e in old.items() if f not in names and isinstance(e, dict) and e.get("job") not in jobs
+              and (out_dir / f).is_file()]
+    man_p.write_text(json.dumps({"files": entries + others}, indent=1))
     return by_dir, wrote

@@ -3,9 +3,17 @@
 The sweep's design (tasks, rounds, conditions, session length, schedule) comes from
 ``<jobs>/sweep.json`` (the spec and the resolved config of every condition, written when the sweep
 starts) or from a spec file. Controls are conditions without ``interactive.replies``; a control's
-twin is the condition with the same overrides apart from ``interactive``. Condition labels and the
-"what changed" table are written for the requests sweep (``swe_interactive_requests``); other
-conditions get their name as label.
+twin is the condition with the same overrides apart from ``interactive``. Two sweeps have their own
+text: the requests sweep (``swe_interactive_requests``: its condition labels, header and "what
+changed" table) and the levels sweep (names starting with ``swe_interactive_levels``, so its smoke
+too: conditions ``<setting>_<level>``, a header and a "what each level adds" table built from the
+design, a "by level" ladder per setting, and the plan of its runs: rounds 3 and up only for L2 and
+L3). Other sweeps get a short header built from the design, and their conditions their name as
+label (the levels names wherever they appear, e.g. the bugs-only baseline's).
+
+Pages of several sweeps can share one out dir (``page``: the file name; ``nav``: a tab bar linking
+them) and its ``transcripts/``. The host wraps only ``index.html`` in a document, so any other page
+starts with its own doctype, charset and viewport.
 
 A trial may be partial: no episode yet (skipped), a live session (no ``t_end``, no result.json, a
 half-written last jsonl line), grading (ended, no result.json) or graded. Per-message metrics come
@@ -17,8 +25,11 @@ estimates.
 The comparison with an earlier sweep (``compare``, e.g. the arrival-rate sweep: the same repositories
 and, per round, the same first bugs) matches bugs by subtask on the (task, round) pairs a condition
 has graded; each condition is shown against the earlier conditions of the same design (overrides
-apart from ``interactive``), or all of them when none has it. When the earlier sweep sent more bugs
-per session, its first edits leave out work that may belong to those later bugs (``_own_edits``).
+apart from ``interactive``), or all of them when none has it. When both sweeps send the same bugs in
+every round (``vary_order_by_round: false`` and one ``order_seed`` everywhere, as the levels sweep
+and PR #13's baseline), rounds are pooled: pairs are tasks, so the levels' rounds 3-4 still meet the
+baseline's two. When the earlier sweep sent more bugs per session, its first edits leave out work
+that may belong to those later bugs (``_own_edits``).
 """
 
 from __future__ import annotations
@@ -28,7 +39,7 @@ import json
 import math
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -46,26 +57,81 @@ TEMPLATE = (HERE / "template.html").read_text()  # str.format fields; literal br
 VIEWER = (HERE / "transcript_viewer.html").read_text()  # inserted verbatim (not formatted)
 SCHEME = "sail_balanced"  # configs/pricing.yaml scheme, as analysis' default
 REQUESTS_SWEEP = "swe_interactive_requests"  # the sweep the "what changed" table describes
+LEVELS_SWEEP = "swe_interactive_levels"  # the levels sweep; its smoke and other variants start with this name
+LEVELS_ALL_ROUNDS = 2  # swe_interactive_levels.yaml's commands: rounds 1-2 run every level, later ones L2 and L3
+SETTINGS = {  # an orchestration: (label, description); the levels sweep's conditions are <setting>_<level suffix>
+    "single": ("Single agent", "No subagents. It reads, edits, tests and replies itself; a message waits until its "
+               "current step (thinking and commands) ends."),
+    "manager_background": ("Background manager", "Read-only orchestrator (read, list, search, reply): every edit and "
+                           "test goes to subagents that run in the background and report as messages."),
+    "background_hinted": ("All tools + background, hinted", "All tools and background subagents, and told that "
+                          "delegating keeps it free to answer the user."),
+}
+LEVELS = {  # condition suffix -> (level, short name, what the user sends), each level the one above plus one kind
+    "baseline": ("L0", "bugs only", "Bugs only, with the reply tool: PR #13's baseline."),
+    "eta": ("L1", "status checks", "Bugs, and status checks asking how long each bug so far will take."),
+    "questions": ("L2", "questions", "Bugs, status checks, and questions about the code after each bug."),
+    "urgent": ("L3", "urgent bug", "Bugs, status checks and questions, and one bug is urgent."),
+}
 LABELS = {  # condition -> (card label, description)
-    "single_requests": ("Single agent", "No subagents. It reads, edits, tests and replies itself; a message waits "
-                        "until its current step (thinking and commands) ends."),
-    "manager_background_requests": ("Background manager", "Read-only orchestrator (read, list, search, reply): every "
-                                    "edit and test goes to subagents that run in the background "
-                                    "and report as messages."),
-    "background_hinted_requests": ("All tools + background, hinted", "All tools and background subagents, and told "
-                                   "that delegating keeps it free to answer the user."),
+    "single_requests": SETTINGS["single"],
+    "manager_background_requests": SETTINGS["manager_background"],
+    "background_hinted_requests": SETTINGS["background_hinted"],
     "single_bugsonly": ("Single agent, bugs only", "Control: the same bugs at the same times, nothing else. No "
                         "ids, no reply tool, no questions, status checks or urgent bug."),
     "manager_background_bugsonly": ("Background manager, bugs only", "Control: the background manager with the "
                                     "same bugs at the same times and none of the requests."),
+    **{f"{s}_{x}": (f"{sl} · {lv} {ln}", f"{sd} {ld}") for s, (sl, sd) in SETTINGS.items()
+       for x, (lv, ln, ld) in LEVELS.items()},
 }
-SWEEP_LABEL = {"swe_interactive_rate": "arrival-rate"}  # an earlier sweep, as the comparison names it
+SWEEP_LABEL = {"swe_interactive_rate": "arrival-rate",  # an earlier sweep, as the comparison names it
+               "swe_interactive_baseline_modal": "PR #13 baseline"}
 SHORT = {"manager_background": "manager"}  # an earlier design's short name (its conditions minus _every<s>)
+REQUESTS_LEDE = (  # the requests sweep's header (str.format fields)
+    "A simulated user works with the agent on one repository for {minutes} minutes. A bug arrives every {interval} "
+    "minutes ({n_bugs} in all), two questions about the code come between bugs, a status check asks how long the open "
+    "bugs will take, and bug 3 is urgent. The user sees only what the agent sends with <code>reply</code>, so this "
+    "measures how fast and how well questions are answered, whether bugs get fixed, and whether the agent's estimates "
+    "of its own work hold. Two bugs-only controls get the same bugs at the same times and nothing else, so the gap to "
+    "them is what the requests cost. Orchestrator: DeepSeek-V4.1-Flash. Subagents: Gemma-4-31B, 20 steps each, up to "
+    "3 at once.")
+CONTROLS_NOTE = (" Controls (dashed cards) have no ids or replies: their bugs are numbered by position and show only "
+                 "pickup (waited to be read, first edit after) and fixes.")
+PICKUP_NOTE = " {what}: per-bug pickup from <code>interactivity.csv</code>, over the bugs after the first."
+LEVELS_NOTE = ("<p>By level: each setting's levels, one row each, so a step down adds one kind of message; a cell is "
+               "\"–\" when the level sends no such message. Sessions: started, of those planned. Status check "
+               "replied: the checks with any reply after them, and the median time to the first. Bugs fixed is the "
+               "end-of-session grade; each bug's real fix time comes from the workspace snapshots after the run "
+               "(<code>subagents-bench fix-times</code>) and is not on this page.</p>")
+DOC_HEAD = ('<!doctype html>\n<html lang="en">\n<meta charset="utf-8">\n'  # a page other than index.html: the host
+            '<meta name="viewport" content="width=device-width, initial-scale=1">\n')  # wraps only index.html
 KIND_LABEL = {"bug": "Bug", "question": "Question", "status": "Status check"}
 esc = html.escape
 
 
 # --- the sweep's design -------------------------------------------------------------------------
+
+def level_of(cond: str | None) -> tuple[str, int] | None:
+    """A levels condition's (setting, level number): ``manager_background_questions`` ->
+    ("manager_background", 2); None for any other name."""
+    setting, _, suffix = (cond or "").rpartition("_")
+    return (setting, list(LEVELS).index(suffix)) if setting and suffix in LEVELS else None
+
+
+def level_key(cond: str) -> tuple:
+    """Sorts levels conditions by setting (``SETTINGS`` order), then level; other names last."""
+    lv = level_of(cond)
+    return (list(SETTINGS).index(lv[0]) if lv[0] in SETTINGS else len(SETTINGS), lv[0], lv[1]) if lv else (99, "", 0)
+
+
+def planned_rounds(name: str, conditions, rounds: int) -> dict[str, tuple[int, ...]]:
+    """Per condition, the rounds it will run in: all of them, except in the levels sweep, whose rounds
+    after ``LEVELS_ALL_ROUNDS`` run only L2 and L3 (the urgency comparison needs more pairs)."""
+    def last(c):
+        lv = level_of(c)
+        return min(rounds, LEVELS_ALL_ROUNDS) if name.startswith(LEVELS_SWEEP) and lv and lv[1] < 2 else rounds
+    return {c: tuple(range(1, last(c) + 1)) for c in conditions}
+
 
 @dataclass
 class Sweep:
@@ -74,6 +140,23 @@ class Sweep:
     rounds: int
     conditions: dict[str, dict]  # condition -> its spec overrides, in spec order
     interactive: dict[str, dict]  # condition -> resolved ``interactive`` config (interactive conditions only)
+    configs: dict[str, dict] = field(default_factory=dict)  # condition -> its whole resolved config (models)
+    raw: dict = field(default_factory=dict)  # the spec after ``extends`` (``harbor.environment``)
+    plan: dict[str, tuple[int, ...]] | None = None  # condition -> the rounds it runs in (``planned_rounds``)
+
+    def __post_init__(self) -> None:
+        if self.plan is None:
+            self.plan = planned_rounds(self.name, self.conditions, self.rounds)
+
+    @property
+    def levels(self) -> bool:
+        """The levels sweep or a variant of it (its smoke)."""
+        return self.name.startswith(LEVELS_SWEEP)
+
+    def sends(self, cond: str, key: str) -> bool:
+        """Whether a condition's schedule has this kind of message (``questions_per_interval``,
+        ``status_every``, ``urgent_every``)."""
+        return bool((self.interactive.get(cond) or {}).get(key))
 
     @property
     def icfg(self) -> dict:
@@ -95,7 +178,8 @@ class Sweep:
 
     @property
     def n_sessions(self) -> int:
-        return len(self.conditions) * len(self.tasks) * self.rounds
+        """The sessions the sweep will run: per condition, a session per task in each planned round."""
+        return len(self.tasks) * sum(len(self.plan.get(c, ())) for c in self.conditions)
 
     def control(self, cond: str) -> bool:
         return not (self.interactive.get(cond) or {}).get("replies")
@@ -135,7 +219,8 @@ def load_sweep(jobs: Path | None = None, spec: Path | None = None) -> Sweep:
         if not inter:
             raise ValueError(f"sweep {raw['name']} has no interactive condition")
         return Sweep(raw["name"], tuple(raw["tasks"]), int(raw["rounds"]),
-                     {c: v or {} for c, v in raw["conditions"].items()}, inter)
+                     {c: v or {} for c, v in raw["conditions"].items()}, inter,
+                     {c: v for c, v in configs.items() if isinstance(v, dict)}, raw)
     except (KeyError, TypeError, AttributeError) as e:
         raise ValueError(f"sweep.json is malformed: its spec has no valid {e}") from e
 
@@ -181,6 +266,39 @@ def _m(sec: float) -> str:
 
 def _or(xs: list[str]) -> str:
     return xs[0] if len(xs) == 1 else ", ".join(xs[:-1]) + " or " + xs[-1]
+
+
+def _and(xs: list[str]) -> str:
+    return "" if not xs else xs[0] if len(xs) == 1 else ", ".join(xs[:-1]) + " and " + xs[-1]
+
+
+def dur(sec: float) -> str:
+    """A length in whole minutes ("4 min"), else in seconds ("30 s")."""
+    return f"{sec / 60:g} min" if sec % 60 == 0 else f"{sec:g} s"
+
+
+def _rounds(rs: tuple[int, ...]) -> str:
+    return "no round" if not rs else f"round {rs[0]}" if len(rs) == 1 else f"rounds {rs[0]}–{rs[-1]}"
+
+
+def _nth(k: int) -> str:
+    return f"{k}{'th' if 10 <= k % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(k % 10, 'th')}"
+
+
+def schedule(icfg: dict) -> dict:
+    """A condition's messages as ``hints.schedule`` sends them (seconds into the session): the bugs
+    (``max_hints``, every ``interval_sec``, while the session lasts; a task with fewer bugs sends
+    fewer), the status checks (halfway after every ``status_every``-th bug), the questions' offsets
+    after each bug and how many fit, and the urgent bugs (every ``urgent_every``-th, 0-based, not the
+    first)."""
+    iv, wall = float(icfg.get("interval_sec") or 0), float(icfg.get("wall_clock_sec") or 0)
+    bugs = [k * iv for k in range(int(icfg.get("max_hints") or 0)) if k * iv < wall] or [0.0]
+    on = bool(icfg.get("replies"))
+    se, q, u = (int(icfg.get(k) or 0) * on for k in ("status_every", "questions_per_interval", "urgent_every"))
+    q_at = [j * iv / (q + 1) for j in range(1, q + 1)]
+    return {"iv": iv, "bugs": bugs, "q": q, "q_at": q_at, "n_q": sum(b + t < wall for b in bugs for t in q_at),
+            "checks": [(k + 0.5) * iv for k in range(len(bugs)) if se and (k + 1) % se == 0 and (k + 0.5) * iv < wall],
+            "urgent": [k * iv for k in range(1, len(bugs)) if u and k % u == 0]}
 
 
 def _median_inf(xs):
@@ -293,20 +411,34 @@ def _own_edits(t: Trial, rows: list[dict], n_bugs: int) -> list[dict]:
 
 class Monitor:
     """One rendering: ``sweep`` (this run), ``tx`` (trial dir -> its exported transcript entry),
-    ``compare``: (earlier jobs dir, its Sweep, or why it has none: load_sweep's error) or None."""
+    ``compare``: (earlier jobs dir, its Sweep, or why it has none: load_sweep's error) or None;
+    ``page`` (its file name) and ``nav`` ([(label, href)], the tab bar; none without)."""
 
     def __init__(self, jobs: Path, sweep: Sweep, compare: tuple[Path, Sweep | str] | None = None,
-                 tx: dict[str, dict] | None = None, prices: dict | None = None):
+                 tx: dict[str, dict] | None = None, prices: dict | None = None, page: str = "index.html",
+                 nav: list[tuple[str, str]] | None = None):
         self.jobs, self.sw, self.tx = Path(jobs), sweep, tx or {}
+        self.page, self.nav = page, list(nav or [])
         self.prices = prices if prices is not None else load_prices(DEFAULT_PRICING, SCHEME)
-        self.cond = {c: LABELS.get(c, (c.replace("_", " "), "")) for c in sweep.conditions}
+        conds = sorted(sweep.conditions, key=level_key) if sweep.levels else list(sweep.conditions)
+        self.cond = {c: LABELS.get(c, (c.replace("_", " "), "")) for c in conds}  # in page order
         self.twin = sweep.twins()
-        self.compare = compare
+        self.compare, self.pooled = compare, False
         if compare and isinstance(compare[1], Sweep):
             self._compare_design(compare[1])
 
     def label(self, cond: str | None) -> tuple[str, str]:
         return self.cond.get(cond or "", LABELS.get(cond or "", (cond or "?", "")))
+
+    def group_label(self, cond: str) -> str:
+        """What a condition's design is called: its setting in the levels sweep, else its label."""
+        lv = level_of(cond) if self.sw.levels else None
+        return SETTINGS.get(lv[0], (lv[0].replace("_", " "),))[0] if lv else self.label(cond)[0]
+
+    def col_label(self, cond: str) -> str:
+        """A condition of this run as a column of the comparison grid: its level, else "with requests"."""
+        lv = level_of(cond) if self.sw.levels else None
+        return list(LEVELS.values())[lv[1]][0] if lv else "with requests"
 
     # --- sessions --------------------------------------------------------------------------------
 
@@ -559,7 +691,8 @@ class Monitor:
             kind = KIND_LABEL[r["kind"]] + (' <span class="tag">urgent</span>' if r["urgent"] else "")
             trs.append(f'<tr class="k-{r["kind"]}"><td class="num">#{r["msg_id"]}</td><td>{kind}</td>'
                        f'<td class="num">{clock(r["t_ready_sec"])}</td><td class="num">{clock(r["delivery_sec"])}</td>'
-                       f'<td class="num">{clock(r["reply_sec"])}</td><td>{message_cell(r)}</td>'
+                       f'<td class="num">{clock(r["reply_sec"])}</td>'
+                       f'<td>{message_cell(r, s if self.sw.levels else None)}</td>'
                        f'<td>{reply_cell(r, s)}</td>'
                        f'<td>{verdict_cell(r, s)}</td></tr>')
         if s["control"]:
@@ -571,7 +704,9 @@ class Monitor:
         else:
             head = ('<th>Id</th><th>Kind</th><th>Sent</th><th>Waited to be read</th><th>Replied after</th>'
                     '<th>Message</th><th>Reply: answer or estimate</th><th>Verdict</th>')
-            meta = (f'answered {st["answered"]}/{st["q"]} questions, median {clock(st["answer_med"])} · estimates '
+            asked = (f'answered {st["answered"]}/{st["q"]} questions, median {clock(st["answer_med"])} · '
+                     if st["q"] or self.sw.sends(s["condition"], "questions_per_interval") else "")
+            meta = (f'{asked}estimates '
                     f'{st["eta"]}/{st["bugs"]} · said done {st["done"]}/{st["bugs"]} · {len(s["dispatches"])} '
                     f'subagent runs · ${s["cost"]:.3f}')
             tclass = "msgs"
@@ -608,62 +743,132 @@ class Monitor:
 {txh}
 </details>'''
 
+    @staticmethod
+    def request_tab(ss) -> pd.DataFrame:
+        """``analysis.requests.request_table`` over the sent messages of the sessions with replies."""
+        rows = pd.DataFrame([r for s in ss if not s["control"] for r in sent_rows(s)])
+        return request_table(rows) if not rows.empty else pd.DataFrame()
+
+    @staticmethod
+    def hint_tab(ss) -> pd.DataFrame:
+        """``analysis.interactivity.condition_table`` (per-bug pickup) over every session's sent bugs."""
+        hr = pd.DataFrame([h for s in ss for h in s["hrows"] if h["t_ready_sec"] <= s["elapsed"] + 1])
+        try:
+            return hint_table(hr) if not hr.empty else pd.DataFrame()
+        except (KeyError, TypeError, ValueError):
+            return pd.DataFrame()
+
+    def cells(self, cond: str, ss, tab: pd.DataFrame) -> dict[str, str] | None:
+        """A request condition's metrics as table cells, over its sessions that are not invalid (None
+        before ``tab``, the request table, has it). Question cells are "–" when the condition asks
+        none; the status cell when it sends no status check."""
+        mine = [s for s in ss if s["condition"] == cond]
+        g = tab[tab["condition"] == cond] if not tab.empty else tab
+        if not mine or g.empty:
+            return None
+        x = g.iloc[0]
+        rr = [r for s in mine if s["state"] != "invalid" for r in sent_rows(s)]
+        q = [r for r in rr if r["kind"] == "question"]
+        b = [r for r in rr if r["kind"] == "bug"]
+        st = [r for r in rr if r["kind"] == "status"]
+        graded_b = [r for r in b if r.get("fixed") is not None]
+        n_ans = sum(r["reply_sec"] is not None for r in q)
+        judged = [r for r in q if r.get("correct") is not None]
+        if any(s["has_answers"] for s in mine) and judged:
+            asked = (f' <span class="muted">· {pct(x["correct_of_asked"])} of asked</span>'
+                     if isnum(x["correct_of_asked"]) else "")
+            correct = f'{pct(x["correct_of_answered"])} <span class="muted">of {len(judged)}</span>{asked}'
+        else:
+            correct = "–"
+        n_eta = sum(r.get("eta_sec") is not None for r in b)
+        never = int(x.get("n_eta_never_done") or 0)
+        claims = [r for r in b if r.get("claim_ok") is not None]
+        asks = bool(q) or self.sw.sends(cond, "questions_per_interval")
+        n_st = sum(r["reply_sec"] is not None for r in st)
+        return {
+            "answered": f"{n_ans}/{len(q)}" if asks else "–",
+            "answer_med": clock(x["answer_median_sec"]) if asks else "–",
+            "answered_60s": pct(x["answered_60s"]) if asks else "–",
+            "correct": correct if asks else "–",
+            "fixed": f'{sum(bool(r["fixed"]) for r in graded_b)}/{len(graded_b)}' if graded_b else "–",
+            "eta": f'{n_eta}/{len(b)}{f" <span class=muted>{never} never done</span>" if never else ""}',
+            "eta_err": log2err(x["eta_abs_log2_median"]),
+            "on_time": pct(x["on_time_frac"]),
+            "claims": (f'{pct(x["claim_precision"]) if claims else "–"}'
+                       f'{f" <span class=muted>of {len(claims)}</span>" if claims else ""}'),
+            "status": (f'{n_st}/{len(st)} <span class="muted">· {clock(x["status_reply_median_sec"])}</span>'
+                       if st else "–"),
+            "urgent": pct(x["urgent_first_frac"]),
+            "cost": f'${sum(s["cost"] for s in mine):.2f}',
+        }
+
     def condition_table(self, ss) -> str:
         """The request conditions: answers, fixes, estimates, done claims, urgency."""
-        rows = pd.DataFrame([r for s in ss if not s["control"] for r in sent_rows(s)])
-        tab = request_table(rows) if not rows.empty else pd.DataFrame()
+        tab = self.request_tab(ss)
         trs = []
         for cond in self.cond:
             if self.sw.control(cond):
                 continue
             mine = [s for s in ss if s["condition"] == cond]
             label, _ = self.label(cond)
-            g = tab[tab["condition"] == cond] if not tab.empty else tab
-            if not mine or g.empty:
+            c = self.cells(cond, ss, tab)
+            if c is None:
                 trs.append(f'<tr><td>{esc(label)}</td><td class="num">{len(mine)}</td>'
                            + '<td class="num">–</td>' * 11 + "</tr>")
                 continue
-            x = g.iloc[0]
-            rr = [r for s in mine if s["state"] != "invalid" for r in sent_rows(s)]
-            q = [r for r in rr if r["kind"] == "question"]
-            b = [r for r in rr if r["kind"] == "bug"]
-            graded_b = [r for r in b if r.get("fixed") is not None]
-            n_ans = sum(r["reply_sec"] is not None for r in q)
-            judged = [r for r in q if r.get("correct") is not None]
-            if any(s["has_answers"] for s in mine) and judged:
-                asked = (f' <span class="muted">· {pct(x["correct_of_asked"])} of asked</span>'
-                         if isnum(x["correct_of_asked"]) else "")
-                correct = f'{pct(x["correct_of_answered"])} <span class="muted">of {len(judged)}</span>{asked}'
-            else:
-                correct = "–"
-            fixed = f'{sum(bool(r["fixed"]) for r in graded_b)}/{len(graded_b)}' if graded_b else "–"
-            n_eta = sum(r.get("eta_sec") is not None for r in b)
-            never = int(x.get("n_eta_never_done") or 0)
-            claims = [r for r in b if r.get("claim_ok") is not None]
-            trs.append(
-                f'<tr><td>{esc(label)}</td><td class="num">{len(mine)}</td><td class="num">{n_ans}/{len(q)}</td>'
-                f'<td class="num">{clock(x["answer_median_sec"])}</td><td class="num">{pct(x["answered_60s"])}</td>'
-                f'<td class="num">{correct}</td><td class="num">{fixed}</td><td class="num">{n_eta}/{len(b)}'
-                f'{f" <span class=muted>{never} never done</span>" if never else ""}</td>'
-                f'<td class="num">{log2err(x["eta_abs_log2_median"])}</td>'
-                f'<td class="num">{pct(x["on_time_frac"])}</td>'
-                f'<td class="num">{pct(x["claim_precision"]) if claims else "–"}'
-                f'{f" <span class=muted>of {len(claims)}</span>" if claims else ""}</td>'
-                f'<td class="num">{pct(x["urgent_first_frac"])}</td>'
-                f'<td class="num">${sum(s["cost"] for s in mine):.2f}</td></tr>')
+            trs.append(f'<tr><td>{esc(label)}</td><td class="num">{len(mine)}</td>' + "".join(
+                f'<td class="num">{c[k]}</td>' for k in ("answered", "answer_med", "answered_60s", "correct", "fixed",
+                                                         "eta", "eta_err", "on_time", "claims", "urgent", "cost"))
+                       + "</tr>")
         return ('<div class="scroll"><table class="all"><thead><tr><th>Condition</th><th>Sessions</th>'
                 '<th>Questions answered</th><th>Answer time, median</th><th>Answered within 60 s</th>'
                 '<th>Correct (of answered)</th><th>Bugs fixed (graded)</th><th>ETA given</th>'
                 '<th>|log2 ETA error|, median</th><th>Done by the ETA</th><th>Done claims true</th>'
                 '<th>Urgent bug first</th><th>Cost</th></tr></thead><tbody>' + "".join(trs) + "</tbody></table></div>")
 
+    LADDER = (("Sessions", "sessions"), ("Bugs fixed (graded)", "fixed"), ("Bug waited to be read, median", "wait"),
+              ("First edit after, median", "edit"), ("Questions answered", "answered"),
+              ("Answered within 60 s", "answered_60s"), ("Correct (of answered)", "correct"), ("ETA given", "eta"),
+              ("Done by the ETA", "on_time"), ("Status check replied · median", "status"),
+              ("Urgent bug first", "urgent"), ("Cost", "cost"))
+
+    def ladder(self, ss) -> str:
+        """The levels sweep, by setting: one row per level (L0 to L3), so each step down adds one kind of
+        message; the per-condition metrics and per-bug pickup, "–" where a level sends no such message."""
+        tab, htab = self.request_tab(ss), self.hint_tab(ss)
+        by_setting: dict[str, list[str]] = {}
+        for c in self.cond:
+            lv = level_of(c)
+            if lv and not self.sw.control(c):
+                by_setting.setdefault(lv[0], []).append(c)
+        n_cols = len(self.LADDER) + 1
+        trs = []
+        for setting, conds in by_setting.items():
+            mine = [s for s in ss if s["condition"] in conds]
+            planned = sum(len(self.sw.tasks) * len(self.sw.plan.get(c, ())) for c in conds)
+            name = SETTINGS.get(setting, (setting.replace("_", " "),))[0]
+            trs.append(f'<tr class="grp-head"><td colspan="{n_cols}"><div class="glab"><b>{esc(name)}</b> '
+                       f'<span class="muted">· {len(mine)} of {planned} sessions</span></div></td></tr>')
+            for c in conds:
+                lv, short, _ = list(LEVELS.values())[level_of(c)[1]]
+                n = [s for s in ss if s["condition"] == c]
+                cell = self.cells(c, ss, tab) or {k: "–" for _, k in self.LADDER}
+                g = htab[htab["condition"] == c] if not htab.empty else htab
+                hx = g.iloc[0] if len(g) else None
+                plan = len(self.sw.tasks) * len(self.sw.plan.get(c, ()))
+                cell.update(sessions=f'{len(n)} <span class="muted">of {plan}</span>',
+                            wait=clock(_num(hx, "delivery_median_sec")), edit=clock(_num(hx, "edit_median_sec")))
+                if not n:
+                    cell["cost"] = "–"
+                trs.append(f'<tr><td>{lv} <span class="muted">{esc(short)}</span></td>'
+                           + "".join(f'<td class="num">{cell[k]}</td>' for _, k in self.LADDER) + "</tr>")
+        return ('<div class="scroll"><table class="twins cmp ladder"><thead><tr><th>Level</th>'
+                + "".join(f"<th>{h}</th>" for h, _ in self.LADDER) + "</tr></thead><tbody>" + "".join(trs)
+                + "</tbody></table></div>")
+
     def twins_table(self, ss) -> str:
         """Each bugs-only control next to its request twin, on the bug metrics both have."""
-        hr = pd.DataFrame([h for s in ss for h in s["hrows"] if h["t_ready_sec"] <= s["elapsed"] + 1])
-        try:
-            tab = hint_table(hr) if not hr.empty else pd.DataFrame()
-        except (KeyError, TypeError, ValueError):
-            tab = pd.DataFrame()
+        tab = self.hint_tab(ss)
         trs = []
         for ctl, req in self.twin.items():
             for i, cond in enumerate((req, ctl)):
@@ -696,30 +901,42 @@ class Monitor:
         self.c_iv = {c: float(v["interval_sec"]) for c, v in other.interactive.items()}
         self.c_wall = {c: float(v["wall_clock_sec"]) for c, v in other.interactive.items()}
         self.c_bugs = other.n_bugs
-        reqs = [c for c in sw.conditions if not sw.control(c)]
+        # both sweeps send the same bugs in every round (one order everywhere): pool the rounds
+        orders = {(bool(v.get("vary_order_by_round", True)), v.get("order_seed"))
+                  for x in (sw, other) for v in x.interactive.values()}
+        self.pooled = len(orders) == 1 and not next(iter(orders))[0]
+        reqs = [c for c in self.cond if not sw.control(c)]
+        key = {c: json.dumps(design(sw.conditions[c]), sort_keys=True) for c in sw.conditions}
         same = {c: [lc for lc in other.interactive if design(other.conditions[lc]) == design(sw.conditions[c])]
                 for c in sw.conditions}
         # an earlier design, named after this run's request condition of that design (else its short name)
         designs: dict[str, str] = {}
         for lc in other.interactive:
-            mine = next((self.label(c)[0].lower() for c in reqs if lc in same[c]), None)
+            mine = next((self.group_label(c).lower() for c in reqs if lc in same[c]), None)
             designs.setdefault(json.dumps(design(other.conditions[lc]), sort_keys=True), mine or self._short(lc))
         self.groups: dict[str, tuple[list[str], str, bool]] = {}  # cond -> (earlier conds, how, same design)
         self.grid_cols: list[tuple[str, str, str, bool]] = []  # (group, condition, label, earlier?)
         for r in reqs:
             for c in [c for c, t in self.twin.items() if t == r] + [r]:
                 if same[c]:
-                    who = self.label(r)[0].lower()
+                    who = self.group_label(r).lower()
                     how = f"the last run's {who}: the same design, " + (
                         "bugs only" if sw.control(c) else "which had no requests")
                     self.groups[c] = (same[c], how, True)
                 else:
                     self.groups[c] = (list(other.interactive), "no last-run condition of the same design: shown "
                                       f"against the last run's {' and '.join(designs.values())}", False)
-            grp = self.label(r)[0]
+        # the grid: per design, its earlier conditions, then this run's (controls first, then by level)
+        for r in dict.fromkeys(next(x for x in reqs if key[x] == key[c]) for c in reqs):
+            grp = self.group_label(r)
             self.grid_cols += [(grp, lc, f"every {self.c_iv[lc]:g} s", True) for lc in same[r]]
-            self.grid_cols += [(grp, c, "bugs only", False) for c, t in self.twin.items() if t == r]
-            self.grid_cols.append((grp, r, "with requests", False))
+            for x in (x for x in reqs if key[x] == key[r]):
+                self.grid_cols += [(grp, c, "bugs only", False) for c, t in self.twin.items() if t == x]
+                self.grid_cols.append((grp, x, self.col_label(x), False))
+
+    def rk(self, rnd):
+        """A round as the comparison keys it: 0 (every round) when the rounds are pooled."""
+        return 0 if self.pooled else rnd
 
     @staticmethod
     def _short(lc: str) -> str:
@@ -729,15 +946,16 @@ class Monitor:
     def shared_bugs(self, ss, rrows) -> tuple[dict, set]:
         """Per (task, round), this run's bugs as [(position, subtask_id)]: from its sessions when one has
         started, else the earlier sweep's first n_bugs (the same order); and the (task, round) pairs this
-        run has graded (a valid graded session in any condition): the grid's rows."""
+        run has graded (a valid graded session in any condition): the grid's rows. Pooled, the round is 0."""
         bugs: dict[tuple, dict[int, str]] = {}
         for r in rrows:
             if r["hint_index"] < self.sw.n_bugs:
-                bugs.setdefault((r["task"], r["round"]), {})[r["hint_index"]] = r["subtask_id"]
+                bugs.setdefault((r["task"], self.rk(r["round"])), {})[r["hint_index"]] = r["subtask_id"]
         for s in ss:  # what this run actually sent wins
             for h in s["hrows"]:
-                bugs.setdefault((s["task"], s["round"]), {})[h["hint_index"]] = h["subtask_id"]
-        return {k: sorted(v.items()) for k, v in bugs.items()}, {(s["task"], s["round"]) for s in ss if s["valid"]}
+                bugs.setdefault((s["task"], self.rk(s["round"])), {})[h["hint_index"]] = h["subtask_id"]
+        return ({k: sorted(v.items()) for k, v in bugs.items()},
+                {(s["task"], self.rk(s["round"])) for s in ss if s["valid"]})
 
     def _cmp_head(self) -> str:
         return ('<th>Condition</th><th>Fixed<sup>c</sup></th><th>Edited<sup>a</sup></th><th>First edit, median'
@@ -776,37 +994,44 @@ class Monitor:
 
     def compare_table(self, ss, rrows, shared) -> tuple[str, int]:
         """Grouped by this run's condition: its row, then the matching earlier rows restricted to exactly
-        the (task, round) pairs it has graded, so both sides of a group cover the same bugs."""
+        the (task, round) pairs it has graded, so both sides of a group cover the same bugs. Pooled, the
+        pairs are tasks and a side's bug sends are its sessions' (one per session and shared bug)."""
         trs, n_groups = [], 0
         for cond, (lasts, how, same) in self.groups.items():
-            pairs = {(s["task"], s["round"]) for s in ss if s["valid"] and s["condition"] == cond}
+            pairs = {(s["task"], self.rk(s["round"])) for s in ss if s["valid"] and s["condition"] == cond}
             label = self.label(cond)[0]
             if not pairs:
                 trs.append(self._grp_head(f'<b>{esc(label)}</b> <span class="muted">· no graded session yet</span>'))
                 continue
             n_groups += 1
             n_shared = sum(len(shared.get(k, ())) for k in pairs)
-            rows = compare_rows([s for s in ss if s["condition"] == cond], rrows, shared, pairs)
+            rows = compare_rows([s for s in ss if s["condition"] == cond], rrows, shared, pairs, self.pooled)
+
+            def sends(mine):  # the shared bugs a side was sent: per session when pooled
+                if not self.pooled:
+                    return n_shared
+                return sum(len(shared.get((t, 0), ())) for t in {r["trial_name"]: r["task"] for r in mine}.values())
             trs.append(self._grp_head(f'<b>{esc(label)}</b> <span class="muted">· on {esc(_pairs_text(pairs))} '
                                       f'({n_shared} shared bugs) · vs {esc(how)}</span>'))
+            mine = [r for r in rows if r["condition"] == cond and not r["last"]]
             trs.append(f'<tr class="this"><td>{esc(label)} <span class="pill live">this run</span></td>'
-                       + self._cmp_cells([r for r in rows if r["condition"] == cond], self.sw.wall, self.sw.interval,
-                                         n_shared) + "</tr>")
+                       + self._cmp_cells(mine, self.sw.wall, self.sw.interval, sends(mine)) + "</tr>")
             for lc in lasts:
                 who = "" if same else f"{self._short(lc)}, "
+                theirs = [r for r in rows if r["condition"] == lc and r["last"]]
                 trs.append(f'<tr><td>{esc(who)}every {self.c_iv[lc]:g} s <span class="pill past">last run</span></td>'
-                           + self._cmp_cells([r for r in rows if r["condition"] == lc], self.c_wall[lc], self.c_iv[lc],
-                                             n_shared) + "</tr>")
+                           + self._cmp_cells(theirs, self.c_wall[lc], self.c_iv[lc], sends(theirs)) + "</tr>")
         return ('<div class="scroll"><table class="twins cmp"><thead><tr>' + self._cmp_head() + '</tr></thead><tbody>'
                 + "".join(trs) + "</tbody></table></div>", n_groups)
 
     def compare_grid(self, rows, shared, pairs) -> tuple[str, int, int]:
-        """One row per shared bug, one column per condition: ✓ fixed, ✗ not, – no graded session. A row is
-        marked when, for some condition of this run, every session of its own earlier counterpart (the
-        table's group) that has the bug agrees, and a graded session of that condition disagrees."""
-        cell: dict[tuple, list[dict]] = {}
+        """One row per shared bug, one column per condition: ✓ fixed, ✗ not, – no graded session (pooled:
+        a mark per session, every round in one row). A row is marked when, for some condition of this
+        run, every session of its own earlier counterpart (the table's group) that has the bug agrees,
+        and a graded session of that condition disagrees."""
+        cell: dict[tuple, list[dict]] = {}  # keyed by side too: an earlier condition may share a name with one here
         for r in rows:
-            cell.setdefault((r["task"], r["round"], r["subtask_id"], r["condition"]), []).append(r)
+            cell.setdefault((r["task"], self.rk(r["round"]), r["subtask_id"], r["condition"], r["last"]), []).append(r)
         cols = self.grid_cols
         groups = [(g, sum(c[0] == g for c in cols)) for g in dict.fromkeys(c[0] for c in cols)]
         head1 = "".join(f'<th colspan="{n}" class="grp">{esc(g)}</th>' for g, n in groups)
@@ -818,29 +1043,30 @@ class Monitor:
             for i, sid in shared[(task, rnd)]:
                 vals, tds = {}, []
                 for _, cond, _, last in cols:
-                    rs = cell.get((task, rnd, sid, cond), [])
-                    vals[cond] = [bool(r["counted"]) for r in rs]
+                    rs = cell.get((task, rnd, sid, cond, last), [])
+                    v = vals[(cond, last)] = [bool(r["counted"]) for r in rs]
                     if not rs:
                         tds.append(f'<td class="g none{" this" if not last else ""}" '
                                    f'title="no graded session">–</td>')
                         continue
-                    sym = "".join("✓" if v else "✗" for v in vals[cond])
+                    sym = "".join("✓" if x else "✗" for x in v)
                     tip = "; ".join(f'{"fixed" if r["counted"] else "not fixed"}, first edit '
                                     f'{clock(r["edit_sec"]) if isnum(r["edit_sec"]) else "never"} after it was sent'
                                     for r in rs)
-                    ok = "ok" if all(vals[cond]) else "bad" if not any(vals[cond]) else ""
+                    ok = "ok" if all(v) else "bad" if not any(v) else ""
                     tds.append(f'<td class="g {ok}{" this" if not last else ""}" title="{esc(tip)}">{sym}</td>')
                 why = []  # per this-run condition, against its own earlier counterpart (the table's groups)
                 for c, (lasts, _, _) in self.groups.items():
-                    past = [v for lc in lasts for v in vals.get(lc, [])]
-                    if vals.get(c) and past and len(set(past)) == 1 and any(v != past[0] for v in vals[c]):
+                    past = [x for lc in lasts for x in vals.get((lc, True), [])]
+                    mine = vals.get((c, False))
+                    if mine and past and len(set(past)) == 1 and any(x != past[0] for x in mine):
                         why.append(f'{self.label(c)[0]}: {"fixed" if not past[0] else "not fixed"} here, '
                                    f'{"fixed" if past[0] else "not fixed"} in every last-run '
                                    f'session of its counterpart')
                 n_marked += bool(why)
                 title = f' title="{esc("; ".join(why))}"' if why else ""
                 trs.append(f'<tr class="{"diffrow" if why else ""}"{title}><td>{esc(task)}</td>'
-                           f'<td class="num">{rnd}</td>'
+                           f'<td class="num">{rnd or "all"}</td>'
                            f'<td class="num">{i + 1}</td><td class="mono">{esc(sid.split("-", 1)[-1][:8])}</td>'
                            f'{"".join(tds)}</tr>')
         html_ = ('<div class="scroll"><table class="grid"><thead><tr><th colspan="4"></th>' + head1 + '</tr><tr>'
@@ -867,15 +1093,25 @@ class Monitor:
         n_all = sum(len(v) for v in shared.values())
         # does the earlier sweep send this run's bugs in the same positions? (it should: same seed, its first n_bugs)
         pos = {(k, sid): i for k, v in shared.items() for i, sid in v}
-        moved = sum(1 for r in rrows if ((r["task"], r["round"]), r["subtask_id"]) in pos
-                    and pos[((r["task"], r["round"]), r["subtask_id"])] != r["hint_index"])
+        moved = sum(1 for r in rrows if ((r["task"], self.rk(r["round"])), r["subtask_id"]) in pos
+                    and pos[((r["task"], self.rk(r["round"])), r["subtask_id"])] != r["hint_index"])
         order = ("in the same order" if not moved
                  else f"<b>but {moved} last-run bug sends are at a different position</b>")
-        intro = (f'<p class="lede">The same repositories ({esc(", ".join(sorted({t for t, _ in shared})))}) '
-                 f'and, in each round, the same first {nb} bugs {order} as the {esc(name)} run, which sent {cb} per '
-                 f'session: <b>{n_all} shared bugs</b>. Each group below compares one condition of this run with the '
-                 f'last run on exactly the repository and round pairs that condition has graded, matched by subtask, '
-                 f'so both sides of a group cover the same bugs. Groups differ in pairs, so compare within a group, not across.</p>')
+        repos = esc(", ".join(sorted({t for t, _ in shared})))
+        if self.pooled:
+            intro = (f'<p class="lede">The same repositories ({repos}) and the same first {nb} bugs {order} as the '
+                     f'{esc(name)} run, which sent {cb} per session: <b>{n_all} shared bugs</b>. Both runs send the '
+                     f'same bugs in every round, so rounds are pooled: each group below compares one condition of this '
+                     f'run with the last run on exactly the repositories that condition has graded, matched by '
+                     f'subtask, so both sides of a group cover the same bugs. Groups differ in repositories, so '
+                     f'compare within a group, not across.</p>')
+        else:
+            intro = (f'<p class="lede">The same repositories ({repos}) '
+                     f'and, in each round, the same first {nb} bugs {order} as the {esc(name)} run, which sent {cb} '
+                     f'per session: <b>{n_all} shared bugs</b>. Each group below compares one condition of this run '
+                     f'with the last run on exactly the repository and round pairs that condition has graded, matched '
+                     f'by subtask, so both sides of a group cover the same bugs. Groups differ in pairs, so compare '
+                     f'within a group, not across.</p>')
         table, n_groups = self.compare_table(ss, rrows, shared)
         first = [r for r in rrows if r["hint_index"] < nb]
         n_any = sum(isnum(r.get("edit_sec_any")) for r in first)
@@ -903,33 +1139,248 @@ class Monitor:
         walls = list(dict.fromkeys(f"{w / 60:g}" for _, w in runs))
         there = (f'there, bugs {nb + 1} to {cb} arrived after these, competed for the same time, and could fail the '
                  f'visible tests that gate every fix of the session (c); ') if later else ""
-        caveat = (f'<p class="note caveat">What still differs inside a group: the last run\'s sessions lasted '
-                  f'{_or(walls)} min (every {", ".join(f"{i:g}" for i in dict.fromkeys(i for i, _ in runs))} s) '
-                  f'against {wall / 60:g} min here; bug {nb} came at '
-                  f'{_or([f"{_m(i * (nb - 1))} with {(w - i * (nb - 1)) / 60:g} min left" for i, w in runs])}, against '
-                  f'{_m(iv * (nb - 1))} with {(wall - iv * (nb - 1)) / 60:g} min left here; {there}'
-                  f'here the request conditions also answer questions and status checks; and it ran on a different day '
-                  f'under different provider load. Per-bug fixed on the same bugs is the most direct comparison, '
-                  f'but it still favours conditions with more time per bug.</p>')
+        if runs == [(iv, wall)]:  # the same schedule: only what the sessions were asked and the day differ
+            caveat = (f'<p class="note caveat">What still differs inside a group: not the schedule (sessions of '
+                      f'{wall / 60:g} min, a bug every {iv:g} s, in both runs); {there}{self._cmp_here()}and it ran '
+                      f'on a different day under different provider load. Per-bug fixed on the same bugs is the most '
+                      f'direct comparison.</p>')
+        else:
+            caveat = (f'<p class="note caveat">What still differs inside a group: the last run\'s sessions lasted '
+                      f'{_or(walls)} min (every {", ".join(f"{i:g}" for i in dict.fromkeys(i for i, _ in runs))} s) '
+                      f'against {wall / 60:g} min here; bug {nb} came at '
+                      f'{_or([f"{_m(i * (nb - 1))} with {(w - i * (nb - 1)) / 60:g} min left" for i, w in runs])}, '
+                      f'against {_m(iv * (nb - 1))} with {(wall - iv * (nb - 1)) / 60:g} min left here; {there}'
+                      f'{self._cmp_here()}and it ran on a different day under different provider load. Per-bug fixed '
+                      f'on the same bugs is the most direct comparison, but it still favours conditions with more time '
+                      f'per bug.</p>')
         if not n_groups:
             return (f'<section><div class="sechead">{h2}</div>{intro}{table}'
                     f'<p class="empty">No graded session yet: the comparison starts with the first.</p></section>')
-        grid, n_grid, n_marked = self.compare_grid(compare_rows(ss, rrows, shared, pairs), shared, pairs)
+        grid, n_grid, n_marked = self.compare_grid(compare_rows(ss, rrows, shared, pairs, self.pooled), shared, pairs)
         n_cmp = sum(len(shared[k]) for k in pairs if k in shared)
         tail = (f' Last-run first edits leave out possible work on bugs {nb + 1} to {cb} (a).' if later else "")
+        odd = [c for c, (_, _, same) in self.groups.items() if not same]
+        alt = ("" if not odd else "; for the hinted condition, both designs" if self.sw.name == REQUESTS_SWEEP
+               else f"; for {_and([self.label(c)[0] for c in odd])}, every last-run condition")
+        pooled = " (pooled: a mark per session)" if self.pooled else ""
         return (f'<section><div class="sechead">{h2}<span class="prog">{n_cmp} of {n_all} shared bugs have a graded '
                 f'session here</span></div>{intro}{table}{notes}{caveat}'
                 f'<div class="sechead"><h3>Bug by bug</h3><span class="prog">{n_grid} bugs · ✓ fixed · ✗ not fixed · '
                 f'– no graded session · hover for the first edit</span></div>{grid}'
-                f'<p class="note">Each row is one bug, so its cells compare the same bug. Highlighted ({n_marked}): '
-                f'for a condition of this run, every session of its own last-run counterpart (the table\'s group: '
-                f'the same design; for the hinted condition, both designs) that has the bug agrees, and a '
+                f'<p class="note">Each row is one bug, so its cells compare the same bug{pooled}. Highlighted '
+                f'({n_marked}): for a condition of this run, every session of its own last-run counterpart (the '
+                f'table\'s group: the same design{alt}) that has the bug agrees, and a '
                 f'graded session of that condition disagrees; "–" cells are left out.{tail}</p></section>')
+
+    def _cmp_here(self) -> str:
+        """The caveat's clause on what this run's sessions do that the earlier run's did not."""
+        if self.sw.name == REQUESTS_SWEEP:
+            return "here the request conditions also answer questions and status checks; "
+        if self.sw.levels:
+            snaps, eta = self._rules()[:2]
+            rules = _and([x for x, on in (("records workspace snapshots", snaps),
+                                          ("must give an estimate or done with each bug reply", eta)) if on])
+            return ("here L1 to L3 also get status checks, L2 and L3 questions and L3 an urgent bug; "
+                    + (f"every session here {rules}; " if rules else ""))
+        kinds = [k for key, k in (("questions_per_interval", "questions"), ("status_every", "status checks"),
+                                  ("urgent_every", "an urgent bug")) if any(self.sw.sends(c, key) for c in self.cond)]
+        return f"here some conditions also get {_and(kinds)}; " if kinds else ""
+
+    # --- the header ------------------------------------------------------------------------------
+
+    def _rules(self) -> tuple[bool, bool, float | None]:
+        """Whether every condition records workspace snapshots, whether every one refuses a bug reply
+        without eta_min or done, and the snapshots' heartbeat (``interactive.snapshot_every_sec``)."""
+        v = [self.sw.interactive[c] for c in self.cond if c in self.sw.interactive]
+        every = {x.get("snapshot_every_sec") for x in v if x.get("snapshots")}
+        return (bool(v) and all(x.get("snapshots") for x in v), bool(v) and all(x.get("require_eta") for x in v),
+                next(iter(every)) if len(every) == 1 and isnum(next(iter(every))) else None)
+
+    def models_text(self) -> str:
+        """Who runs, from the resolved configs: the models (and the subagents' caps), and where the task
+        containers run (``harbor.environment``); "" without configs."""
+        cfgs = [self.sw.configs[c] for c in self.cond if c in self.sw.configs]
+        short = lambda m: str(m).rsplit("/", 1)[-1]  # noqa: E731
+        orch = {(c.get("orchestrator") or {}).get("model") for c in cfgs} - {None}
+        if not orch:
+            return ""
+        subs = [c for c in cfgs if c.get("topology") == "subagents"]
+        sub_models = {(c.get("subagent") or {}).get("model") or (c.get("orchestrator") or {}).get("model")
+                      for c in subs}  # a subagent without its own model runs the orchestrator's
+        caps = {((c.get("subagent") or {}).get("max_concurrent"), (c.get("subagent") or {}).get("max_steps"))
+                for c in subs}
+        cap = (f" (up to {next(iter(caps))[0]} at once, {next(iter(caps))[1]} steps each)"
+               if len(caps) == 1 and None not in next(iter(caps)) else "")
+        if len(orch | sub_models) == 1:
+            text = f"Every model is {short(next(iter(orch)))}" + (f", subagents too{cap}" if subs else "")
+        else:
+            text = f"Orchestrator: {_and(sorted(map(short, orch)))}" + (
+                f"; subagents: {_and(sorted(map(short, sub_models - {None})))}{cap}" if subs else "")
+        modal = (self.sw.raw.get("harbor") or {}).get("environment") == "modal"
+        return text + ("; the task containers run on Modal." if modal else ".")
+
+    def level_conds(self) -> dict[int, list[str]]:
+        """Level number -> this sweep's conditions at that level, in page order (levels conditions only)."""
+        out: dict[int, list[str]] = {}
+        for c in self.cond:
+            lv = level_of(c)
+            if lv:
+                out.setdefault(lv[1], []).append(c)
+        return dict(sorted(out.items()))
+
+    def header(self) -> dict[str, str]:
+        """The page's title, eyebrow, heading and lede (HTML): the requests sweep's own text, the levels
+        sweep's built from its design, else a short lede built from the design."""
+        sw = self.sw
+        if sw.name == REQUESTS_SWEEP:
+            return {"title": "Requests Sweep Monitor", "eyebrow": "subagents-bench · requests sweep",
+                    "h1": "Is the agent there when you ask?",
+                    "lede": REQUESTS_LEDE.format(minutes=f"{sw.wall / 60:g}", interval=f"{sw.interval / 60:g}",
+                                                 n_bugs=sw.n_bugs)}
+        if sw.levels:
+            smoke = "smoke" in sw.name
+            who = "levels smoke" if smoke else "levels sweep" if sw.name == LEVELS_SWEEP else sw.name
+            return {"title": "Levels Smoke Monitor" if smoke else "Levels Sweep Monitor",
+                    "eyebrow": f"subagents-bench · {esc(who)}",
+                    "h1": f"Levels smoke: every kind of request in {dur(sw.wall)}" if smoke
+                    else "One kind of request at a time", "lede": self.levels_lede(smoke)}
+        return {"title": f"{esc(sw.name)} Monitor", "eyebrow": "subagents-bench · interactive sweep",
+                "h1": esc(sw.name), "lede": self.generic_lede()}
+
+    def levels_lede(self, smoke: bool) -> str:
+        sw, by = self.sw, self.level_conds()
+        s = schedule(sw.icfg)
+        steps = []
+        for k, conds in by.items():
+            x = schedule(sw.interactive.get(conds[0]) or {})
+            steps.append("L0 sends only the bugs (PR #13's baseline)" if k == 0 else
+                         f"L1 adds a status check at {_and([_m(t) for t in x['checks']])} asking how long each bug "
+                         f"sent so far will take" if k == 1 else
+                         f"L2 adds {x['q']} questions about the code after each bug" if k == 2 else
+                         f"L3 makes the bug sent at {_and([_m(t) for t in x['urgent']])} urgent")
+        snaps, eta, _ = self._rules()
+        pre = (f"A smoke of the levels sweep ({dur(sw.wall)} sessions), too short for results: it checks that every "
+               f"kind of message, the reply rule and the snapshots work. ") if smoke else ""
+        return (f"{pre}A simulated user works with the agent on one repository for {dur(sw.wall)}, sending the same "
+                f"{len(s['bugs'])} bugs at the same times at every level, one every {dur(sw.interval)}. Each level "
+                f"adds one kind of message to the level below and changes nothing else: {'; '.join(steps)}. The user "
+                f"sees only what the agent sends with <code>reply</code>"
+                + (", which refuses a reply to a bug without <code>eta_min</code> or <code>done</code>" if eta else "")
+                + ". " + ("Snapshots of the workspace give each bug's real fix time, graded after the run. "
+                          if snaps else "") + self.models_text()).strip()
+
+    def generic_lede(self) -> str:
+        sw = self.sw
+        s, conds = schedule(sw.icfg), list(self.cond)
+        extras = []
+        for key, what in (("questions_per_interval", f"{s['q']} questions about the code after each bug"),
+                          ("status_every", "status checks"), ("urgent_every", "an urgent bug")):
+            has = [c for c in conds if sw.sends(c, key)]
+            if has:
+                extras.append(what + ("" if len(has) == len(conds) else " in some conditions"))
+        n_reply = sum(not sw.control(c) for c in conds)
+        replies = ("The user sees only what the agent sends with <code>reply</code>. " if n_reply == len(conds) else
+                   "Conditions without <code>reply</code> get bugs only. " if n_reply else "")
+        tasks = _and([t.replace("swe-sweep__", "") for t in sw.tasks])
+        return (f"A simulated user works with the agent on one repository for {dur(sw.wall)}: {len(s['bugs'])} bugs, "
+                f"one every {dur(sw.interval)}{', ' if extras else ''}{_and(extras) if extras else ''}. {replies}"
+                f"{len(conds)} conditions on {esc(tasks)}, {sw.rounds} round{'s' if sw.rounds > 1 else ''}: "
+                f"{sw.n_sessions} sessions. {self.models_text()}").strip()
+
+    def levels_html(self) -> str:
+        """The levels sweep: what each level adds to the one below (its messages and config), and how
+        the levels are run."""
+        sw, by = self.sw, self.level_conds()
+        trs, below = [], None
+        for k, conds in by.items():
+            lv, short, _ = list(LEVELS.values())[k]
+            icfg = sw.interactive.get(conds[0]) or {}
+            x = schedule(icfg)
+            if below is None:
+                keys = ["replies", "questions_per_interval", "status_every", "urgent_every"]
+                adds = (f"{len(x['bugs'])} bugs, one every {dur(x['iv'])} from 0:00 to {_m(x['bugs'][-1])}, "
+                        f"answered with <code>reply</code>")
+            else:
+                keys = [key for key in icfg if icfg.get(key) != below.get(key)]
+                parts = []
+                if "status_every" in keys:
+                    parts.append(f"a status check at {_and([_m(t) for t in x['checks']])} ({dur(x['iv'] / 2)} after "
+                                 f"the {_and([_nth(int(t // x['iv']) + 1) for t in x['checks']])} bugs) naming the "
+                                 f"bugs sent so far and asking for an estimate of each")
+                if "questions_per_interval" in keys:
+                    parts.append(f"{x['q']} questions about the code after each bug (at "
+                                 f"{_and(['+' + _m(t) for t in x['q_at']])}): {x['n_q']} per session")
+                if "urgent_every" in keys:
+                    parts.append(f"the bug sent at {_and([_m(t) for t in x['urgent']])} is urgent: \"fix it before "
+                                 f"the earlier ones\"")
+                adds = "+ " + "; + ".join(parts) if parts else "–"
+            cfg = ", ".join(f"<code>{esc(key)}: {esc(json.dumps(icfg.get(key)))}</code>" for key in keys) or "–"
+            n = sum(len(sw.tasks) * len(sw.plan.get(c, ())) for c in conds)
+            rounds = _and(list(dict.fromkeys(_rounds(sw.plan.get(c, ())) for c in conds)))
+            trs.append(f'<tr><td>{lv} <span class="muted">{esc(short)}</span><br><code class="muted">'
+                       f'*_{esc(list(LEVELS)[k])}</code></td><td>{adds}</td><td>{cfg}</td><td class="num">{n} '
+                       f'<span class="muted">· {rounds}</span></td></tr>')
+            below = icfg
+        same = all(not v.get("vary_order_by_round", True) for v in sw.interactive.values())
+        snaps, eta, every = self._rules()
+        settings = [SETTINGS.get(s, (s.replace("_", " "),))[0].lower()
+                    for s in dict.fromkeys(level_of(c)[0] for cs in by.values() for c in cs)]
+        tasks = _and([t.replace("swe-sweep__", "") for t in sw.tasks])
+        plans = {}
+        for k, conds in by.items():
+            plans.setdefault(_rounds(sw.plan.get(conds[0], ())), []).append(list(LEVELS.values())[k][0])
+        runs = ("; ".join(f"{r} run {_and(ls)}" for r, ls in plans.items()) if len(plans) > 1
+                else f"{next(iter(plans), 'every round')} for every level")
+        notes = [f"Every level differs from the one below only in the messages it sends: the same system prompt "
+                 f"(<code>replies: true</code> puts the whole reply section in it at every level) and the same bugs at "
+                 f"the same times{', in the same order in every round and setting' if same else ''}.",
+                 f"Each level runs in {len(settings)} setting{'s' * (len(settings) > 1)} ({esc(_and(settings))}), on "
+                 f"{esc(tasks)}: {runs}, {sw.n_sessions} sessions in all."]
+        if snaps:
+            notes.append("Every session records snapshots of the workspace (after each edit or command of any agent"
+                         + (f", and every {every:g} s" if every else "") + "); after the run, "
+                         "<code>subagents-bench fix-times</code> grades each one with the hidden tests, so each bug's "
+                         "real fix time is known, not only whether it ended fixed. Bugs fixed on this page is the "
+                         "end-of-session grade.")
+        if eta:
+            notes.append("<code>reply</code> refuses a reply to a bug that has neither <code>eta_min</code> nor "
+                         "<code>done: true</code>, so every bug reply carries an estimate or a done claim; replies to "
+                         "questions and status checks are unaffected.")
+        if sw.name == LEVELS_SWEEP:
+            notes.append("The run's main numbers, computed after it: the share of L1's estimates met (against the "
+                         "real fix times), the share of L2's questions answered correctly within 60 s (per setting), "
+                         "and how often L3's urgent bug is fixed sooner than the same bug in L2.")
+        return ('<section><h2>What each level adds</h2><div class="scroll"><table class="diff"><thead><tr><th>Level, '
+                'conditions</th><th>Messages added to the level below</th><th>Config</th><th>Sessions</th></tr>'
+                f'</thead><tbody>{"".join(trs)}</tbody></table></div><ul class="notes">'
+                + "".join(f"<li>{n}</li>" for n in notes) + "</ul></section>")
+
+    def conds_html(self) -> str:
+        """A card per condition; the levels sweep's, a card per setting (the levels table has the rest)."""
+        if self.sw.levels:
+            settings = dict.fromkeys(level_of(c)[0] for c in self.cond if level_of(c))
+            rest = [c for c in self.cond if not level_of(c)]
+            cards = [SETTINGS.get(s, (s.replace("_", " "), "")) for s in settings] + [self.cond[c] for c in rest]
+            return "".join(f'<div class="cond"><div class="who">{esc(n)}</div><p>{esc(d)}</p></div>' for n, d in cards)
+        return "".join(f'<div class="cond{" control" if c in self.twin else ""}"><div class="who">{esc(n)}</div>'
+                       f'<p>{esc(d)}</p></div>' for c, (n, d) in self.cond.items())
+
+    def nav_html(self) -> str:
+        """The tab bar: a link per page, the current one (``href`` equal to this page's file) marked."""
+        if not self.nav:
+            return ""
+        cur = ' aria-current="page"'
+        tabs = "".join(f'<a href="{esc(href)}"{cur if href == self.page else ""}>{esc(label)}</a>'
+                       for label, href in self.nav)
+        return f'<nav class="tabs" aria-label="Sweeps">{tabs}</nav>\n'
 
     # --- the whole page --------------------------------------------------------------------------
 
     def differences_html(self) -> str:
-        """The requests sweep against the earlier interactive runs (that sweep only)."""
+        """The requests sweep against the earlier interactive runs (that sweep only); the levels sweep's
+        levels."""
+        if self.sw.levels:
+            return self.levels_html()
         if self.sw.name != REQUESTS_SWEEP:
             return ""
         icfg, nb, iv, wall = self.sw.icfg, self.sw.n_bugs, self.sw.interval, self.sw.wall
@@ -973,7 +1424,9 @@ class Monitor:
         ss = self.sessions() if ss is None else ss
         sw = self.sw
         count = lambda st: sum(s["state"] == st for s in ss)  # noqa: E731
-        want = int(sw.icfg.get("questions_per_interval") or 0) * sw.n_bugs
+        # the planned sessions, and any session of a round the plan left out (run with --rounds anyway)
+        total = sw.n_sessions + sum(s["round"] not in sw.plan.get(s["condition"], ()) for s in ss)
+        want = max((schedule(v)["n_q"] for v in sw.interactive.values()), default=0)  # questions per task
         qs = " · ".join(f"{t} {n}/{want}" if n is not None else f"{t} not written yet"
                         for t, n in self.questions_ready())
         order = list(self.cond)
@@ -984,21 +1437,29 @@ class Monitor:
             twins = (f'<div class="sechead"><h3>Bugs only vs with requests</h3><span class="prog">the same bugs at the '
                      f'same times; the gap is what the requests cost</span></div>{self.twins_table(ss)}'
                      if self.twin else "")
-            body = (f'<section><div class="sechead"><h2>By condition</h2><span class="prog">{count("graded")} of '
-                    f'{sw.n_sessions} sessions graded</span></div>{self.condition_table(ss)}{twins}</section>'
+            ladder = (f'<section><div class="sechead"><h2>By level</h2><span class="prog">per setting: each row adds '
+                      f'one kind of message to the row above</span></div>{self.ladder(ss)}</section>'
+                      if sw.levels and self.level_conds() else "")
+            body = (f'{ladder}<section><div class="sechead"><h2>By condition</h2><span class="prog">'
+                    f'{count("graded")} of {total} sessions graded</span></div>{self.condition_table(ss)}{twins}'
+                    f'</section>'
                     f'{self.compare_html(ss)}'
                     f'<section><div class="sechead"><h2>Sessions</h2><span class="prog">live and grading first</span>'
                     f'</div>{cards}</section>')
         else:
             body = ('<section><h2>Sessions</h2><p class="empty">Waiting for the first session. Nothing under '
                     f'<code>{esc(self.jobs.name)}</code> has started yet.</p></section>')
-        conds = "".join(f'<div class="cond{" control" if c in self.twin else ""}"><div class="who">{esc(n)}</div>'
-                        f'<p>{esc(d)}</p></div>' for c, (n, d) in self.cond.items())
-        return TEMPLATE.format(snap=esc(time.strftime("%a %d %b, %H:%M %Z")), live=count("live"),
-                               grading=count("grading"), graded=count("graded"), total=sw.n_sessions,
-                               cost=sum(s["cost"] for s in ss), questions=esc(qs), conds=conds,
-                               differences=self.differences_html(), body=body, minutes=f"{sw.wall / 60:g}",
-                               n_bugs=sw.n_bugs, interval=f"{sw.interval / 60:g}", viewer=VIEWER)
+        pickup = ("Bugs only vs with requests" if self.twin else
+                  "By level, bug waited to be read and first edit after" if sw.levels else "")
+        page = TEMPLATE.format(
+            snap=esc(time.strftime("%a %d %b, %H:%M %Z")), live=count("live"), grading=count("grading"),
+            graded=count("graded"), total=total, cost=sum(s["cost"] for s in ss),
+            questions=f"<span>Questions ready: {esc(qs)}</span>" if want else "", conds=self.conds_html(),
+            differences=self.differences_html(), body=body, nav=self.nav_html(), **self.header(),
+            controls_note=CONTROLS_NOTE if any(sw.control(c) for c in self.cond) else "",
+            pickup_note=PICKUP_NOTE.format(what=pickup) if pickup else "",
+            footer_extra=LEVELS_NOTE if sw.levels else "", viewer=VIEWER)
+        return page if self.page == "index.html" else DOC_HEAD + page
 
 
 # --- per-session helpers ------------------------------------------------------------------------
@@ -1030,11 +1491,17 @@ def state_pill(s) -> str:
     return f'<span class="pill live">Live · {clock(s["elapsed"])}</span>'
 
 
-def message_cell(r) -> str:
+def message_cell(r, s=None) -> str:
+    """A message's text; with its session ``s``, a status check names the bugs sent before it (the
+    levels sweep's check text) instead of asking about the open ones (the requests sweep's)."""
     if r["kind"] == "question":
         return f'<span title="{esc(r.get("question") or "")}">{esc(trunc(r.get("question"), 110))}</span>'
     if r["kind"] == "bug":
         return f'<span class="mono">{esc(r.get("subtask_id") or "")}</span>'
+    if s is not None:
+        ids = ", ".join(f'#{b["msg_id"]}' for b in s["rows"]
+                        if b["kind"] == "bug" and b["t_ready_sec"] < r["t_ready_sec"])
+        return f"How long until each bug so far ({ids}) is fixed?"
     return "How long will each open bug take?"
 
 
@@ -1081,29 +1548,41 @@ def verdict_cell(r, s) -> str:
     return "–"
 
 
-def compare_rows(ss, rrows, shared, pairs) -> list[dict]:
+def compare_rows(ss, rrows, shared, pairs, pooled: bool = False) -> list[dict]:
     """Per-bug rows of both sweeps on the shared bugs of the given pairs: this run's valid graded
-    sessions, the earlier rows whose subtask is among this run's bugs for that task and round."""
+    sessions, the earlier rows whose subtask is among this run's bugs for that task and round (pooled:
+    the pairs' round is 0, every round); ``last`` tells the earlier rows apart (PR #13's baseline
+    conditions have the same names as the levels sweep's L0)."""
     ids = {k: {sid for _, sid in v} for k, v in shared.items()}
     pos = {(k, sid): i for k, v in shared.items() for i, sid in v}
+    key = (lambda r: (r["task"], 0)) if pooled else (lambda r: (r["task"], r["round"]))  # noqa: E731
     rows = []
     for s in ss:
-        if s["valid"] and (s["task"], s["round"]) in pairs:
-            rows += [{**h, "task": s["task"], "round": s["round"]} for h in s["hrows"]]
-    rows += [r for r in rrows if (r["task"], r["round"]) in pairs]
-    return [{**r, "pos": pos[((r["task"], r["round"]), r["subtask_id"])]} for r in rows
-            if r["subtask_id"] in ids.get((r["task"], r["round"]), ())]
+        if s["valid"] and key(s) in pairs:
+            rows += [{**h, "task": s["task"], "round": s["round"], "last": False} for h in s["hrows"]]
+    rows += [{**r, "last": True} for r in rrows if key(r) in pairs]
+    return [{**r, "pos": pos[(key(r), r["subtask_id"])]} for r in rows if r["subtask_id"] in ids.get(key(r), ())]
 
 
 def _pairs_text(pairs) -> str:
+    """The (task, round) pairs; pooled ones (round 0) as the tasks, every round."""
+    if all(r == 0 for _, r in pairs):
+        return ", ".join(t for t, _ in sorted(pairs)) + ", every round"
     return ", ".join(f"{t} r{r}" for t, r in sorted(pairs))
 
 
+PAGE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\.html")
+
+
 def build(jobs: Path, out: Path, compare: Path | None = None, spec: Path | None = None,
-          transcripts: bool = True) -> tuple[Path, dict[str, dict], int]:
-    """Write ``out/index.html`` (and ``out/transcripts/``); return the page, the exported transcripts
-    and how many were rewritten."""
+          transcripts: bool = True, page: str = "index.html",
+          nav: list[tuple[str, str]] | None = None) -> tuple[Path, dict[str, dict], int]:
+    """Write ``out/<page>`` (and ``out/transcripts/``, shared by every page written to ``out``) with
+    the tab bar ``nav`` ([(label, href)]); return the page, the exported transcripts and how many were
+    rewritten. ValueError for a page name that is not a plain ``*.html`` file name."""
     from .transcripts import export_all
+    if not PAGE_RE.fullmatch(page):
+        raise ValueError(f"--page {page!r}: a file name like levels.html (letters, digits, '_', '.', '-')")
     jobs, out = Path(jobs), Path(out)
     sw = load_sweep(jobs, spec)
     cmp_ = None
@@ -1117,6 +1596,6 @@ def build(jobs: Path, out: Path, compare: Path | None = None, spec: Path | None 
             cmp_ = (compare, f"its {e}")
     out.mkdir(parents=True, exist_ok=True)
     tx, wrote = export_all(trial_dirs(jobs), out / "transcripts") if transcripts else ({}, 0)
-    page = out / "index.html"
-    page.write_text(Monitor(jobs, sw, cmp_, tx).render())
-    return page, tx, wrote
+    path = out / page
+    path.write_text(Monitor(jobs, sw, cmp_, tx, page=page, nav=nav).render())
+    return path, tx, wrote
