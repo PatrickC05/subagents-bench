@@ -1,4 +1,5 @@
-"""Command line: ``subagents-bench validate|preflight|sweep|hints|questions|grade-answers`` (exit codes in :mod:`subagents_bench.sweep`)."""
+"""Command line: ``subagents-bench validate|preflight|sweep|hints|questions|grade-answers|fix-times`` (exit codes in
+:mod:`subagents_bench.sweep`; fix-times's in :mod:`subagents_bench.fixtimes`)."""
 
 from __future__ import annotations
 
@@ -8,7 +9,7 @@ import sys
 
 import yaml
 
-from . import sweep
+from . import fixtimes, sweep
 from .config import ConfigError, load_config, load_dotenv
 
 
@@ -45,6 +46,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("grade-answers", help="judge the answers to the questions of a sweep's finished trials")
     p.add_argument("spec", help="sweep spec (configs/sweeps/*.yaml)")
     p.add_argument("--force", action="store_true", help="grade again trials that already have answers.json")
+    p = sub.add_parser("fix-times", help="grade the workspace snapshots of a sweep's finished trials on Modal: "
+                                         "when each bug was fixed")
+    p.add_argument("spec", help="sweep spec (configs/sweeps/*.yaml)")
+    p.add_argument("--force", action="store_true", help="replay again trials that already have fix_states.json")
+    p.add_argument("--concurrency", type=int, default=24, metavar="N",
+                   help="trials replayed at once, one Modal sandbox each (default 24)")
+    p.add_argument("--only-trial", metavar="SUBSTR", help="only the trials whose <job>/<trial> contains SUBSTR")
+    p.add_argument("--dry-run", action="store_true", help="list the trials and states to replay; touch nothing")
     return parser
 
 
@@ -82,6 +91,12 @@ def main(argv: list[str] | None = None) -> int:
             return sweep.make_questions(spec, per_task=args.per_task, force=args.force)
         if args.cmd == "grade-answers":
             return sweep.grade_answers(spec, force=args.force)
+        if args.cmd == "fix-times":
+            if args.concurrency < 1:
+                print("[FAIL] --concurrency must be at least 1", file=sys.stderr)
+                return 2
+            return fixtimes.fix_times(spec, force=args.force, concurrency=args.concurrency, only=args.only_trial,
+                                      dry_run=args.dry_run)
         if args.jobs_at_once < 1:
             print("[FAIL] --jobs-at-once must be at least 1", file=sys.stderr)
             return 2
