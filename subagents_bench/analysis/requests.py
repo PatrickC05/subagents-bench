@@ -33,7 +33,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .interactivity import _median_censored, eval_subtasks
+from .interactivity import _group_keys, _median_censored, eval_subtasks
 from .load import Trial
 
 
@@ -142,14 +142,17 @@ def _correct_of_asked(q: pd.DataFrame) -> float:
 
 
 def request_table(rows: pd.DataFrame) -> pd.DataFrame:
-    """Per condition, over valid episodes: questions, bug estimates and done claims, status checks, urgency."""
+    """Per (sweep, condition), over valid episodes: questions, bug estimates and done claims, status
+    checks, urgency (per condition for rows without a sweep)."""
     if rows.empty or not rows["valid"].astype(bool).any():
         return pd.DataFrame()
     out = []
-    for cond, g in rows[rows["valid"].astype(bool)].groupby("condition", sort=False):
+    v = rows[rows["valid"].astype(bool)]
+    keys = _group_keys(v)
+    for key, g in v.groupby(keys, sort=False):
         q, b, s = g[g["kind"] == "question"], g[g["kind"] == "bug"], g[g["kind"] == "status"]
         later = b[b["index"] > 0]
-        row = {"condition": cond, "n_episodes": g["trial_name"].nunique(), "n_questions": len(q),
+        row = {**dict(zip(keys, key)), "n_episodes": g["trial_name"].nunique(), "n_questions": len(q),
                "answered_frac": _frac(q["reply_sec"].notna()), "answer_median_sec": _median_censored(q["reply_sec"]),
                "answered_60s": _within(q["reply_sec"], 60), "answered_180s": _within(q["reply_sec"], 180),
                "n_graded_answers": int(q["correct"].notna().sum()) if "correct" in q else 0,

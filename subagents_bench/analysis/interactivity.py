@@ -304,14 +304,22 @@ def _flag(df: pd.DataFrame, col: str) -> pd.Series:
     return df[col].fillna(False).astype(bool)
 
 
+def _group_keys(df: pd.DataFrame) -> list[str]:
+    """Per (sweep, condition), so two runs of a condition in different sweeps never pool; per
+    condition for rows without a sweep."""
+    return [k for k in ("sweep", "condition") if k in df]
+
+
 def condition_table(hints: pd.DataFrame) -> pd.DataFrame:
-    """Per condition, over the valid episodes' hints after the first (hint 0 has ``first_*``)."""
+    """Per (sweep, condition), over the valid episodes' hints after the first (hint 0 has ``first_*``)."""
     if hints.empty or not hints["valid"].astype(bool).any():
         return pd.DataFrame()
     rows = []
-    for cond, all_g in hints[hints["valid"].astype(bool)].groupby("condition", sort=False):
+    v = hints[hints["valid"].astype(bool)]
+    keys = _group_keys(v)
+    for key, all_g in v.groupby(keys, sort=False):
         first, g = all_g[all_g["hint_index"] == 0], all_g[all_g["hint_index"] > 0]
-        row = {"condition": cond, "topology": all_g["topology"].iloc[0], "spawn_mode": all_g["spawn_mode"].iloc[0],
+        row = {**dict(zip(keys, key)), "topology": all_g["topology"].iloc[0], "spawn_mode": all_g["spawn_mode"].iloc[0],
                "n_episodes": all_g["trial_name"].nunique(), "n_hints": len(all_g), "n_later_hints": len(g),
                "delivered_frac": _frac(g["delivered"]), "busy_at_arrival_frac": _frac(g["busy_at_arrival"].isin(BUSY)),
                "pre_edited_frac": _frac(_flag(g, "pre_edited")),
@@ -346,15 +354,16 @@ def condition_table(hints: pd.DataFrame) -> pd.DataFrame:
 
 
 def position_table(hints: pd.DataFrame) -> pd.DataFrame:
-    """Per condition and hint position: does the reaction slow down as requests pile up?"""
+    """Per (sweep, condition) and hint position: does the reaction slow down as requests pile up?"""
     if hints.empty or not hints["valid"].astype(bool).any():
         return pd.DataFrame()
     rows = []
     v = hints[hints["valid"].astype(bool)]
-    for (cond, k), g in v.groupby(["condition", "hint_index"], sort=False):
+    keys = _group_keys(v)
+    for key, g in v.groupby([*keys, "hint_index"], sort=False):
         graded = g["counted"].dropna()
-        rows.append({"condition": cond, "hint_index": k, "n": len(g),
+        rows.append({**dict(zip([*keys, "hint_index"], key)), "n": len(g),
                      **{f"{m}_median_sec": _median_censored(g[f"{m}_sec"]) for m in LATENCIES},
                      "touch_before_next": _before(g["touch_sec"], g["interval_sec"]),
                      "hinted_fixed_frac": _frac(graded) if len(graded) else math.nan})
-    return pd.DataFrame(rows).sort_values(["condition", "hint_index"], kind="stable").reset_index(drop=True)
+    return pd.DataFrame(rows).sort_values([*keys, "hint_index"], kind="stable").reset_index(drop=True)
