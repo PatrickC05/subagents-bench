@@ -390,10 +390,11 @@ manifest):
 
 [`swe_interactive_baseline.yaml`](configs/sweeps/swe_interactive_baseline.yaml)
 is the bugs-only baseline: 30-minute sessions, 6 bugs every 4 minutes in one
-fixed order for every round and condition, the reply tool on, every model
+fixed order for every condition, the reply tool on, every model
 DeepSeek-V4.1-Flash, for the orchestrator alone, the orchestrator with
 background subagents (hinted), and a read-only orchestrator whose work all
-goes to subagents, on click and echo.
+goes to subagents, on click and echo, 1 round (6 sessions). With the order
+fixed, a second round would only repeat the same sessions.
 
 `harbor.environment: modal` in a spec runs the task containers (the agent's
 sandbox and the separate verifier) in Modal sandboxes, built from the tasks'

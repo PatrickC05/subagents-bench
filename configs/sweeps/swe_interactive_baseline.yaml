@@ -6,14 +6,15 @@
 # model, so the conditions differ only in who does the work.
 # Metrics kept, per condition: answer time (the first reply to each bug, messages.csv reply_sec),
 # requested bugs fixed, and cost per session.
-# The bug order is fixed (order_seed 0, vary_order_by_round false), so every condition and every
-# round of this sweep sends the same bugs at the same times, and the order is the one the requests
-# sweep's round 1 used: click's first 6 bugs match it, and echo sends all 6 of its bugs.
+# The bug order is fixed (order_seed 0, vary_order_by_round false), so every condition sends the
+# same bugs at the same times, and the order is the one the requests sweep's round 1 used: click's
+# first 6 bugs match it, and echo sends all 6 of its bugs. One round: with the order fixed, a second
+# round would rerun the same sessions, and pooling those repeats would count one setting twice.
 # The three settings:
 #   single_baseline              the agent alone, with all tools (and reply)
 #   manager_background_baseline  read-only agent; every edit and test goes to background subagents
 #   background_hinted_baseline   all tools plus background subagents, told delegating keeps it free
-# 3 conditions x 2 repositories x 2 rounds = 6 harbor jobs, 12 thirty-minute sessions.
+# 3 conditions x 2 repositories x 1 round = 3 harbor jobs, 6 thirty-minute sessions.
 #   scripts/run_experiment.sh configs/sweeps/swe_interactive_baseline.yaml
 name: swe_interactive_baseline
 base: configs/sail/base.yaml
@@ -22,7 +23,7 @@ platform: linux/amd64
 tasks:                               # language, bugs
   - swe-sweep__click                 # Python, 13 (6 sent)
   - swe-sweep__echo                  # Go, 6 (all 6 sent; every bug in its own file)
-rounds: 2
+rounds: 1
 order_seed: 0
 
 overrides:
