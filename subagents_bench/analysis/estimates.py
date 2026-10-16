@@ -43,6 +43,11 @@ by the check and never said done in the session.
 
 All times are seconds after the message was sent (the bug for estimates, the check for pairs),
 except ``*_session_sec`` (from the session's start).
+
+A message that lists several bugs (``interactive.bundle``): rows are per bug (``subtask_id``, with
+the message's ``msg_id``); a reply with ``item`` is about that bug, one without about every bug
+of the message, and so is an estimate or done written as ``#N`` in text (the regex cannot tell the
+items apart: approximate). Each bug weighs once (``weight`` per ``subtask_id``).
 """
 
 from __future__ import annotations
@@ -214,27 +219,41 @@ def _session(t: Trial) -> tuple[list[dict], list[dict], list[dict], float, float
     return bugs, checks, replies, t0, deadline, max(t_end, deadline)
 
 
+def _bug_key(m: dict) -> Any:
+    """A bug's key: its subtask (a message that lists several bugs has one id for them all)."""
+    return m.get("subtask_id") or m["msg_id"]
+
+
+def _covered(bugs: list[dict], to: Any, item: Any = None) -> list[dict]:
+    """The bugs a reply to message ``to`` is about: its ``item``, or every bug of the message."""
+    mine = [m for m in bugs if m["msg_id"] == to]
+    return [m for m in mine if m.get("item") == item] or mine if item is not None else mine
+
+
 def _raw_estimates(bugs: list[dict], checks: list[dict], replies: list[dict]) -> list[dict]:
-    """(t, bug msg id, minutes, via, the id replied to, text) of every estimate, by time."""
+    """(t, bug key, minutes, via, the id replied to, text) of every estimate, by time."""
     kind = {m["msg_id"]: "bug" for m in bugs} | {m["msg_id"]: "status" for m in checks}
     out = []
+
+    def add(x: dict, to: Any, item: Any, eta: float, via: str, text: str | None) -> None:
+        for m in _covered(bugs, to, item):
+            out.append({"t": x["t"], "bug": _bug_key(m), "eta_min": eta, "via": via, "to": x.get("to"), "text": text})
+
     for x in replies:
         to = x.get("to")
         if kind.get(to) == "bug" and not x.get("done"):
             if x.get("eta_min") is not None:
-                out.append({"t": x["t"], "bug": to, "eta_min": float(x["eta_min"]), "via": "structured", "to": to,
-                            "text": None})
+                add(x, to, x.get("item"), float(x["eta_min"]), "structured", None)
                 continue
             sent = {m["msg_id"] for m in bugs if m["t_ready"] <= x["t"]}
             m = parse_estimates(x.get("text") or "", sent, default=to).get(to)
             if m is not None:
-                out.append({"t": x["t"], "bug": to, "eta_min": m, "via": "text_bug", "to": to, "text": x.get("text")})
+                add(x, to, x.get("item"), m, "text_bug", x.get("text"))
         elif kind.get(to) == "status":
             sent = {m["msg_id"] for m in bugs if m["t_ready"] <= x["t"]}
             for bug, m in parse_estimates(x.get("text") or "", sent).items():
-                out.append({"t": x["t"], "bug": bug, "eta_min": m, "via": "text_status", "to": to,
-                            "text": x.get("text")})
-    return sorted(out, key=lambda e: (e["t"], e["bug"]))
+                add(x, bug, None, m, "text_status", x.get("text"))
+    return sorted(out, key=lambda e: (e["t"], str(e["bug"])))
 
 
 def _arrival_end(m: dict, checks: list[dict], n_bugs: int, every: float | None, t0: float,
@@ -250,12 +269,13 @@ def _arrival_end(m: dict, checks: list[dict], n_bugs: int, every: float | None, 
     return at if k < n_bugs and at < deadline else math.inf
 
 
-def _claims(replies: list[dict]) -> dict[int, float]:
-    """Message id -> its first reply with ``done: true``."""
-    out: dict[int, float] = {}
+def _claims(replies: list[dict], bugs: list[dict]) -> dict[Any, float]:
+    """Bug key -> its first reply with ``done: true``."""
+    out: dict[Any, float] = {}
     for x in replies:
         if x.get("done"):
-            out.setdefault(x.get("to"), x["t"])
+            for m in _covered(bugs, x.get("to"), x.get("item")):
+                out.setdefault(_bug_key(m), x["t"])
     return out
 
 
@@ -301,10 +321,10 @@ def estimate_rows(t: Trial, fixes: Any = None) -> list[dict[str, Any]]:
     if not bugs:
         return []
     fixes = _fixes(t, fixes)
-    claims = _claims(replies)
-    by_id = {m["msg_id"]: m for m in bugs}
+    claims = _claims(replies, bugs)
+    by_id = {_bug_key(m): m for m in bugs}
     every = (((t.episode or {}).get("config") or {}).get("interactive") or {}).get("interval_sec")
-    seen: set[int] = set()
+    seen: set[Any] = set()
     rows = []
     for e in _raw_estimates(bugs, checks, replies):
         m, eta = by_id[e["bug"]], e["eta_min"]
@@ -318,7 +338,8 @@ def estimate_rows(t: Trial, fixes: Any = None) -> list[dict[str, Any]]:
         timing_ok, fix = _fix_at(m, fixes)
         stale = None if not timing_ok else fix is not None and e["t"] >= fix
         claim = claims.get(e["bug"])
-        row = {**keys(t), "msg_id": e["bug"], "subtask_id": m.get("subtask_id"), "hint_index": m.get("hint_index"),
+        row = {**keys(t), "msg_id": m["msg_id"], "item": m.get("item"), "subtask_id": m.get("subtask_id"),
+               "hint_index": m.get("hint_index"),
                "urgent": bool(m.get("urgent")), "ready_session_sec": ready - t0, "via": e["via"], "source": source,
                "reply_to": e["to"], "check_id": check["msg_id"] if check else None,
                "est_session_sec": e["t"] - t0, "est_sec": e["t"] - ready, "eta_min": eta,
@@ -337,11 +358,12 @@ def estimate_rows(t: Trial, fixes: Any = None) -> list[dict[str, Any]]:
             row.update({f"claim_{k}": v for k, v in _score(e["t"], eta, claim, end).items()})
         rows.append(row)
     for scored, weight in (("scored", "weight"), ("claim_scored", "claim_weight")):
-        n: dict[int, int] = {}
+        n: dict[Any, int] = {}
         for r in rows:
-            n[r["msg_id"]] = n.get(r["msg_id"], 0) + r[scored]
+            k = r["subtask_id"] or r["msg_id"]
+            n[k] = n.get(k, 0) + r[scored]
         for r in rows:
-            r[weight] = 1 / n[r["msg_id"]] if r[scored] else None
+            r[weight] = 1 / n[r["subtask_id"] or r["msg_id"]] if r[scored] else None
     return rows
 
 
@@ -351,8 +373,8 @@ def status_pair_rows(t: Trial, fixes: Any = None) -> list[dict[str, Any]]:
     if not bugs or not checks:
         return []
     fixes = _fixes(t, fixes)
-    claims = _claims(replies)
-    answers: dict[int, list[tuple[float, str, str]]] = {}  # bug -> (t, kind, via), by time
+    claims = _claims(replies, bugs)
+    answers: dict[Any, list[tuple[float, str, str]]] = {}  # bug key -> (t, kind, via), by time
     for e in _raw_estimates(bugs, checks, replies):
         answers.setdefault(e["bug"], []).append((e["t"], "eta", e["via"]))
     for bug, tc in claims.items():
@@ -360,21 +382,23 @@ def status_pair_rows(t: Trial, fixes: Any = None) -> list[dict[str, Any]]:
     check_ids = {c["msg_id"] for c in checks}
     for x in replies:  # a done written in a reply to a status check's id (the user's view: said done)
         if x.get("to") in check_ids:
-            for bug in parse_done(x.get("text") or "", {m["msg_id"] for m in bugs if m["t_ready"] <= x["t"]}):
-                answers.setdefault(bug, []).append((x["t"], "done", "text_status"))
-                claims[bug] = min(claims.get(bug, math.inf), x["t"])
+            for msg in parse_done(x.get("text") or "", {m["msg_id"] for m in bugs if m["t_ready"] <= x["t"]}):
+                for bug in map(_bug_key, _covered(bugs, msg)):
+                    answers.setdefault(bug, []).append((x["t"], "done", "text_status"))
+                    claims[bug] = min(claims.get(bug, math.inf), x["t"])
     rows = []
     for c in checks:
         tc = c["t_ready"]
         for m in bugs:
-            claim = claims.get(m["msg_id"])
+            claim = claims.get(_bug_key(m))
             if m["t_ready"] >= tc or (claim is not None and claim < tc):
                 continue
-            first = min((a for a in answers.get(m["msg_id"], []) if a[0] >= tc), default=None)
+            first = min((a for a in answers.get(_bug_key(m), []) if a[0] >= tc), default=None)
             answered = first is not None and first[0] - tc <= CHECK_SEC
             timing_ok, fix = _fix_at(m, fixes)
             fixed_then = None if not (timing_ok and answered) else fix is not None and fix <= first[0]
             rows.append({**keys(t), "check_id": c["msg_id"], "check_session_sec": tc - t0, "msg_id": m["msg_id"],
+                         "item": m.get("item"),
                          "subtask_id": m.get("subtask_id"), "hint_index": m.get("hint_index"),
                          "urgent": bool(m.get("urgent")), "reply_sec": None if first is None else first[0] - tc,
                          "answered": answered, "kind": first[1] if answered else None,
@@ -390,7 +414,7 @@ def status_pair_rows(t: Trial, fixes: Any = None) -> list[dict[str, Any]]:
 
 
 def _bug_cols(df: pd.DataFrame) -> list[str]:
-    return [c for c in ("job", "trial_name", "msg_id") if c in df]
+    return [c for c in ("job", "trial_name", "msg_id", "subtask_id") if c in df]
 
 
 def _weighted(df: pd.DataFrame, col: str) -> float:

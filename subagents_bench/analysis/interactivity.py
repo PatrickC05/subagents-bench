@@ -29,6 +29,11 @@ agent starts up; it has its own ``first_*`` columns). A latency is missing when 
 happened before the session ended: medians count those as infinitely late (NaN when more than
 half are missing), and ``*_before_next`` is the share of hints with the event within one
 ``interval_sec``, before the next hint was sent.
+
+A message that lists several bugs (``interactive.bundle``) gives a row per bug (``item`` 1, 2, ...;
+the message's ``msg_id`` and ``msg_index``); the bugs of one message share its times, so "the next
+hint" and "earlier" hints are those of the next and of earlier messages, and the first message's
+bugs are all left out of the summaries as hint 0 is.
 """
 
 from __future__ import annotations
@@ -225,22 +230,26 @@ def hint_rows(t: Trial, keys: dict[str, Any], valid: bool) -> list[dict[str, Any
     for h in hints:
         for f in set(h["target_files"] or []):
             file_hints[f] = file_hints.get(f, 0) + 1
-    rows, earlier_files = [], set()
-    for k, h in enumerate(hints):
+    rows = []
+    for h in hints:
         t0, files = h["t_ready"], h["target_files"] or []
-        t_next = hints[k + 1]["t_ready"] if k + 1 < len(hints) else None
+        # a listed bug's message-mates share its t_ready: the next hint is the next message's
+        t_next = min((x["t_ready"] for x in hints if x["t_ready"] > t0), default=None)
+        earlier_files = {f for x in hints if x["t_ready"] < t0 for f in x["target_files"] or []}
+        first = t0 <= hints[0]["t_ready"]
         row = {**keys, "valid": valid, "topology": ep.get("topology"),
                "spawn_mode": sub.get("spawn_mode", "blocking") if ep.get("topology") == "subagents" else None,
                "hint_detail": icfg.get("hint_detail"), "scope": icfg.get("scope", "all"), "interval_sec": interval,
-               "hint_index": h["hint_index"], "urgent": bool(h.get("urgent")), "subtask_id": h["subtask_id"], "target_files": ";".join(files),
+               "bundle": icfg.get("bundle", 1), "hint_index": h["hint_index"], "msg_id": h.get("msg_id"),
+               "msg_index": h.get("msg_index", h["hint_index"]), "item": h.get("item"),
+               "urgent": bool(h.get("urgent")), "subtask_id": h["subtask_id"], "target_files": ";".join(files),
                "n_target_files": len(files), "shared_files": bool(set(files) & earlier_files),
                "shares_any": any(file_hints[f] > 1 for f in files), "t_ready_sec": t0 - session_t0,
                "delivered": h["t_delivered"] is not None}
-        busy, blocker, left = _busy(t0, r["calls"], r["tools"], spawns) if k else ("start", None, None)
+        busy, blocker, left = _busy(t0, r["calls"], r["tools"], spawns) if not first else ("start", None, None)
         # what the hint waited behind: the orchestrator's call or tool in progress, and how much of it was left
         row.update(busy_at_arrival=busy, blocked_by=blocker if busy in BUSY else None,
                    blocked_sec=left if busy in BUSY else None)
-        earlier_files |= set(files)
         lat: dict[str, float | None] = dict.fromkeys(LATENCIES)
         if h["t_delivered"] is not None:
             lat["delivery"] = h["t_delivered"] - t0
@@ -318,7 +327,8 @@ def condition_table(hints: pd.DataFrame) -> pd.DataFrame:
     v = hints[hints["valid"].astype(bool)]
     keys = _group_keys(v)
     for key, all_g in v.groupby(keys, sort=False):
-        first, g = all_g[all_g["hint_index"] == 0], all_g[all_g["hint_index"] > 0]
+        idx = all_g["msg_index"] if "msg_index" in all_g else all_g["hint_index"]  # a listed bug: its message's
+        first, g = all_g[idx == 0], all_g[idx > 0]
         row = {**dict(zip(keys, key)), "topology": all_g["topology"].iloc[0], "spawn_mode": all_g["spawn_mode"].iloc[0],
                "n_episodes": all_g["trial_name"].nunique(), "n_hints": len(all_g), "n_later_hints": len(g),
                "delivered_frac": _frac(g["delivered"]), "busy_at_arrival_frac": _frac(g["busy_at_arrival"].isin(BUSY)),

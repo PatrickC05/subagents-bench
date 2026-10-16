@@ -209,7 +209,8 @@ def fix_times(t: Trial) -> dict[str, dict[str, Any]]:
     for m in bugs:
         sid, ready = m["subtask_id"], m["t_ready"]
         v = verdicts.get(sid)
-        row = {**base, "msg_id": m.get("msg_id"), "hint_index": m.get("hint_index"), "subtask_id": sid,
+        row = {**base, "msg_id": m.get("msg_id"), "item": m.get("item"), "hint_index": m.get("hint_index"),
+               "subtask_id": sid,
                "urgent": bool(m.get("urgent")), "ready_session_sec": ready - t0,
                # no verdict for a bug in a graded trial (a patch that broke the build): unfixed, as the reward
                "fixed_end": (bool(v.get("resolved")) and bool(visible_ok)) if v else (False if graded else None),
