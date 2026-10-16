@@ -4,16 +4,21 @@
 # and every bug gets an answer time. swe_interactive_requests.yaml's session with the requests off.
 # Every model is DeepSeek-V4.1-Flash (subagent.model: null): the subagents run the orchestrator's
 # model, so the conditions differ only in who does the work.
-# Metrics kept, per condition: answer time (the first reply to each bug, messages.csv reply_sec),
-# requested bugs fixed, and cost per session.
-# The bug order is fixed (order_seed 0, vary_order_by_round false), so every condition and every
-# round of this sweep sends the same bugs at the same times, and the order is the one the requests
-# sweep's round 1 used: click's first 6 bugs match it, and echo sends all 6 of its bugs.
+# Metrics kept, per condition: time to first reply (until the agent first acknowledges each bug,
+# messages.csv reply_sec), requested bugs fixed, and cost per session.
+# The bug order is fixed (order_seed 0, vary_order_by_round false), so every condition sends the
+# same bugs at the same times, and the order is the one the requests sweep's round 1 used: click's
+# first 6 bugs match it, and echo sends all 6 of its bugs. One round: with the order fixed, a second
+# round would rerun the same sessions, and pooling those repeats would count one setting twice.
 # The three settings:
 #   single_baseline              the agent alone, with all tools (and reply)
 #   manager_background_baseline  read-only agent; every edit and test goes to background subagents
 #   background_hinted_baseline   all tools plus background subagents, told delegating keeps it free
-# 3 conditions x 2 repositories x 2 rounds = 6 harbor jobs, 12 thirty-minute sessions.
+#   manager_available_baseline   the manager, told to stay available: short steps, and each bug handed
+#                                at once to a subagent with a short instruction (it works out the problem)
+#   manager_owner_baseline       manager_available, and that subagent is in charge of its bug and may
+#                                start up to 10 helper subagents of its own (one level deep)
+# 5 conditions x 2 repositories x 1 round = 5 harbor jobs, 10 thirty-minute sessions.
 #   scripts/run_experiment.sh configs/sweeps/swe_interactive_baseline.yaml
 name: swe_interactive_baseline
 base: configs/sail/base.yaml
@@ -22,7 +27,7 @@ platform: linux/amd64
 tasks:                               # language, bugs
   - swe-sweep__click                 # Python, 13 (6 sent)
   - swe-sweep__echo                  # Go, 6 (all 6 sent; every bug in its own file)
-rounds: 2
+rounds: 1
 order_seed: 0
 
 overrides:
@@ -66,3 +71,10 @@ conditions:
     tools: {orchestrator_tools: [read_file, list_dir, search]}
   background_hinted_baseline:
     subagent: {strategy: parallel, scope: hard, spawn_mode: background, delegation_hint: true}
+  manager_available_baseline:
+    subagent: {strategy: parallel, scope: hard, spawn_mode: background, availability_hint: true}
+    tools: {orchestrator_tools: [read_file, list_dir, search]}
+  manager_owner_baseline:
+    subagent: {strategy: parallel, scope: hard, spawn_mode: background, availability_hint: true, owner_hint: true,
+               max_children: 10}
+    tools: {orchestrator_tools: [read_file, list_dir, search]}

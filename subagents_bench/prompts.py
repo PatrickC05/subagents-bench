@@ -144,6 +144,14 @@ SUBAGENT_SCOPE = {
     "hard": "Your tools: `read_file`, `list_dir`, `search`, `bash`, `edit_file`. Implement changes and verify "
             "them by running the relevant programs or tests; report what you changed and how you verified it.",
 }
+SUBAGENT_HELPERS = """
+You can start helper subagents of your own with `spawn_subagents(instructions)`: one helper per \
+instruction, all running at the same time; the call returns when they have all finished, with \
+their reports. Helpers start fresh in the same container and see only their instruction, so make \
+each one self-contained (goal, paths, what to report). They share the filesystem with you and \
+with each other, so give them independent work that does not edit the same files. Helpers cannot \
+start helpers. At most {n} helper runs in all; the number left is shown after each call.
+"""
 PRIVATE_COPY = """
 Isolation: your private copy of {orig} is {copy}. Work there: paths under {orig} in your tool \
 arguments and commands are redirected to {copy}. Only {orig} is copied; anything outside it \
@@ -158,9 +166,11 @@ LENGTH_CUTOFF_NOTE = ("[note: your last reply reached the output token limit bef
 LENGTH_CUTOFF_REPLY = "[reply cut off at the output token limit]"
 
 
-def subagent_prompt(scope: str, max_steps: int, cwd: str, workdir: str | None = None) -> str:
-    """``workdir`` is given when ``cwd`` is a candidate's private copy of it."""
+def subagent_prompt(scope: str, max_steps: int, cwd: str, workdir: str | None = None, helpers: int = 0) -> str:
+    """``workdir`` is given when ``cwd`` is a candidate's private copy of it; ``helpers``: the helper
+    subagents it may start (``subagent.max_children``; 0 for a helper itself)."""
     text = SUBAGENT.format(max_steps=max_steps, scope=SUBAGENT_SCOPE[scope], cwd=cwd)
+    text += SUBAGENT_HELPERS.format(n=helpers) if helpers else ""
     return text + (PRIVATE_COPY.format(orig=workdir, copy=cwd) if workdir else "")
 
 
@@ -289,6 +299,17 @@ INTERACTIVE_DELEGATION_HINT = ("\nYour attention is the scarce resource: while y
                                "wait until they finish. Subagents run in the background, so delegate long work "
                                "(investigating and fixing a bug, running a test suite) and keep yourself free to "
                                "respond to new requests and to combine reports.\n")
+INTERACTIVE_AVAILABILITY_HINT = ("\nStay available to the user: new messages reach you only between your steps, so "
+                                 "every long step, long thinking included, keeps the user waiting. Keep each step "
+                                 "short. Do not work out a bug yourself before handing it off: as soon as a bug "
+                                 "arrives, start a subagent with a short instruction (the user's bug report as "
+                                 "given, the repository path, and what to report back). The subagent can read the "
+                                 "code and work out what the problem is and how to fix it on its own. Then reply to "
+                                 "the user and go back to waiting.\n")
+INTERACTIVE_OWNER_HINT = ("\nPut one subagent in charge of each bug: the subagent you start for a bug owns it end "
+                          "to end (finding the cause, fixing it, testing the fix and reporting back), so say in its "
+                          "instruction that it is in charge of that bug. It can start helper subagents of its own to "
+                          "split the work. You coordinate: reply to the user and pass on what the reports say.\n")
 FIRST_HINT = "{instruction}{note}\n\n{request}"
 # interactive.scope "reported": the task's own goal (SWE-sweep: find and fix every bug) is set aside,
 # so a bug the agent fixes before it is sent cannot pass for one it never started.
@@ -337,7 +358,9 @@ def interactive_prompt(cfg: ExperimentConfig, workdir: str) -> str:
     if not subagents:
         return text
     if background:
-        hint = INTERACTIVE_DELEGATION_HINT if s.delegation_hint else ""
+        hint = (INTERACTIVE_DELEGATION_HINT if s.delegation_hint else "") + \
+            (INTERACTIVE_AVAILABILITY_HINT if s.availability_hint else "") + \
+            (INTERACTIVE_OWNER_HINT if s.owner_hint else "")
         return text + SUBAGENTS_BACKGROUND.format(max_steps=s.max_steps, hint=hint, scope=SCOPE[s.scope],
                                                   max_concurrent=s.max_concurrent, max_dispatches=s.max_dispatches)
     if s.strategy == "parallel":  # the background text but for the blocking return, so only that differs

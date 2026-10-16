@@ -508,7 +508,8 @@ message's kind are filled only for that kind.
 | `urgent` | a bug marked urgent |
 | `t_ready_sec`, `delivery_sec` | when it was sent after the session start; until it entered the conversation |
 | `n_replies` | replies naming its id |
-| `reply_sec` | a bug or question: until the first reply naming it (a question's answer); a status check: until the first reply of any kind sent at or after its delivery (empty if never delivered) |
+| `reply_sec` | a bug: until the agent first acknowledged it, the first orchestrator turn after its delivery whose text, reasoning or tool calls name it (`#N`, request/bug N, or one of its tests), or a reply to it if earlier; a question: until the first reply naming it (the answer); a status check: until the first reply of any kind sent at or after its delivery (empty if never delivered) |
+| `user_reply_sec` | a bug: until the first reply to it the user saw |
 | `question_id`, `question`, `reference`, `answer` | a question, its reference answer, and the text of its first reply |
 | `correct` | the judge's verdict on that first reply (`answers.json`); empty when never answered, and when answered but not graded (or the verdict was unreadable) |
 | `subtask_id`, `fixed` | a bug's subtask and whether the grader counts it fixed (resolved, no visible regression; false without a verdict in a valid trial, empty in an invalid one) |
@@ -538,6 +539,7 @@ message's kind are filled only for that kind.
 | `n_graded_answers`, `correct_of_answered`, `correct_of_asked` | questions with a verdict (answered and graded); the share of them correct; and correct answers over every question sent, unanswered ones counting as not correct (NaN while an answered question has no verdict, e.g. before `grade-answers`) |
 | `n_bugs`, `fixed_frac` | bugs sent, and the share counted fixed |
 | `first_reply_median_sec` | censored median `reply_sec` of the bugs after the first |
+| `user_reply_median_sec` | the same for `user_reply_sec` |
 | `eta_given_frac`, `eta_median_sec`, `eta_min_median` | the share of bugs with an estimate (before their done reply); censored median `eta_sec` of the bugs after the first; median estimate in minutes |
 | `done_claimed_frac`, `claim_precision` | the share of bugs said done; of those, the share the grader confirms |
 | `eta_abs_log2_median`, `eta_log2_median` | median \|`eta_log2_err`\| (1: off by a factor of 2) and median signed error (> 0: late), over bugs with a known error: those said done after an estimate and the never-done ones at `inf` (so either median can be `inf`) |
