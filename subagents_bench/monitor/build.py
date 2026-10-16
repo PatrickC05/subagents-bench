@@ -100,8 +100,8 @@ CONTROLS_NOTE = (" Controls (dashed cards) have no ids or replies: their bugs ar
 PICKUP_NOTE = " {what}: per-bug pickup from <code>interactivity.csv</code>, over the bugs after the first."
 LEVELS_NOTE = ("<p>By level: each setting's levels, one row each, so a step down adds one kind of message; a cell is "
                "\"–\" when the level sends no such message (or nothing has been measured yet), and a median is "
-               "\"never\" when at least half of its messages were never read, replied to or edited (they count "
-               "as infinitely late). Sessions: started, of those planned. Status check "
+               "\"never\" when at least half of its messages were never read, replied to or edited (not yet, in "
+               "a live session; they count as infinitely late). Sessions: started, of those planned. Status check "
                "replied: the checks with any reply after them, and the median time to the first. Bugs fixed is the "
                "end-of-session grade; each bug's real fix time comes from the workspace snapshots after the run "
                "(<code>subagents-bench fix-times</code>) and is not on this page.</p>")
