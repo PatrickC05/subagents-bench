@@ -427,6 +427,76 @@ scripts/run_experiment.sh configs/sweeps/swe_interactive_baseline_modal_smoke.ya
 scripts/run_experiment.sh configs/sweeps/swe_interactive_baseline_modal.yaml --jobs-at-once 3
 ```
 
+### Levels: one kind of request at a time
+
+The requests run sent every kind of message at once, and could say when a
+bug was fixed only at the end of a session.
+[`swe_interactive_levels.yaml`](configs/sweeps/swe_interactive_levels.yaml)
+extends the Modal baseline and adds one kind of message per level, in the
+baseline's three settings (`single`, `manager_background`,
+`background_hinted`), on click and echo: 12 conditions.
+
+| Level | Conditions | Adds to the level below |
+|---|---|---|
+| L0 | `*_baseline` | nothing: the baseline's 6 bugs, every 4 minutes, run again in this sweep |
+| L1 | `*_eta` | a status check 2 minutes after bugs 1, 3 and 5 that names the bugs so far and asks for each one's `eta_min` or `done` (`status_every: 2`) |
+| L2 | `*_questions` | 2 questions about the code after each bug, 12 per session (`questions_per_interval: 2`) |
+| L3 | `*_urgent` | bug 3, sent at 12:00, is urgent (`urgent_every: 3`) |
+
+Every level has the same system prompt and the same bugs at the same times,
+so L2 - L1 measures the questions and L3 - L2 the urgency. Two options are
+on in every condition. Workspace snapshots (`interactive.snapshots`)
+record the collect hook's diff in the background after every `bash` or
+`edit_file` call and every 15 s, and `fix-times` grades each recorded state
+afterwards with the task's own grader, which gives each bug's real fix time
+(`fixed_sec`). `reply` refuses a reply to a bug that has neither `eta_min`
+nor `done: true` (`interactive.require_eta`). The three main numbers were
+chosen before the run, each with a 95% interval from a bootstrap over
+sessions stratified by task:
+- the on-time share of the structured estimates against those fix times,
+  each bug weighted once (L1);
+- the share of questions answered correctly within 60 s (L2);
+- the urgent bug's win rate on time to fix against the same bug at L2 (L3).
+
+They are in `levels.csv`; the details are in `fixes.csv`,
+`estimates.csv`, `status_pairs.csv`, `eta.csv` and `urgency.csv`, and
+`messages.csv` gains each question's `correct_sec`.
+
+Rounds 1-2 run all 12 conditions (24 jobs, 48 sessions). Rounds 3-4 add L2
+and L3 again (12 jobs), because the urgency comparison pairs sessions and 2
+rounds give only 4 pairs per task and setting. Everything runs on Modal: the
+sessions, through harbor's `environment: modal`, and the replay, with one
+sandbox per trial built from the task's verifier image. `fix-times` makes no
+LLM call. `grade-answers` judges every reply to a question up to the first
+correct one, as correct, wrong or not an answer, at temperature 0.
+
+```bash
+.venv/bin/subagents-bench questions configs/sweeps/swe_interactive_levels.yaml      # 12 per task (click's copied from the requests run)
+scripts/run_experiment.sh configs/sweeps/swe_interactive_levels.yaml --rounds 1,2 --jobs-at-once 24
+scripts/run_experiment.sh configs/sweeps/swe_interactive_levels.yaml --rounds 3,4 --jobs-at-once 12 \
+  --only single_questions manager_background_questions background_hinted_questions \
+         single_urgent manager_background_urgent background_hinted_urgent
+.venv/bin/subagents-bench fix-times configs/sweeps/swe_interactive_levels.yaml      # <trial>/agent/fix_states.json
+.venv/bin/subagents-bench grade-answers configs/sweeps/swe_interactive_levels.yaml  # <trial>/agent/answers.json
+scripts/analyze.sh jobs/swe_interactive_levels
+```
+
+The smoke,
+[`swe_interactive_levels_smoke.yaml`](configs/sweeps/swe_interactive_levels_smoke.yaml)
+(2026-10-16), ran the 12 conditions in 2-minute sessions: a bug every 30 s,
+with the checks, questions and urgent bug of each level. One round on click
+and echo, 12 jobs at once, gave 24 of 24 sessions valid.
+- The snapshots worked: 609 snapshots, none failed.
+- The replay worked: `fix-times` graded the 24 trials (76 states) in 40 s,
+  and every final state reproduced the verifier's verdicts.
+- The recorder does not slow the agents on Modal. A snapshot took a median
+  0.09 s (90th percentile 0.18 s). The agents' `bash` calls took a median
+  0.084 s while a snapshot ran and 0.100 s otherwise.
+- `require_eta` refused 11 of 63 `reply` calls.
+
+Design, definitions and where the analysis departs from the plan in PR
+#13: docs/DESIGN.md, *Requests*; files and columns: docs/DATA.md.
+
 ## Where data and figures land
 
 ```
@@ -558,14 +628,18 @@ subagents_bench/
   prompts.py          orchestrator, subagent, judge and debate prompts
   orchestrator.py     the step loop and spawn_subagents
   interactive.py      timed sessions: hints as user messages, background subagents, wait, reply
-  hints.py            SWE-sweep subtasks -> the message schedule; generated bug reports and code questions
+  snapshots.py        workspace snapshots during a session (interactive.snapshots)
+  fixtimes.py, replay_states.py   `fix-times`: grade every snapshot with the task's grader on Modal
+  hints.py            SWE-sweep subtasks -> the message schedule; generated bug reports and code questions;
+                      the answer judge
   subagent.py         one subagent run (a dispatch)
   arbiter.py          candidates, judge, debate, copy isolation and apply
   records.py          the episode records
   harness/harbor_agent.py   harbor's external agent (OrchestratorAgent)
   sweep.py, cli.py    sweep specs, preflight, harbor jobs; `subagents-bench`
   analysis/           validity, cost, critical path, tables, delegation gate; interactivity.py (hints),
-                      requests.py (replies: answers, estimates, done claims)
+                      requests.py (replies: answers, estimates, done claims); fixes.py, estimates.py,
+                      levels.py (the levels: fix times, estimates against them, urgency, main numbers)
   monitor/            the HTML monitor of an interactive sweep (python -m subagents_bench.monitor)
   plots/              the nine figures
 configs/              sail/base.yaml, sweeps/{pilot,smoke,swe_sweep,swe_interactive*}.yaml, pricing.yaml

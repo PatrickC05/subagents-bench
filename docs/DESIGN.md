@@ -38,7 +38,8 @@ The sweep writes each resolved config to `jobs/<sweep>/configs/`, and the
 harbor agent reads it from `SUBAGENTS_BENCH_CONFIG`.
 
 Sampling temperature is 0.7 for both models, so repeated rounds are
-independent samples. DeepSeek's `max_output_tokens` is 32768: at 8192, the
+independent samples (`grade-answers` judges at 0: a verdict is not a
+sample). DeepSeek's `max_output_tokens` is 32768: at 8192, the
 orchestrator reached 7976 output tokens in the smoke runs and the judge (the
 same model) hit the limit in 2 of 5 calls. Gemma keeps 4096.
 
@@ -347,8 +348,10 @@ bug, status check, question, and get ids 1, 2, ... in that order. The texts
 are `Request #4: another bug, while you keep working on the earlier ones.`
 (urgent: `... and this one is urgent: fix it before the earlier ones.`),
 `Question #5: <question>` and `Status check #6: how long until each of your
-open bug requests is fixed? Reply to each with an updated eta_min.`; the
-first message ends with `Request #1: a bug.` and its hint. Questions are drawn
+bug requests so far (#1, #2, #4, #5) is fixed? Reply to each one's own id
+with eta_min, or with done: true if it is fixed.` (the bugs sent before the
+check; it replaced an earlier text, below, *Status checks that name the
+bugs*); the first message ends with `Request #1: a bug.` and its hint. Questions are drawn
 from the task's pool shuffled with `<seed>:<task>`, so the conditions of a
 round get the same questions in the same order and rounds differ. Questions,
 status checks or urgent bugs without `replies` are a config error (each comes
@@ -402,7 +405,8 @@ to the question's id, at a known time, with a text to grade. The cost is that
 an answer written as plain text, or sent with `to` naming the wrong message,
 counts as no answer. The section is the same in every condition, appended
 after the tools; the conditions still differ only in tools, spawn mode and the
-delegation hint.
+delegation hint. With `interactive.require_eta` a reply to a bug must carry
+an estimate or a done (below, *Estimates required*).
 
 **Questions.** `subagents-bench questions SPEC`, once before the run, clones
 each task's repository at the ref its Dockerfile checks out (`git clone URL
@@ -447,21 +451,18 @@ The questions and reference answers are the model's and are not checked by
 hand, and the generator, the judge and the agents can be the same model.
 
 **Grading answers.** `subagents-bench grade-answers SPEC`, after the run,
-judges the first reply to each question of every finished trial (a
+judges the replies to each question of every finished trial (a
 `result.json`; `_`-prefixed job dirs skipped) against the reference answer,
-with the same model as `questions`: correct if it states what the reference
-states (other wording and extra correct detail are fine), wrong if it
-contradicts it, misses its key fact or only says how to find out. Only the
-first reply counts: the user may act on it, and a later correction would let
-an agent answer fast and fix the answer at leisure. Unanswered questions are
+with the same model as `questions` (version 2 of `answers.json`: every reply
+up to the first correct one, three verdicts, temperature 0; below, *Grading
+answers, version 2*). `requests.csv` reads the first reply's verdict
+(`correct`): the user may act on it, and a later correction would let an
+agent answer fast and fix the answer at leisure. Unanswered questions are
 not sent to the judge and have no verdict (`correct` null): `requests.csv`
 gives accuracy both over answered questions (`correct_of_answered`) and over
 every question asked (`correct_of_asked`, an unanswered one counting as not
-correct), so speed and accuracy are not mixed in one number. The verdict must
-be a JSON boolean (or the string `"true"` or `"false"`); anything else, such
-as `"yes"`, `1` or a missing key, is unreadable: `correct: null` and the
-command exits 1. Trials with `answers.json` are skipped unless `--force`.
-Rerun the analysis after grading.
+correct), so speed and accuracy are not mixed in one number. Rerun the
+analysis after grading.
 
 **Estimates.** Done is the first reply with `done: true` (`done_sec`). A
 bug's estimate is its first reply with `eta_min` sent before that done reply
@@ -532,6 +533,465 @@ leave out bug 0, which arrives with the task. `episodes.csv` adds
 `n_questions` and `n_replies` per episode. The bugs-only controls have no
 `reply`, so they have no rows in `messages.csv` or `requests.csv`; compare
 them with the request conditions in `hints.csv` and `interactivity.csv`.
+
+##### Levels
+
+The requests run sent every kind of message at once, so a difference
+between conditions could come from any of them, and neither its done claims
+nor its end-of-session grade said when a bug was fixed (below).
+`swe_interactive_levels.yaml` adds the kinds one at a time on top of the
+bugs-only baseline on Modal (`swe_interactive_baseline_modal.yaml`: 6 bugs
+every 4 minutes in one fixed order, 30-minute sessions, every model
+DeepSeek-V4.1-Flash, click and echo), in four cumulative levels, each in the
+baseline's three settings (`single`, `manager_background`,
+`background_hinted`), so 12 conditions named `<setting>_<suffix>`:
+
+| Level | Suffix | Adds to the level below | Config |
+|---|---|---|---|
+| L0 | `_baseline` | nothing: bugs only | |
+| L1 | `_eta` | a status check 2 minutes after bugs 1, 3 and 5 (6:00, 14:00, 22:00) | `status_every: 2` |
+| L2 | `_questions` | 2 questions about the code after each bug (+80 s, +160 s; 12 per session) | `questions_per_interval: 2` |
+| L3 | `_urgent` | bug 3 (12:00) is urgent | `urgent_every: 3` |
+
+Bugs are numbered from 0, so bug 3 is the one sent at 12:00. Every level has
+`replies: true`, which already puts the whole *Replying to the user* section
+in the system prompt (estimate each bug, answer questions, fix urgent bugs
+first), so the levels share one prompt and differ only in the messages they
+receive. Bugs keep their send times and order at every level and in every
+round (`vary_order_by_round: false`; `test_swe_interactive_levels_spec`
+checks it on the tasks); message ids shift as checks and questions
+interleave, so the analysis pairs bugs by subtask, never by `msg_id`. A bug's
+*twin* is the same subtask sent at the same time in the same sweep, task and
+setting, at another level. L2 - L1 then measures questions with status checks
+present and L3 - L2 urgency with both (the urgent bug gets a question at
++80 s, a check at +120 s and another question at +160 s); L3 - L0 mixes all
+three kinds and is only descriptive. There is one urgent bug, bug 3: an
+urgent bug at 4:00 would have only bug 0 before it, which the single agent
+often finishes first, so there would be nothing to jump ahead of, and a
+second one would carry its effect into the first one's comparison. In both
+tasks bug 3 (`click-4f1302f13075`, `echo-91d2b5077dbf`) is the only bug in
+its file and has three bugs before it.
+
+Every condition records workspace snapshots and has the `require_eta` rule
+(the spec's `overrides`; both below). L0 runs again inside the sweep,
+shuffled with L1-L3 within each round, rather than being taken from the
+earlier baseline run on Modal (`swe_interactive_baseline_modal`, PR #13):
+that run has no snapshots, so no per-bug fix times, and no `require_eta`,
+and it ran on another day. It stays a looser
+second baseline, kept apart from the in-sweep L0 in every table (*Levels
+analysis*, below). Rounds 1-2 run all 12 conditions (24 jobs, 48 sessions);
+rounds 3-4 only L2 and L3 (12 jobs, 24 sessions), because the urgency win
+rate pairs urgent and twin sessions and 2 rounds give only 4 pairs per task
+and setting. With the order fixed, the rounds of a condition are identical
+runs, so their spread is the replicate noise; with 4 to 8 sessions per
+setting and level, expect directions, not significance. Click's 12
+questions are the requests run's, copied into the sweep's hints dir before
+`subagents-bench questions` wrote echo's. The plan is PR #13's plan comment
+with Jonathan's follow-up (`require_eta`, rounds 3-4, all jobs at once on
+Modal).
+
+##### Workspace snapshots (`snapshots.py`)
+
+The grader runs once, at the end of a session, and nothing else in the
+records says when a bug was fixed. Done claims are a poor stand-in: in the
+requests run's 12 sessions with replies, 22 of 72 bugs were said done, 4 of
+those claims were wrong (all on pint), and 11 of the 29 fixed bugs were never
+claimed (9 of 25 on click). Edits are worse: an edit is not a passing fix,
+fixes get reverted (in 5 of the run's 20 sessions, all
+`manager_background`, a subagent ran `git checkout` or `git stash` over files
+another agent had edited; in one, at 28:01, that wiped the work on two bugs,
+which ended unresolved), and 3 of click's 6 baseline bugs are in `core.py`.
+So with `interactive.snapshots` a `Snapshotter` thread records the workspace
+while the session runs, and `fix-times` grades each recorded state
+afterwards.
+
+**The command.** One `env.exec` (120 s timeout) of the task's collect hook,
+`git add -A && git diff --cached --binary baseline`, made private:
+`GIT_INDEX_FILE` and `GIT_OBJECT_DIRECTORY` point under
+`<state_root>/snap` (`/tmp/.sb/snap`; an index file per attempt, removed on
+exit, so a killed attempt leaves no lock), with the repository's own object
+dir as an alternate. The repository's `.git` (index, objects, refs) is never
+written: a `git add -A` on the real index would stage the agents' work, and
+their own `git diff` and `git status` would change under them. The patch is
+byte for byte what the hook would write at that moment. The private index
+starts as a copy of the repository's own (`cp -p`, mtime kept): from an
+empty index, tracked files that `.gitignore` matches would show as deleted,
+and the kept mtime lets git's racy-entry check trust the same file stats as
+the hook. `git write-tree` gives the state's tree id; the same tree as the
+last successful snapshot's skips the diff, and a new one's patch comes back
+base64-encoded (a patch need not be UTF-8).
+
+**Triggers and coalescing.** Snapshot 0 at the session's start (the
+untouched workspace: an empty diff); after every `bash` or `edit_file` call
+of any agent (a recorder tool listener, `EpisodeRecorder.add_tool_listener`,
+which only sets a flag, so the agent's call never waits for a snapshot and
+nothing it raises reaches the call); and, while nothing asks for one,
+`snapshot_every_sec` (15 s) after the previous one ended (`heartbeat`: a
+command still running or a background process changes files too). One
+snapshot runs at a time; the requests made while it runs become exactly one
+more, right after it, whose `t_request` is the earliest of them.
+
+**Records.** One `snapshots` record per attempt (docs/DATA.md). A state is
+`changed` when its tree differs from the previous successful snapshot's, so a
+return to an earlier state is recorded again (a fix that is reverted and
+redone is three states, not one). Only a changed state's patch is written, to
+`agent/snapshots/<seq>.patch`; one over 20 MB is the error `too large`,
+without a file. A failed attempt (a failed or timed-out exec, unreadable
+output) is recorded with its error and the next trigger tries again; the
+next snapshot is compared with the last one without an error. The deadline's
+stop ends the thread, the session stops it when it ends (joined for up to
+30 s), and nothing is written after that. There is no final snapshot: the
+final state is the trial's own `model.patch`, which the collect hook writes
+after the session.
+
+**Overhead.** On Modal every snapshot is a remote exec, so the levels smoke
+(2026-10-16, 24 sessions) checked that the recorder does not slow the agents
+before the full run: 609 snapshots (24 at the start, 499 after a tool, 86
+heartbeats), none failed; a snapshot took a median 0.09 s (90th percentile
+0.18 s); and the agents' own `bash` calls took a median 0.084 s when they
+overlapped a snapshot and 0.100 s when they did not.
+
+##### Estimates required (`require_eta`)
+
+In the requests run, 72 of 106 estimates were only in a reply's text, where
+the requests analysis does not read them: 58 in replies to a status check's
+own id, 14 in bug replies without `eta_min`. With `interactive.require_eta`
+(it needs `replies`; on in every levels condition), `reply` to a bug with no
+usable `eta_min` (absent, or not a number of minutes in [0, 10^6)) and
+without `done: true` is refused: nothing is sent or recorded, and the result
+is the error `[error] a reply to a bug (#4) needs eta_min (your estimate, in
+minutes from now, of when it will be fixed) or done: true; nothing was
+sent`, so the agent can resend it with a number. Replies to questions and
+status checks are unaffected. The tool's description and the system prompt
+do not change, so the levels share the baseline run's prompt and the rule
+shows only in the error. It leaves no bug reply without a structured
+estimate or done; estimates written in a reply to a status check are still
+read by the regex (*Levels analysis*). In the levels smoke it refused 11 of
+63 `reply` calls, in 7 of the 24 sessions.
+
+##### Status checks that name the bugs
+
+A status check lists the bugs sent before it and asks for one structured
+reply per bug, to the bug's own id. In L1 the three checks of a session are
+ids 3, 6 and 9 (the bugs are 1, 2, 4, 5, 7 and 8); the second reads:
+
+> Status check #6: how long until each of your bug requests so far (#1, #2, #4, #5) is fixed? Reply to each one's own id with eta_min, or with done: true if it is fixed.
+
+`hints.schedule` puts the ids in the check's text from the schedule alone
+(every bug sent before the check, whatever the agent did with it), and
+`prompts.request_text` renders them, so the message is the same in every
+condition and round whatever the agent fixed or said done. This text
+replaced `Status check #6: how long until each of your open bug requests is
+fixed? Reply to each with an updated eta_min.` for every spec, after the
+requests run (2026-10-15), which used the old one: "reply to each" left the
+id open, and 58 of that run's 72 text-only estimates were replies to the
+check's own id. "Open" also left the agent to decide which bugs to answer
+for; now every listed bug is asked about, and the analysis pairs each one
+not said done before the check with what came back (*Levels analysis*,
+status pairs).
+
+##### Fix times (`fix-times`)
+
+`subagents-bench fix-times SPEC [--force] [--concurrency N] [--only-trial
+SUBSTR] [--dry-run]` (`fixtimes.py`), after the run and with no LLM call,
+grades every recorded state of every finished trial (harbor's `result.json`
+with `finished_at`; `_`/`.` job dirs skipped) that has
+`agent/snapshots.jsonl` and, unless `--force`, no `agent/fix_states.json`.
+
+- **Sandbox.** One Modal sandbox per trial, from the task's verifier image:
+  `tests/Dockerfile` of the task dirs the sweep ran (the platform-pinned copy
+  under `jobs/<sweep>/tasks/`) with that `tests/` dir as context, the image
+  harbor's separate verifier uses, built once per task. 3 CPUs, 7000 MB, no
+  network (the verifier's `no-network` phase), 3 hours, app
+  `subagents-bench-fixtimes`, Modal's 2025.06 image builder (as the sweep).
+  Up to `--concurrency` (24) trials at once.
+- **States.** Every snapshot with a patch (a changed state), in `seq` order,
+  at its `t_start` (when the capture began), then the final state: the
+  trial's `artifacts/logs/artifacts/model.patch`, what the verifier graded,
+  at the episode's end. Every state is graded, with no bisection, because
+  fixes do go backwards (above). The bugs graded are those sent in the
+  session (the inbox's bugs ready by its end).
+- **The grader, reused.** `replay_states.py` runs in the sandbox on the
+  grader's own interpreter (`/opt/swesweep/python/bin/python3`, standard
+  library only) and calls the task's grader, `/tests/shared/swesweep_grade.py`:
+  its bundle (`load_bundle`) restricted to the sent bugs, and per state
+  `run_evaluation`, exactly as the verifier grades a final patch: reset to
+  `baseline`, apply the patch, run the visible suite, then each sent bug's
+  hidden tests. A reimplementation could drift from the verifier; this one is
+  checked against it on every trial's final state (below).
+- **Statuses.** Per state and bug: `pass` (resolved); `unknown` when the
+  state says nothing about the bug: the evaluation errored, the patch did not
+  apply or did not build, the bug's hidden test patch did not apply, its
+  targeted run timed out, produced no report or ran no test, or every failing
+  targeted test is an `error` outcome (a pytest collection or import error, a
+  Go `<build>` failure); `fail` otherwise. A collection error is unknown, not
+  a failure: in click every test imports the whole package, so one
+  half-finished edit elsewhere would fail all 6 bugs. The grader merges
+  `failed` and `error` outcomes, so the replay wraps its `_run_targets` to
+  keep each targeted run's outcomes; grading is unchanged.
+- **Reruns.** For each bug and each `pass` followed by `fail` (consecutive
+  known states), the failing state is graded once more for the bugs that
+  need it (`rerun`): a failure that does not repeat is a flaky test, not a
+  broken fix.
+- **Timeouts.** The grader's own per-run limits (click: 3600 s for the visible
+  suite, 900 s per bug) are capped at 120 s and 60 s
+  (`SWESWEEP_VISIBLE_SUITE_TIMEOUT`, `SWESWEEP_TEST_TIMEOUT`). A state
+  normally grades in seconds (in the verifiers' `eval.json` on Modal, the
+  visible suite took at most 2.7 s and one bug's targeted run 1.9 s), and a
+  mid-edit state that hangs would otherwise use up the trial's exec budget
+  and lose the whole trial on every run; capped, it costs at most 120 s plus
+  60 s per bug, and a bug whose run hit the cap is `unknown` in that state.
+- **Final state against the verifier.** The host compares the final state's
+  per-bug `pass` with `verifier/eval.json`'s `resolved` (a bug missing there
+  is unresolved: its build failed) and records `final_matches_verifier` and
+  the `mismatches`. A trial whose final state does not reproduce the
+  verifier is left out of every timing metric (`timing_ok`, below).
+- **Output and resume.** `agent/fix_states.json` (docs/DATA.md), written
+  atomically. A trial that fails writes nothing and the next run retries it;
+  exit 0 when every trial got its file, 1 otherwise, 2 without Modal, 130 on
+  Ctrl-C (the running sandboxes are terminated). `--dry-run` lists the
+  trials, their images and states, and touches nothing.
+- **Cost.** The levels smoke's 24 trials (76 states) replayed in 40 s, and
+  every final state reproduced `verifier/eval.json`.
+
+##### Grading answers, version 2
+
+Version 2 of `answers.json` changes how `grade-answers` judges the replies
+to a question:
+
+- **Three verdicts.** `correct` (states what the reference states; other
+  wording, extra correct detail and a longer explanation are fine), `wrong`
+  (an answer that contradicts the reference or misses its key fact) or
+  `none`, not an answer: an acknowledgement, a promise or plan to answer,
+  only how to find out, or not knowing. Version 1's two verdicts made "on it"
+  and "let me check" wrong answers. The judge grades only what a reply says
+  about the question, since a reply can also be about other things.
+- **Temperature 0** (`judge_temperature` in the file): version 1 inherited
+  the agents' 0.7, so a verdict was a sample.
+- **Every reply up to the first correct one.** The replies to the
+  question's own id are judged in time order, up to and including the first
+  `correct` one (an unread verdict does not stop it), so a question first
+  acknowledged and then answered gets the time of its answer
+  (`correct_sec`). `answers` keeps the first reply's verdict, as before.
+- **Replies elsewhere.** A reply to another id that cites the question
+  (`#<id>` as a whole token: not `#31`, `##3` or `a#3`) and was sent after the
+  question was delivered is judged the same way and reported apart
+  (`elsewhere`); it never answers the question, since one channel is what
+  makes the answer time a measurement.
+- **Reading the verdict.** A JSON object with `verdict`; version 1's
+  `{"correct": true|false}` reads as correct/wrong. Near-JSON whose verdict
+  is plain to see (text with a brace after the object, two objects, a stray
+  quote in `why`) reads as that verdict when every `"verdict": "<word>"` pair
+  names the same one; pairs naming different verdicts (the format echoed
+  before the object, a verdict taken back) leave it unread (`verdict` null,
+  `why` the start of the reply).
+- **Re-grading.** Trials without a version-2 `answers.json` (version 1, or
+  unreadable) are graded again, and so are version-2 trials with an unread
+  verdict (the judge's reply may be unreadable only this time); the others
+  only with `--force`. A trial whose grading fails writes nothing. Exit 0
+  when every reply judged got a verdict and no trial failed, 1 otherwise, 3
+  on a billing error (it stops at once).
+
+##### Levels analysis (`analysis/fixes.py`, `estimates.py`, `levels.py`)
+
+All times are seconds after the message was sent, like `reply_sec`, unless
+named `*_session_sec`.
+
+**Fix times** (`fixes.csv`). From `fix_states.json`, the snapshot records
+and the inbox. A state holds from its time to the next one, and is
+*observed* once plus once per later successful snapshot that found the
+workspace unchanged. Per bug, in state order:
+
+- `unknown` carries no information: it never starts, breaks or ends a
+  streak, and neither does a `fail` whose rerun passed (a flaky test). The
+  final state is the exception: it reproduces the verifier, which calls
+  anything but a pass unresolved, so there an unknown or flaky status is a
+  `fail` and a streak never lasts "to the end" through it.
+- A *failing stretch* runs from a `fail` through `fail` and unknown states
+  to the next `pass`. It is *confirmed* when its fails were observed at
+  least twice and it lasted at least 30 s until that pass, or when no pass
+  follows (the end cuts it short, and the final state is what the user
+  gets). Only a confirmed stretch breaks a passing streak (`n_breaks` counts
+  those after the first pass): one half-finished edit or one flaky run must
+  not undo a fix.
+- `fixed_sec`: the first `pass` from which the bug keeps passing, with no
+  confirmed break, for at least 120 s or to the end: a pass that a confirmed
+  failure ends sooner is an intermediate state, not a fix. `stable_sec`, the
+  strict variant: the start of the passing streak that lasts to the end
+  (empty when the bug ends failing). `first_pass_sec`: the first `pass`.
+  `visible_ok_at_fix`: whether the visible suite passed in the `fixed_sec`
+  state, kept alongside.
+- A pass before the bug was sent (the agent can fix a bug it was not told
+  about) is flagged (`pass_before_sent`) and the times are clipped to 0;
+  `state0_pass` flags a bug passing in snapshot 0, the untouched workspace,
+  which should fail every bug.
+- `timing_ok`: the trial has `fix_states.json` and its final state
+  reproduces the verifier (`final_matches_verifier`); otherwise every time
+  is empty and the trial is left out of the timing metrics. `fixed_end` is
+  the end-of-session verdict, by the old rule (resolved, visible suite
+  passing).
+
+**Estimates** (`estimates.csv`, per (sweep, condition) `eta.csv`).
+
+- *Sources.* Every reply to a bug's id with `eta_min` and without `done:
+  true` (`via` `structured`). Estimates written only in text are read by a
+  regex, no LLM: a bug reply without `eta_min` (`text_bug`; `require_eta`
+  leaves none in the levels sweep), and a reply to a status check's id, once
+  per bug it gives a time for (`text_status`: `#4 ~8 min; #5 ~6 min`,
+  `#8 and #18 ... ETA ~10 min each`). A time counts when it is approximate
+  (`~10 min`, `about 10 min`), follows an ETA word in its sentence, or is
+  `in 10 min` after a future (`should be done in 6 min`); within a sentence it
+  goes to the ids named since the previous time, and a done word (`#1 is
+  fixed`) drops the ids before it. Every table reports the vias apart.
+- *Source* (`source`). `arrival`: the bug's first estimate, sent before the
+  next status check after the bug; L0 has no checks, so there the window ends
+  where L1's next check would be sent (at 6:00, 14:00 or 22:00, by the same
+  rule), and L0 and L1 arrival estimates share one window. `check`: sent
+  within 120 s after a check that lists the bug. Otherwise `update`.
+- *Scoring.* An estimate of m minutes sent at t predicts the fix at t + 60m,
+  with a grace of max(60 s, 25% of 60m): 1 minute is the smallest lateness
+  worth counting for estimates given in whole minutes, and 25% is about the
+  spacing of the values agents give (88 of the requests run's 106 estimates
+  were 5, 6, 8, 10, 12, 15 or 20 minutes, 20-33% apart). The strict version
+  and the share fixed within +1, +2 and +5 minutes show the grace's effect.
+- *Eligibility and censoring.* An estimate is `eligible` iff its prediction
+  plus grace falls within the session (start + `wall_clock_sec`): censoring
+  depends on the prediction only, never on the outcome. Ineligible estimates
+  are reported only as the share whose bug was fixed by the deadline. An
+  eligible estimate sent before the bug's `fixed_sec` is `scored`: `on_time`
+  iff fixed by prediction + grace, `err_min` = (fix - prediction) / 60, and
+  `log2_err` = log2(actual / predicted horizon) with the requests analysis's
+  30 s floor on both. A scored estimate whose bug is never fixed is late
+  whatever the exit: `log2_err` +inf and `err_min` a lower bound (to the
+  later of the episode's end and the deadline), so medians stay valid.
+- *Stale.* An estimate sent at or after the bug's fix is `stale`, not
+  scored, and reported as the stale rate.
+- *Against the done claim* (the bug's first reply with `done: true`, what the
+  user is told): the same rules for eligible estimates sent before the claim,
+  a bug never said done being late.
+- *Weights.* Each bug counts once: its scored estimates share a weight of 1
+  (`weight`, `claim_weight`), recomputed within each subset a table reports.
+
+**Status pairs** (`status_pairs.csv`). One row per status check and bug it
+lists that was not said done before the check (the user's view: a reply to
+the bug with `done: true`, or a done written in a reply to a check's id,
+`#1 is fixed and verified`). Its answer is the first estimate (any via) or
+done for the bug after the check was sent; `answered` iff within 120 s. The
+window is fixed rather than "before the next message" because in L2 and L3 a
+question follows each check after 40 s. `right`: a done for a bug fixed by
+then, an estimate for one not fixed (by `fixed_sec`); `done_owed`: fixed by
+the check and never said done in the session.
+
+**Question timing** (columns of `messages.csv`'s question rows, from
+`answers.json` version 2). `correct_sec`: until the first reply judged
+correct; `correct_known`: every reply up to it (every reply, when none is
+correct) has a verdict (an unread verdict, or a reply not graded yet, leaves
+it unknown). It splits into `delivery_sec` (waiting for the agent's step to
+end) and `response_sec` (from delivery). Alongside: the first reply's verdict (`first_verdict`,
+`first_reply_correct`: stricter, since the prompt says the first reply is
+the answer), `wrong_before_correct`, and the replies elsewhere, never
+counted. `levels.csv` reports the share of all questions asked with
+`correct_sec` within 30, 60, 120 and 300 s; a question never answered
+correctly, also one still open when the session ended idle, counts as never.
+Every question is sent at least 440 s before the deadline (the last at
+22:40), so no threshold needs censoring; the shares are NaN while any
+question's `correct_known` is false. An older `answers.json` judged only the
+first reply: a correct one gives `correct_sec`, and an incorrect one with
+later replies leaves the question unknown.
+
+**Urgency** (`urgency.csv`). One row per urgent bug of a valid L3 session
+and twin level: L2, the comparison, and L0, descriptive. Twins are the same
+subtask sent within 1 s in the valid sessions of the same sweep, task and
+setting; a session without fix times (`timing_ok` false) pairs with nothing.
+Against its twins:
+
+- *Order*, the direct answer to "does the urgent bug go first": per urgent
+  and twin session pair, over the earlier bugs failing at the urgent bug's
+  send time in both (their last known status then; `unknown` counts as
+  failing unless the bug's `fixed_sec` fix came by then), 1 if the urgent
+  bug was fixed before the earlier bug, 0 after, 0.5 if neither was fixed or
+  both at once. An earlier
+  bug counts by its first fix after the send time, not by a fix that broke
+  before then. The mean over those bugs, then over pairs; `twin_order` is the
+  same score in the twin.
+- *Time to fix*: fixed within 240 s (before the next bug) and 480 s, by
+  `fixed_sec`. "Fixed by the end" alone would miss the effect: click's bug 3
+  was fixed in 4 of the 5 requests-run sessions that sent it at 12:00.
+- *Win rate* over the urgent x twin session pairs: 1 if the urgent bug was
+  fixed more than 30 s sooner or only it was fixed, 0 for the reverse, 0.5
+  within 30 s or if neither was; `n_decisive` counts the pairs that are not
+  0.5.
+- *Start*: the earlier of a dispatch naming the bug's files or hidden tests
+  (`dispatch_sec`, as in `hints.csv`) and the first snapshot after it was
+  sent whose diff of the bug's target files differs from the last snapshot
+  before then (`change_sec`, at that snapshot's end). Not the first read: in the
+  requests run, both the urgent bug and its control twin had their file read
+  within seconds.
+- *Preemption*: of the tool calls of any agent starting in the 240 s after
+  delivery that touch the bug's files or an earlier bug's (as `touch_sec`
+  and `edit_sec` match them), the share touching the bug's (a call touching
+  both counts as the bug's), and the same for edits. This measures the single
+  agent's and the hinted orchestrator's own work: the manager has no edit
+  tools and cannot stop a subagent, so it can only dispatch sooner.
+- *Cost*: the session's other bugs' fixed share and censored median
+  `fixed_sec` (a bug never fixed counts as infinitely late), against the same
+  bugs in the twins.
+
+**Main numbers** (`levels.csv`, chosen before the run). One row per (sweep,
+setting, level) of valid sessions:
+
+- ETA, `eta_on_time`: the on-time share of the structured estimates scored
+  against the fix times, each bug weighted once (per session, the sum of its
+  bugs' on-time shares and the number of bugs, then a ratio of sums); L1 is
+  the headline. With the text estimates too, `eta_on_time_any_via`; arrival
+  estimates only (L0 against L1), `eta_on_time_arrival`.
+- Questions, `q_correct_60s`: the share of all questions asked answered
+  correctly within 60 s; L2 is the headline.
+- Urgency, `urgent_win_rate` (L3 rows): the win rate over every urgent x L2
+  twin session pair of the sweep and setting.
+
+Each has a 95% percentile interval from a cluster bootstrap
+(`stats.cluster_bootstrap`, 2000 resamples, seed 0) that resamples whole
+sessions within each task, as many as the task has: answers and bugs cluster
+by session, so resampling rows would understate the noise, and stratifying
+keeps every resample's mix of click and echo. For the win rate, L3 and L2
+sessions are resampled within each level and task. A resample whose
+statistic is NaN is left out; with no stratum of two sessions there is no
+interval. Everything else in the row is descriptive (bugs fixed by
+`fixed_sec` and at the end, bugs estimated, status pairs answered and
+right, the other question thresholds, order and the shares fixed within
+240/480 s).
+
+**(sweep, condition).** Several jobs dirs are one data set, but the same
+condition run in two sweeps (the in-sweep L0 and the earlier baseline run)
+must never pool: `conditions.csv`, `interactivity.csv`,
+`hint_positions.csv`, `requests.csv` and `eta.csv` group by (sweep,
+condition) and start with a `sweep` column, `levels.csv` groups by (sweep,
+setting, level), and twins come from the same sweep. The printout shows the
+sweep when there are several; the delegation gate names a condition once.
+
+**Departures from the plan.** The analysis follows PR #13's plan comment
+except:
+
+- L0 is the baseline spec plus snapshots and `require_eta`, not the spec
+  unchanged, so the earlier baseline run is a looser reference, not a
+  replicate of L0 (above).
+- `grade-answers` stops at a question's first correct reply; the plan judged
+  every reply. No planned number reads the later ones.
+- `start_sec` is measured from when the bug was sent, like every other time
+  in the tables; the plan measured it from delivery (`delivery_sec` is the
+  difference).
+- The first-reply share is reported at 60 s only (`q_first_correct_60s`),
+  and there is no step-curve figure yet: `levels.csv` has the four points of
+  `correct_sec`.
+- The plan asked a failure to repeat on a rerun and last 2 snapshots and
+  30 s. Only the first failing state after a pass is rerun (a later fail of
+  the same stretch is not); the 2 are observations (a state plus the
+  unchanged snapshots after it); and a stretch that reaches the end of the
+  session is confirmed however short, since the final state is what the
+  user gets.
+- A pass in snapshot 0 is flagged (`state0_pass`), not a reason to leave the
+  trial out.
 
 ### Provider fail-fast (`records.py`, `orchestrator.py`)
 
@@ -620,8 +1080,11 @@ the verifier.
 ### Records (`records.py`)
 
 One JSONL file per kind (calls, tools, steps, spawns, dispatches,
-arbitrations, inbox, transcript) plus `episode.json`, written as events happen by
+arbitrations, inbox, replies, snapshots, transcript) plus `episode.json`, written as events happen by
 a thread-safe recorder. Failed and abandoned LLM calls are recorded too.
+Tool listeners see each `tools` record right after it is written, in the
+agent's thread; what a listener raises is swallowed, so it never changes the
+tool call (the workspace snapshots are triggered this way).
 `finalize` computes every episode total from the records written, so the
 totals equal the JSONL sums, and closes the episode: records that arrive
 later (a thread still unwinding after a cancel) are dropped. Fields:
@@ -845,8 +1308,20 @@ bug's first estimate, done claim and grader verdict, and for the urgent bug
 the order of done claims (definitions under *Interactive sessions*,
 *Requests*). There is no figure for it yet.
 
+**Levels.** `analysis/fixes.py`, `estimates.py` and `levels.py` add the
+replayed fix times (`fixes.csv`), every estimate scored against them and
+against done claims (`estimates.csv`, per (sweep, condition) `eta.csv`),
+the status-check pairs (`status_pairs.csv`), the question timing (columns of
+`messages.csv`), the urgent bugs against their twins (`urgency.csv`) and
+the main numbers per (sweep, setting, level) (`levels.csv`). Without what a
+table reads (replies, `fix_states.json`, levels conditions) its times are
+empty or it has no rows. Definitions under *Interactive sessions*,
+*Requests*, *Levels analysis*.
+
 **Statistics.** Resolve rates with Wilson 95% intervals; mean cost, wall
-clock and tokens with a seeded percentile bootstrap (2000 resamples).
+clock and tokens with a seeded percentile bootstrap (2000 resamples); the
+levels' main numbers with a seeded cluster bootstrap that resamples whole
+sessions within each task (`stats.cluster_bootstrap`).
 
 **Figures.** Nine PNGs (the ninth for interactive sessions) with captions in `index.md` (docs/DATA.md). Colour
 is the strategy (parallel blue, sequential orange, arbiter aqua; single agent
