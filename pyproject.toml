@@ -27,8 +27,11 @@ dependencies = [
 # Python >= 3.12 and brings ~90 transitive packages, while aggregation and
 # plotting work on any Python >= 3.11. scripts/setup.sh installs every extra.
 harbor = ["harbor==0.24.0; python_version >= '3.12'"]
+# Run the task containers on Modal instead of the local Docker (`harbor.environment: modal` in a
+# sweep spec); needs a Modal token (`modal token new`, ~/.modal.toml).
+modal = ["harbor[modal]==0.24.0; python_version >= '3.12'"]
 dev = ["pytest>=8.0"]
-all = ["subagents-bench[harbor,dev]"]
+all = ["subagents-bench[harbor,modal,dev]"]
 
 [project.scripts]
 subagents-bench = "subagents_bench.cli:main"

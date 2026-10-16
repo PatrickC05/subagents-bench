@@ -861,3 +861,35 @@ def test_a_job_threads_error_stops_the_other_harbor_and_the_queue(fake, spec4, m
     m = manifest(spec4)
     assert [e["event"] for e in m if e.get("job") in queued] == [] and m[-1]["event"] == "error"
     assert json.loads((spec4.jobs_dir / "sweep.json").read_text())["status"] == "error"
+
+
+def test_harbor_environment_modal(monkeypatch):
+    """`harbor.environment` picks harbor's -e (docker by default); on Modal the sweep sets Modal's
+    image builder (an explicit setting wins) and preflight checks for a Modal token, not Docker."""
+    base = sweep.load_spec(REPO / "configs/sweeps/swe_interactive_baseline.yaml")
+    m = sweep.load_spec(REPO / "configs/sweeps/swe_interactive_baseline_modal.yaml")
+    smoke = sweep.load_spec(REPO / "configs/sweeps/swe_interactive_baseline_modal_smoke.yaml")
+    assert (base.environment, m.environment, smoke.environment) == ("docker", "modal", "modal")
+    cmd = sweep.harbor_cmd(m, "j")
+    assert cmd[cmd.index("-e") + 1] == "modal" and sweep.harbor_cmd(base, "j")[cmd.index("-e") + 1] == "docker"
+    for c, cfg in m.configs.items():  # the same conditions as the Docker baseline
+        assert cfg.to_dict() == base.configs[c].to_dict()
+    monkeypatch.delenv("MODAL_IMAGE_BUILDER_VERSION", raising=False)
+    assert sweep.harbor_env(m, X="1")["MODAL_IMAGE_BUILDER_VERSION"] == sweep.MODAL_IMAGE_BUILDER
+    assert "MODAL_IMAGE_BUILDER_VERSION" not in sweep.harbor_env(base)
+    monkeypatch.setenv("MODAL_IMAGE_BUILDER_VERSION", "2024.10")
+    assert sweep.harbor_env(m)["MODAL_IMAGE_BUILDER_VERSION"] == "2024.10"
+    i = smoke.configs["single_baseline"].interactive
+    assert (smoke.rounds, i.wall_clock_sec, i.interval_sec) == (1, 120, 30)
+    assert 120 + sweep.SESSION_GRACE_SEC <= 43200 * smoke.timeout_multiplier
+    if smoke.dataset_path.is_dir():
+        assert sweep.check_interactive(smoke) == []
+
+
+def test_harbor_environment_is_checked(tmp_path, monkeypatch):
+    spec = (REPO / "configs/sweeps/swe_interactive_baseline.yaml").read_text().replace(
+        "  n_concurrent: 3\n", "  n_concurrent: 3\n  environment: kubernetes\n")
+    (tmp_path / "bad.yaml").write_text(spec)
+    monkeypatch.chdir(REPO)
+    with pytest.raises(ConfigError, match="harbor.environment"):
+        sweep.load_spec(tmp_path / "bad.yaml")
