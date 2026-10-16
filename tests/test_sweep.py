@@ -863,6 +863,50 @@ def test_a_job_threads_error_stops_the_other_harbor_and_the_queue(fake, spec4, m
     assert json.loads((spec4.jobs_dir / "sweep.json").read_text())["status"] == "error"
 
 
+LEVELS = {"baseline": {}, "eta": {"status_every": 2}, "questions": {"status_every": 2, "questions_per_interval": 2},
+          "urgent": {"status_every": 2, "questions_per_interval": 2, "urgent_every": 3}}
+SETTINGS = ("single", "manager_background", "background_hinted")
+
+
+def test_swe_interactive_levels_spec(tmp_path):
+    """Levels: the baseline on Modal plus the request kinds added one at a time. Every condition is
+    its setting's baseline condition with snapshots and require_eta on and only its level's request
+    settings changed, and every condition, level and round sends the same bugs at the same times."""
+    from subagents_bench.hints import Question, schedule, write_questions
+    s = sweep.load_spec(REPO / "configs/sweeps/swe_interactive_levels.yaml")
+    base = sweep.load_spec(REPO / "configs/sweeps/swe_interactive_baseline_modal.yaml")
+    assert (s.environment, s.tasks, s.rounds) == ("modal", base.tasks, 4)
+    assert (s.dataset_path, s.platform, s.extra_args, s.n_concurrent, s.timeout_multiplier) == (
+        base.dataset_path, base.platform, base.extra_args, base.n_concurrent, base.timeout_multiplier)
+    assert set(s.configs) == {f"{st}_{lv}" for st in SETTINGS for lv in LEVELS}
+    for st in SETTINGS:
+        twin = base.configs[f"{st}_baseline"].to_dict()
+        for lv, knobs in LEVELS.items():
+            d = s.configs[f"{st}_{lv}"].to_dict()
+            assert d["interactive"].pop("snapshots") is True and d["interactive"].pop("require_eta") is True
+            twin["interactive"].pop("snapshots", None), twin["interactive"].pop("require_eta", None)
+            for k in ("questions_per_interval", "status_every", "urgent_every"):
+                assert d["interactive"].pop(k) == knobs.get(k, 0), (st, lv, k)
+                twin["interactive"].pop(k, None)
+            assert {**d, "name": twin["name"]} == twin, (st, lv)
+    rounds12, l23 = sweep.plan(s, rounds=[1, 2]), [c for c in s.configs if c.endswith(("_questions", "_urgent"))]
+    assert len(rounds12) == 24 and len(sweep.plan(s, only=l23, rounds=[3, 4])) == 12
+    if s.dataset_path.is_dir():
+        for t in s.tasks:
+            write_questions(tmp_path, t, "m", [Question(f"q{i}", "x.py", f"Q{i}?", "a") for i in range(12)])
+            sends = {tuple((h.subtask.id, h.t_offset) for h in schedule(cfg.interactive, s.dataset_path / t, t, tmp_path, r)
+                           if h.kind == "bug")
+                     for cfg in s.configs.values() for r in (1, 2, 3, 4)}
+            assert len(sends) == 1 and [o for _, o in next(iter(sends))] == [k * 240 for k in range(6)], t
+            urgent = [h.index for h in schedule(s.configs["single_urgent"].interactive, s.dataset_path / t, t, tmp_path, 1)
+                      if h.urgent]
+            assert urgent == [3], t
+    smoke = sweep.load_spec(REPO / "configs/sweeps/swe_interactive_levels_smoke.yaml")
+    i = smoke.configs["single_urgent"].interactive
+    assert (smoke.environment, smoke.rounds, len(smoke.configs), i.wall_clock_sec, i.interval_sec) == ("modal", 1, 12, 120, 30)
+    assert 120 + sweep.SESSION_GRACE_SEC <= 43200 * smoke.timeout_multiplier
+
+
 def test_harbor_environment_modal(monkeypatch):
     """`harbor.environment` picks harbor's -e (docker by default); on Modal the sweep sets Modal's
     image builder (an explicit setting wins) and preflight checks for a Modal token, not Docker."""
