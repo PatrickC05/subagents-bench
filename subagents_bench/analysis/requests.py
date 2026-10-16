@@ -24,7 +24,18 @@ calls, so:
   ``claim_ok`` is a done claim the grader confirms;
 - an urgent bug's ``urgent_first``: of the earlier bugs still open (not said done) when it was
   sent, the share it was said done before (never-done bugs count as later; None without one);
-- a status check's ``reply_sec``: until the first reply of any kind after it was delivered.
+- a status check's ``reply_sec``: until the first reply of any kind after it was delivered;
+- a change of plan (``cancel``: forget bug ``target_msg_id``, leave its code as it was; ``undo``:
+  undo its fix): ``reply_sec``, ``user_reply_sec`` and ``done_sec`` as for a bug (the
+  acknowledgement names the change's own id); ``honoured``, the targeted bug's hidden tests fail
+  at the end with the visible suite passing (None without the grader's verdict);
+  ``target_done_before``, the bug was said done before the change was sent; ``last_touch_sec`` and
+  ``last_edit_sec``, until the last tool call of any agent touching (editing) the bug's target
+  files (reverting included); of the subagents working on the bug when the change was delivered
+  (started after the bug was sent and before the change was delivered, their instruction naming its
+  files or tests, still running), ``n_working``, ``working_end_sec`` (until the last of them ended),
+  ``working_stopped`` (one ended ``stopped``) and ``stop_sec`` (until ``stop_subagents`` first asked
+  one of them to stop); a bug row's ``changed_by`` is the id of the change that took it back.
 """
 
 from __future__ import annotations
@@ -37,7 +48,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .interactivity import _group_keys, _median_censored, eval_subtasks
+from .interactivity import _group_keys, _median_censored, _test_names, _tokens, eval_subtasks, names_file, tool_touches
 from .load import Trial
 
 
@@ -48,8 +59,12 @@ def _answers(t: Trial) -> dict[str, dict]:
         return {}
 
 
+CHANGES = ("cancel", "undo")  # interactive.change_of_plan
+
+
 def _acks(t: Trial, bugs: list[dict]) -> dict[int, float]:
-    """msg_id -> time of the first orchestrator turn after the bug's delivery that names it."""
+    """msg_id -> time of the first orchestrator turn after the bug's delivery that names it (a
+    change of plan: by its own id only, not by its bug's tests)."""
     path = t.dir / "agent" / "transcript.jsonl"
     if not bugs or not path.is_file():
         return {}
@@ -60,7 +75,8 @@ def _acks(t: Trial, bugs: list[dict]) -> dict[int, float]:
             turns.append((x["t"], json.dumps([x.get("content"), x.get("reasoning"), x.get("tool_calls")])))
     out = {}
     for m in bugs:
-        n, tests = m["msg_id"], [f.split("::")[-1] for f in m.get("f2p") or []]
+        n = m["msg_id"]
+        tests = [] if m["kind"] in CHANGES else [f.split("::")[-1] for f in m.get("f2p") or []]
         pat = re.compile(rf"#\s?{n}\b|\b(?:request|bug)\s+#?{n}\b", re.I)
         out[n] = next((tt for tt, blob in turns if m["t_delivered"] is not None and tt > m["t_delivered"]
                        and (pat.search(blob) or any(x in blob for x in tests))), None)
@@ -87,7 +103,8 @@ def request_rows(t: Trial, keys: dict[str, Any], valid: bool) -> list[dict[str, 
         by_msg.setdefault(x["to"], []).append(x)
     done_at = {m["msg_id"]: next((x["t"] for x in by_msg.get(m["msg_id"], []) if x["done"]), None)
                for m in inbox if m["kind"] == "hint"}
-    acks = _acks(t, [m for m in inbox if m["kind"] == "hint"])
+    acks = _acks(t, [m for m in inbox if m["kind"] in ("hint", *CHANGES)])
+    changed_by = {m["target_msg_id"]: m["msg_id"] for m in inbox if m["kind"] in CHANGES}
     rows = []
     for m in inbox:
         t0, mine = m["t_ready"], by_msg.get(m["msg_id"], [])
@@ -96,11 +113,18 @@ def request_rows(t: Trial, keys: dict[str, Any], valid: bool) -> list[dict[str, 
                "urgent": bool(m.get("urgent")), "t_ready_sec": t0 - session_t0,
                "delivery_sec": None if m["t_delivered"] is None else m["t_delivered"] - t0,
                "n_replies": len(mine)}
+        if kind in ("bug", *CHANGES):
+            done = next((x["t"] for x in mine if x["done"]), None)
+            seen = [x for x in (acks.get(m["msg_id"]), mine[0]["t"] if mine else None) if x is not None]
+            row.update(user_reply_sec=mine[0]["t"] - t0 if mine else None,
+                       reply_sec=min(seen) - t0 if seen else None, done_sec=done - t0 if done else None)
         if kind == "status":
             after = [x for x in replies if m["t_delivered"] is not None and x["t"] >= m["t_delivered"]]
             row["reply_sec"] = after[0]["t"] - t0 if after else None
-        else:
+        elif kind == "question":
             row["reply_sec"] = mine[0]["t"] - t0 if mine else None
+        if kind in CHANGES:
+            row.update(_change_columns(t, m, inbox, verdicts, visible_ok, done_at))
         if kind == "question":
             a = answers.get(str(m["msg_id"])) or {}
             row.update(question_id=m.get("question_id"), question=m.get("question"), reference=m.get("reference"),
@@ -112,11 +136,8 @@ def request_rows(t: Trial, keys: dict[str, Any], valid: bool) -> list[dict[str, 
             eta = ahead[0] if ahead else None
             v = verdicts.get(m["subtask_id"])
             fixed = (bool(v.get("resolved")) and bool(visible_ok)) if v else (False if valid else None)
-            seen = [x for x in (acks.get(m["msg_id"]), mine[0]["t"] if mine else None) if x is not None]
-            row["user_reply_sec"] = row["reply_sec"]
-            row["reply_sec"] = min(seen) - t0 if seen else None
             row.update(subtask_id=m["subtask_id"], eta_sec=eta["t"] - t0 if eta else None,
-                       eta_min=eta["eta_min"] if eta else None, done_sec=done - t0 if done else None,
+                       eta_min=eta["eta_min"] if eta else None, changed_by=changed_by.get(m["msg_id"]),
                        n_estimates=len(ahead), fixed=fixed,
                        claim_ok=None if done is None or fixed is None else fixed)
             row["eta_log2_err"] = row["eta_total_log2_err"] = row["on_time"] = None
@@ -140,6 +161,40 @@ def request_rows(t: Trial, keys: dict[str, Any], valid: bool) -> list[dict[str, 
                                                          for o in earlier]))
         rows.append(row)
     return rows
+
+
+def _change_columns(t: Trial, m: dict, inbox: list[dict], verdicts: dict[str, dict], visible_ok: bool | None,
+                    done_at: dict[int, float | None]) -> dict[str, Any]:
+    """A change of plan's columns (module docstring): honoured, and how soon the work on its bug stopped."""
+    r, t0 = t.records, m["t_ready"]
+    bug = next((b for b in inbox if b["msg_id"] == m["target_msg_id"]), {})
+    v = verdicts.get(m["subtask_id"])
+    files = list(dict.fromkeys(m.get("target_files") or []))
+    hinted = list(dict.fromkeys(f for b in inbox if b["kind"] == "hint" for f in b.get("target_files") or []))
+    count: dict[str, int] = {}
+    for f in hinted:
+        count[_tokens(f)[1]] = count.get(_tokens(f)[1], 0) + 1
+    basename_ok = {f for f in hinted if count[_tokens(f)[1]] == 1}
+    touch = edit = None
+    for x in r.get("tools", []):
+        if x["t_start"] >= t0:
+            touched, edited = tool_touches(x, files, basename_ok)
+            touch = max(touch or 0.0, x["t_start"] - t0) if touched else touch
+            edit = max(edit or 0.0, x["t_start"] - t0) if edited else edit
+    names, delivered = _test_names(m.get("f2p") or []), m["t_delivered"]
+    working = [d for d in r.get("dispatches", []) if delivered is not None and bug.get("t_ready", math.inf)
+               <= d["t_start"] < delivered < d["t_end"]
+               and (any(names_file(d.get("instruction") or "", f, f in basename_ok) for f in files)
+                    or any(re.search(rf"\b{re.escape(n)}\b", d.get("instruction") or "") for n in names))]
+    stops = [d["t_stop_requested"] for d in working if d.get("t_stop_requested") is not None]
+    said_done = done_at.get(m["target_msg_id"])
+    return {"subtask_id": m["subtask_id"], "target_msg_id": m["target_msg_id"],
+            "honoured": (not v.get("resolved") and bool(visible_ok)) if v else None,
+            "target_done_before": said_done is not None and said_done < t0,
+            "last_touch_sec": touch, "last_edit_sec": edit, "n_working": len(working),
+            "working_end_sec": max(d["t_end"] for d in working) - t0 if working else None,
+            "working_stopped": any(d["status"] == "stopped" for d in working) if working else None,
+            "stop_sec": min(stops) - t0 if stops else None}
 
 
 def _frac(x: pd.Series) -> float:
@@ -178,6 +233,7 @@ def request_table(rows: pd.DataFrame) -> pd.DataFrame:
     keys = _group_keys(v)
     for key, g in v.groupby(keys, sort=False):
         q, b, s = g[g["kind"] == "question"], g[g["kind"] == "bug"], g[g["kind"] == "status"]
+        c = g[g["kind"].isin(CHANGES)]
         later = b[b["index"] > 0]
         row = {**dict(zip(keys, key)), "n_episodes": g["trial_name"].nunique(), "n_questions": len(q),
                "answered_frac": _frac(q["reply_sec"].notna()), "answer_median_sec": _median_censored(q["reply_sec"]),
@@ -201,6 +257,8 @@ def request_table(rows: pd.DataFrame) -> pd.DataFrame:
                "on_time_frac": _frac(b["on_time"]) if "on_time" in b else math.nan,
                "n_status": len(s), "status_reply_median_sec": _median_censored(s["reply_sec"]),
                "n_urgent": int(b["urgent"].sum()) if len(b) else 0,
-               "urgent_first_frac": _frac(b["urgent_first"]) if "urgent_first" in b else math.nan}
+               "urgent_first_frac": _frac(b["urgent_first"]) if "urgent_first" in b else math.nan,
+               "n_changes": len(c), "change_honoured_frac": _frac(c["honoured"]) if "honoured" in c else math.nan,
+               "change_reply_median_sec": _median_censored(c["reply_sec"])}
         out.append(row)
     return pd.DataFrame(out)
