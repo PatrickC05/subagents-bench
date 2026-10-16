@@ -1,0 +1,23 @@
+# A 2-minute smoke of swe_interactive_change.yaml on Modal: a bug every 30 s (4 bugs, 0:00 to 1:30),
+# bug 2 (#3, sent 1:00) cancelled at 1:15 and bug 0 (#1) undone at 1:35 (scaled down, with time left
+# to react before the end at 2:00); the 5 conditions on click and echo, 1 round = 5 jobs, 10 sessions.
+# It checks that the messages are delivered, stop_subagents and the `stopped` dispatch status, and
+# the change rows of messages.csv:
+#   scripts/run_experiment.sh configs/sweeps/swe_interactive_change_smoke.yaml --jobs-at-once 5
+#   scripts/analyze.sh jobs/swe_interactive_change_smoke
+extends: configs/sweeps/swe_interactive_change.yaml
+name: swe_interactive_change_smoke
+rounds: 1
+
+overrides:
+  interactive:
+    wall_clock_sec: 120
+    interval_sec: 30
+    change_of_plan:
+      - {kind: cancel, bug: 2, at_sec: 75}
+      - {kind: undo, bug: 0, at_sec: 95}
+
+harbor:
+  # x the tasks' 43200 s agent timeout = 432 s: the 120 s session, preflight's 120 s grace, and room
+  # for the subagents' shutdown and the end kill.
+  agent_timeout_multiplier: 0.01
