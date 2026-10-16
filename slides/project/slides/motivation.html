@@ -1,30 +1,40 @@
-<section id="motivation" data-transition="fade" style="background:#F7F6F1;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:56px">
+<section id="motivation" data-transition="fade" style="background:#F7F6F1;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:36px">
 <p style="font-size:28px;letter-spacing:3px;text-transform:uppercase;color:#C2551F;font-weight:600">Motivation</p>
-<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:64px;font-weight:600;line-height:1.15">One chat, many requests, not all about the same task</h2>
-<div style="display:flex;gap:24px">
-<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFFFF;border:1px solid #DCD8CE;border-radius:16px;padding:32px">
-<p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#2F6DB5">0:00 · bug</p>
-<p style="font-size:30px;line-height:1.35">“Fix the bug in <b>core.py</b>.”</p>
+<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:64px;font-weight:600;line-height:1.15">You don’t ask a collaborator one thing and then go quiet</h2>
+<div style="display:flex;align-items:center;gap:0px">
+<div style="display:flex;flex-direction:column;gap:16px"><div style="display:flex;align-items:center;gap:20px">
+<div style="width:640px;display:flex;flex-direction:column;gap:4px;background:#FFFFFF;border:2px solid #2F6DB5;border-radius:14px;padding:14px 22px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#2F6DB5">bug</p>
+<p style="font-size:28px;line-height:1.3">“Fix the failing test in core.py”</p>
 </div>
-<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFFFF;border:1px solid #DCD8CE;border-radius:16px;padding:32px">
-<p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#2F6DB5">2:00 · question</p>
-<p style="font-size:30px;line-height:1.35">“What does this function return?”</p>
+<x-shape kind="arrow-right" style="width:96px;height:32px;background:#2F6DB5"></x-shape>
 </div>
-<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFFFF;border:1px solid #DCD8CE;border-radius:16px;padding:32px">
-<p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#2F6DB5">4:00 · status</p>
-<p style="font-size:30px;line-height:1.35">“When will the first fix be done?”</p>
+<div style="display:flex;align-items:center;gap:20px">
+<div style="width:640px;display:flex;flex-direction:column;gap:4px;background:#FFFFFF;border:2px solid #2F6DB5;border-radius:14px;padding:14px 22px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#2F6DB5">question</p>
+<p style="font-size:28px;line-height:1.3">“Wait, what does parse_args return?”</p>
 </div>
-<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFFFF;border:2px solid #C2551F;border-radius:16px;padding:32px">
-<p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#C2551F">6:00 · urgent</p>
-<p style="font-size:30px;line-height:1.35">“Drop that, this test is broken.”</p>
+<x-shape kind="arrow-right" style="width:96px;height:32px;background:#2F6DB5"></x-shape>
+</div>
+<div style="display:flex;align-items:center;gap:20px">
+<div style="width:640px;display:flex;flex-direction:column;gap:4px;background:#FFFFFF;border:2px solid #2F6DB5;border-radius:14px;padding:14px 22px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#2F6DB5">status</p>
+<p style="font-size:28px;line-height:1.3">“How long until the fix is done?”</p>
+</div>
+<x-shape kind="arrow-right" style="width:96px;height:32px;background:#2F6DB5"></x-shape>
+</div>
+<div style="display:flex;align-items:center;gap:20px">
+<div style="width:640px;display:flex;flex-direction:column;gap:4px;background:#FFFFFF;border:2px solid #C2551F;border-radius:14px;padding:14px 22px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#C2551F">urgent</p>
+<p style="font-size:28px;line-height:1.3">“Drop that, prod is broken”</p>
+</div>
+<x-shape kind="arrow-right" style="width:96px;height:32px;background:#C2551F"></x-shape>
+</div></div>
+<div style="flex:1;height:420px;display:flex;flex-direction:column;justify-content:center;gap:16px;background:#14213D;border-radius:20px;padding:40px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#E8894F">Your coding agent</p>
+<p style="font-size:34px;line-height:1.35;color:#F4F2EC">Busy on the first bug. Everything else waits.</p>
 </div>
 </div>
-<div style="display:flex;flex-direction:column;gap:16px">
-<div style="display:flex;gap:8px;height:56px">
-<div style="flex:5;background:#14213D;border-radius:8px;display:flex;align-items:center;padding:0 24px"><p style="font-size:26px;color:#F4F2EC">Agent thinking and running commands on bug 1</p></div>
-<div style="flex:2;background:#D9DEE8;border-radius:8px;display:flex;align-items:center;padding:0 24px"><p style="font-size:26px;color:#14213D">New messages wait</p></div>
-</div>
-<p style="font-size:32px;line-height:1.4;color:#4A5568">A coding agent reads new messages only between its own steps. While it works, the user waits.</p>
-</div>
-<aside>Picture how people actually use coding agents. You ask for a fix, and two minutes later you ask a question about the code, then you ask when the fix will land, then something urgent comes up. These requests are related, the same repository, but they are not the same task. An agent reads a new message only between its own steps, so while it is thinking or running a command, everything else waits. That is the user experience problem we care about.</aside>
+<p style="font-size:32px;line-height:1.4;color:#4A5568">If it can only do one thing at a time and you must wait for it to finish, you aren’t collaborating with it. You are offloading work.</p>
+<aside>Here is how people actually use a coding agent. You ask it to fix a bug. You get impatient and ask a question about the code. You ask how long the fix will take. Then something urgent comes up. If the agent can only do one thing at a time and you have to wait for it to finish, you aren't collaborating with it, you're just offloading work. That is the experience we want to measure and improve.</aside>
 </section>

@@ -1,0 +1,14 @@
+<section id="prior" data-transition="fade" style="background:#F7F6F1;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:32px">
+<p style="font-size:28px;letter-spacing:3px;text-transform:uppercase;color:#C2551F;font-weight:600">Background: what subagents buy</p>
+<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:56px;font-weight:600;line-height:1.15">Subagents can add speed or accuracy, at a cost in tokens and coordination</h2>
+<table style="font-size:26px;color:#14213D;width:1664px">
+<tr><th style="width:34%">Work</th><th style="width:22%">Accuracy</th><th style="width:22%">Time</th><th style="width:22%">Cost</th></tr>
+<tr><td><b>Multi-agent research system</b> · Anthropic, 2025</td><td>+90.2% over one agent on research</td><td>Parallel subagents search at once</td><td>About 15× the tokens of a chat</td></tr>
+<tr><td><b>LLMCompiler</b> · Kim et al., ICML 2024</td><td>Up to about +9%</td><td>Up to 3.7× lower latency than ReAct</td><td>Up to 6.7× cheaper</td></tr>
+<tr><td><b>α-UMi</b> · Shen et al., EMNLP 2024</td><td>Small specialist models beat one small model</td><td>–</td><td>Several models to run</td></tr>
+<tr><td><b>Why Do Multi-Agent LLM Systems Fail?</b> · Cemri et al., NeurIPS 2025</td><td>14 failure modes, many from coordination</td><td>–</td><td>–</td></tr>
+</table>
+<p style="font-size:30px;line-height:1.4;color:#4A5568">Prior work asks whether subagents make the answer better or faster. We ask whether they keep the agent <b style="color:#14213D">available</b> while the work runs.</p>
+<p style="font-size:24px;color:#6A7280">anthropic.com/engineering/multi-agent-research-system · arXiv: 2312.04511 · 2401.07324 · 2503.13657</p>
+<aside>What do subagents buy in prior work? Anthropic's research system, a lead agent with parallel subagents, beat a single agent by about 90 percent on their research evaluation, but used about fifteen times the tokens of a chat, and they note it suits parallel work more than coding. LLMCompiler runs function calls in parallel and cuts latency up to 3.7 times. Alpha-UMi splits an agent into smaller specialists. And Cemri et al. catalogue how multi-agent systems fail, mostly in coordination. All of these ask whether subagents make the answer better or faster. We ask whether they keep the agent available.</aside>
+</section>

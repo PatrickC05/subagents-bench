@@ -1,0 +1,15 @@
+<section id="hypothesis" data-transition="fade" style="background:#EEF1F6;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:40px">
+<p style="font-size:28px;letter-spacing:3px;text-transform:uppercase;color:#C2551F;font-weight:600">Hypothesis</p>
+<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:64px;font-weight:600;line-height:1.15">Handing work to background subagents keeps the orchestrator free, and that improves interactivity</h2>
+<div style="display:flex;gap:40px">
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#FFFFFF;border:1px solid #DCD8CE;border-radius:16px;padding:40px">
+<h3 style="font-size:36px;font-weight:600">If it holds</h3>
+<ul style="font-size:30px;line-height:1.45;color:#4A5568"><li>New requests get a reply sooner</li><li>Earlier work keeps going</li><li>Estimates and priorities are handled while work runs</li></ul>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#FFFFFF;border:1px solid #DCD8CE;border-radius:16px;padding:40px">
+<h3 style="font-size:36px;font-weight:600">What could break it</h3>
+<ul style="font-size:30px;line-height:1.45;color:#4A5568"><li>The orchestrator’s own thinking is the bottleneck</li><li>Coordinating subagents adds overhead</li><li>Delegated work is done worse</li></ul>
+</div>
+</div>
+<aside>So our hypothesis: if the orchestrator hands work to subagents that run in the background, it stays free to talk to the user, and interactivity improves. If that holds, requests get replies sooner, earlier work keeps going, and the agent can give estimates and reprioritize while work runs. It could fail if the orchestrator's own thinking is the bottleneck, if coordinating subagents costs more than it saves, or if delegated work is done worse.</aside>
+</section>

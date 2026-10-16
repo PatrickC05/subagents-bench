@@ -1,23 +1,15 @@
-<section id="takeaways" data-transition="fade" style="background:#14213D;color:#F4F2EC;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:48px">
-<p style="font-size:28px;letter-spacing:3px;text-transform:uppercase;color:#E8894F;font-weight:600">Takeaways and next steps</p>
+<section id="takeaways" data-transition="fade" style="background:#14213D;color:#F4F2EC;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:40px">
+<p style="font-size:28px;letter-spacing:3px;text-transform:uppercase;color:#E8894F;font-weight:600">Status and plan</p>
 <div style="display:flex;gap:40px">
 <div style="flex:1;display:flex;flex-direction:column;gap:20px">
-<h3 style="font-family:'Source Serif 4', Georgia, serif;font-size:44px;font-weight:600;line-height:1.2;color:#F4F2EC">What we learned</h3>
-<ul style="font-size:30px;line-height:1.45;color:#C9D2E3">
-<li>Small subagents didn’t add accuracy, and on bug fixing alone doing it yourself is faster and cheaper</li>
-<li>The wait is the big model’s thinking, not its tools</li>
-<li>With mixed requests, subagents keep the agent available: 81% vs 56% of questions answered, about 5× faster</li>
-</ul>
+<h3 style="font-family:'Source Serif 4', Georgia, serif;font-size:44px;font-weight:600;line-height:1.2;color:#F4F2EC">So far (pilots)</h3>
+<ul style="font-size:30px;line-height:1.45;color:#C9D2E3"><li>Bugs only: doing the work yourself was fastest and cheapest</li><li>The wait came from the model’s thinking, not its tools</li><li>With questions added, subagent settings answered 81% vs 56%, about 5× faster</li></ul>
 </div>
 <div style="flex:1;display:flex;flex-direction:column;gap:20px">
 <h3 style="font-family:'Source Serif 4', Georgia, serif;font-size:44px;font-weight:600;line-height:1.2;color:#F4F2EC">Next</h3>
-<ul style="font-size:30px;line-height:1.45;color:#C9D2E3">
-<li>Accurate timing: only 21–38% of bugs got an estimate</li>
-<li>Steering and priorities: urgent bugs, changed plans</li>
-<li>More rounds; workloads with slow commands; a faster orchestrator</li>
-</ul>
+<ul style="font-size:30px;line-height:1.45;color:#C9D2E3"><li>Running now: scenario 1 × three settings, same model everywhere</li><li>Then scenarios 2–4: estimates, questions, urgency</li><li>Grading: estimate error, answer correctness, urgency</li></ul>
 </div>
 </div>
-<p style="font-size:26px;line-height:1.4;color:#9AA7BF">Caveats: 4–12 sessions per condition; Sail latency varies; amd64 emulation on one Mac; manager subagents broke passing tests in 5 of 16 bugs-only sessions</p>
-<aside>To sum up. Small subagents didn’t buy accuracy, and when the user only sends bugs, doing the work yourself is faster and cheaper, because the waiting comes from the big model’s thinking. But when the user also asks questions and checks status, background subagents keep the agent available: far more questions answered, about five times faster, at the same fix rate. Next we want to measure timing, since agents rarely give estimates and miss them, and steering, plus more rounds and harder workloads. The caveats are small samples, provider latency, and emulation. Thanks.</aside>
+<p style="font-size:26px;line-height:1.4;color:#9AA7BF">Pilots used smaller subagent models and few sessions per condition; details in the appendix</p>
+<aside>Where we are. Our pilots, with smaller subagent models, found that with bugs only, doing the work yourself was fastest and cheapest, because the waiting came from the model's thinking. With questions added, the subagent settings answered far more questions, about five times faster. Next: the baseline is running now with the same model everywhere, then scenarios two to four, and the grading for estimates, answers and urgency. Thanks.</aside>
 </section>

@@ -1,14 +1,17 @@
 <section id="related" data-transition="fade" style="background:#F7F6F1;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:28px">
 <p style="font-size:28px;letter-spacing:3px;text-transform:uppercase;color:#C2551F;font-weight:600">Related work</p>
-<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:56px;font-weight:600;line-height:1.15">Timing, concurrency and small helpers</h2>
-<table style="font-size:24px;color:#14213D;width:1664px">
-<tr><th style="width:30%">Paper</th><th style="width:44%">What it shows</th><th style="width:26%">How we differ</th></tr>
-<tr><td><b>Gaia2</b> / ARE · Froger et al., ICLR 2026</td><td>Environments change on their own, with time limits; GPT-5 (high) leads at 42% but fails time-sensitive tasks</td><td>Coding agent; the user’s own requests</td></tr>
-<tr><td><b>AsyncTool</b> · Zhang et al., 2026</td><td>Several tasks at once with slow tools; delayed feedback hurts, better task switching helps</td><td>Requests not known in advance</td></tr>
-<tr><td><b>Asynchronous LLM Function Calling</b> (AsyncLM) · Gim et al., 2024</td><td>Non-blocking calls with interrupts cut task latency 1.6–5.4× on BFCL</td><td>Delegation to subagents, no fine-tuning</td></tr>
-<tr><td><b>τ-bench</b> · Yao et al., 2024</td><td>Agents talk to a simulated user while using tools and following policy</td><td>Several requests overlap in time</td></tr>
-<tr><td><b>Small LLMs Are Weak Tool Learners</b> (α-UMi) · Shen et al., EMNLP 2024</td><td>Splitting one agent into planner, caller and summarizer models beats a single small model</td><td>A large orchestrator, small workers</td></tr>
+<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:64px;font-weight:600;line-height:1.15">Agent evaluation is moving to timed, realistic settings</h2>
+<table style="font-size:26px;color:#14213D;width:1664px">
+<tr><th style="width:34%">Paper</th><th style="width:66%">What it adds to evaluation</th></tr>
+<tr><td><b>Gaia2</b> / ARE · Froger et al., ICLR 2026</td><td>Environments change on their own, under time limits; GPT-5 (high) leads at 42% but fails time-sensitive tasks</td></tr>
+<tr><td><b>AsyncTool</b> · Zhang et al., 2026</td><td>Several tasks at once with slow tools; delayed feedback hurts agents</td></tr>
+<tr><td><b>Asynchronous LLM Function Calling</b> · Gim et al., 2024</td><td>Tool calls that don’t block; interrupts cut task latency 1.6–5.4×</td></tr>
+<tr><td><b>τ-bench</b> · Yao et al., 2024</td><td>A simulated user in the loop while the agent uses tools</td></tr>
 </table>
-<p style="font-size:24px;color:#6A7280">arXiv: 2602.11964 · 2605.27995 · 2412.07017 · 2406.12045 · 2401.07324</p>
-<aside>A quick map of related work. Gaia2, from Meta at ICLR this year, is the closest: environments that keep changing with time limits, and even the best model fails the time-sensitive tasks. AsyncTool runs several tasks at once with slow tools and finds delayed feedback hurts agents. AsyncLM makes function calls non-blocking with interrupts and cuts latency up to five times. Tau-bench puts a simulated user in the loop. And the alpha-UMi paper splits an agent into several smaller models. We combine these threads: a coding agent, a user whose requests overlap in time, and a large orchestrator that can hand work to small subagents.</aside>
+<div style="display:flex;flex-direction:column;gap:8px;border-left:6px solid #C2551F;padding:8px 0 8px 28px">
+<p style="font-size:30px;line-height:1.4"><b>What they keep fixed:</b> the work is set at the start: one goal per episode, or a fixed set of tasks. Changes refine that goal. We send new, unrelated requests while earlier work is still running.</p>
+<p style="font-size:30px;line-height:1.4"><b>Our view:</b> the next step is evaluating the <b>user’s experience</b>. Users are the ones who care how long everything takes.</p>
+</div>
+<p style="font-size:24px;color:#6A7280">arXiv: 2602.11964 · 2605.27995 · 2412.07017 · 2406.12045</p>
+<aside>Recent work is starting to evaluate agents in timed, more realistic settings. Gaia2 has environments that change on their own under time limits, and even GPT-5 fails the time-sensitive tasks. AsyncTool runs several tasks at once with slow tools. AsyncLM makes tool calls non-blocking. Tau-bench puts a simulated user in the loop. What they keep fixed is the work itself: each episode has one goal, or a fixed set of tasks given at the start, and changes refine that goal. We don't restrict ourselves to that; we send new, unrelated requests while earlier work is still running. Our reading is that this is heading toward evaluating the user's experience, because the user is the one who cares how long everything takes.</aside>
 </section>

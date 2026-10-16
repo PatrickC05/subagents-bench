@@ -1,0 +1,47 @@
+<section id="settings" style="background:#EEF1F6;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:24px">
+<p style="font-size:28px;letter-spacing:3px;text-transform:uppercase;color:#2F6DB5;font-weight:600">Experimental settings</p>
+<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:64px;font-weight:600;line-height:1.15">Three agent settings; same model everywhere</h2>
+<div data-build-in="fade 1" style="position:absolute;left:128px;top:330px;width:1664px;height:150px;display:flex;align-items:center;gap:24px">
+<div style="width:380px;display:flex;flex-direction:column;gap:6px">
+<p style="font-family:'Source Serif 4', Georgia, serif;font-size:38px;font-weight:600;line-height:1.15">Orchestrator alone</p>
+<p style="font-size:24px;line-height:1.3;color:#4A5568">Does all the work itself</p>
+</div>
+<div style="width:200px;height:96px;background:#FFFFFF;border:3px solid #8A97AD;border-radius:18px;display:flex;align-items:center;justify-content:center"><p style="font-size:30px;font-weight:600;color:#14213D">User</p></div>
+<x-shape kind="arrow-right" style="width:72px;height:32px;background:#8A97AD"></x-shape>
+<div style="width:220px;height:110px;background:#14213D;border:3px solid #14213D;border-radius:18px;display:flex;align-items:center;justify-content:center"><p style="font-size:30px;font-weight:600;color:#F4F2EC">Orchestrator</p></div>
+<div style="display:flex;flex-direction:column;align-items:center;gap:8px">
+<x-shape kind="arrow-right" style="width:72px;height:28px;background:#C9CFDA"></x-shape>
+<x-shape kind="arrow-left" style="width:72px;height:28px;background:#C9CFDA"></x-shape>
+</div>
+<div style="width:534px;height:96px;border:3px dashed #C9CFDA;border-radius:18px;display:flex;align-items:center;justify-content:center"><p style="font-size:28px;font-weight:600;color:#8A97AD">No subagents</p></div>
+</div>
+<div data-build-in="fade 2" style="position:absolute;left:128px;top:540px;width:1664px;height:150px;display:flex;align-items:center;gap:24px">
+<div style="width:380px;display:flex;flex-direction:column;gap:6px">
+<p style="font-family:'Source Serif 4', Georgia, serif;font-size:38px;font-weight:600;line-height:1.15">Orchestrator + subagents</p>
+<p style="font-size:24px;line-height:1.3;color:#4A5568">Works itself or delegates to background subagents: its choice</p>
+</div>
+<div style="width:200px;height:96px;background:#FFFFFF;border:3px solid #8A97AD;border-radius:18px;display:flex;align-items:center;justify-content:center"><p style="font-size:30px;font-weight:600;color:#14213D">User</p></div>
+<x-shape kind="arrow-right" style="width:72px;height:32px;background:#8A97AD"></x-shape>
+<div style="width:220px;height:110px;background:#14213D;border:3px solid #14213D;border-radius:18px;display:flex;align-items:center;justify-content:center"><p style="font-size:30px;font-weight:600;color:#F4F2EC">Orchestrator</p></div>
+<div style="display:flex;flex-direction:column;align-items:center;gap:8px">
+<x-shape kind="arrow-right" style="width:72px;height:28px;background:#2F6DB5"></x-shape>
+<x-shape kind="arrow-left" style="width:72px;height:28px;background:#2F6DB5"></x-shape>
+</div>
+<div style="display:flex;gap:12px"><div style="width:170px;height:96px;background:#FFFFFF;border:3px solid #2F6DB5;border-radius:18px;display:flex;align-items:center;justify-content:center"><p style="font-size:26px;font-weight:600;color:#14213D">Subagent</p></div><div style="width:170px;height:96px;border:3px dashed #2F6DB5;border-radius:18px;display:flex;align-items:center;justify-content:center"><p style="font-size:26px;font-weight:600;color:#6A7280">Subagent</p></div><div style="width:170px;height:96px;border:3px dashed #2F6DB5;border-radius:18px;display:flex;align-items:center;justify-content:center"><p style="font-size:26px;font-weight:600;color:#6A7280">Subagent</p></div></div>
+</div>
+<div data-build-in="fade 3" style="position:absolute;left:128px;top:750px;width:1664px;height:150px;display:flex;align-items:center;gap:24px">
+<div style="width:380px;display:flex;flex-direction:column;gap:6px">
+<p style="font-family:'Source Serif 4', Georgia, serif;font-size:38px;font-weight:600;line-height:1.15">Subagents only</p>
+<p style="font-size:24px;line-height:1.3;color:#4A5568">Can only read and reply; all work goes to background subagents</p>
+</div>
+<div style="width:200px;height:96px;background:#FFFFFF;border:3px solid #8A97AD;border-radius:18px;display:flex;align-items:center;justify-content:center"><p style="font-size:30px;font-weight:600;color:#14213D">User</p></div>
+<x-shape kind="arrow-right" style="width:72px;height:32px;background:#8A97AD"></x-shape>
+<div style="width:220px;height:110px;background:#14213D;border:3px solid #14213D;border-radius:18px;display:flex;align-items:center;justify-content:center"><p style="font-size:30px;font-weight:600;color:#F4F2EC">Orchestrator</p></div>
+<div style="display:flex;flex-direction:column;align-items:center;gap:8px">
+<x-shape kind="arrow-right" style="width:72px;height:28px;background:#C2551F"></x-shape>
+<x-shape kind="arrow-left" style="width:72px;height:28px;background:#C2551F"></x-shape>
+</div>
+<div style="display:flex;gap:12px"><div style="width:170px;height:96px;background:#FFFFFF;border:3px solid #C2551F;border-radius:18px;display:flex;align-items:center;justify-content:center"><p style="font-size:26px;font-weight:600;color:#14213D">Subagent</p></div><div style="width:170px;height:96px;background:#FFFFFF;border:3px solid #C2551F;border-radius:18px;display:flex;align-items:center;justify-content:center"><p style="font-size:26px;font-weight:600;color:#14213D">Subagent</p></div><div style="width:170px;height:96px;background:#FFFFFF;border:3px solid #C2551F;border-radius:18px;display:flex;align-items:center;justify-content:center"><p style="font-size:26px;font-weight:600;color:#14213D">Subagent</p></div></div>
+</div>
+<aside>Our three agent settings, revealed one at a time. First, the orchestrator alone: it does all the work itself. Second, an orchestrator that can work itself or hand work to subagents running in the background, its choice. Third, an orchestrator that can only read and reply, so all the work goes to background subagents. The orchestrator and the subagents are the same model, so the settings differ only in who does the work.</aside>
+</section>
