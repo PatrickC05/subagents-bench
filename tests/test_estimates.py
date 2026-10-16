@@ -9,7 +9,8 @@ import math
 import pandas as pd
 import pytest
 
-from subagents_bench.analysis.estimates import estimate_rows, estimate_table, parse_estimates, status_pair_rows
+from subagents_bench.analysis.estimates import (estimate_rows, estimate_table, parse_done, parse_estimates,
+                                                status_pair_rows)
 from subagents_bench.analysis.fixes import bug_fix_rows, fix_times
 from test_fixes import END, bug, make_trial, rep, status, timeline
 
@@ -59,9 +60,31 @@ def test_parse_estimates_on_status_replies(text, ids, want):
     ("#1 took 3 min to reproduce", {1}, {}),  # a time without an estimate cue
     ("#1 should be done in 4 min", {1}, {1: 4}),
     ("#1 ran in 4 min", {1}, {}),
+    # with more times in a sentence, a time followed by "for #" is for the ids after it
+    ("ETA ~10 min for #8, ~5 min for #2.", {2, 8}, {8: 10, 2: 5}),
+    ("~10 min for #8; ~5 min for #2.", {2, 8}, {8: 10, 2: 5}),
+    ("~10 min for bug #8 and #18, ~5 min on #2", {2, 8, 18}, {8: 10, 18: 10, 2: 5}),
+    ("#4 ~3 min, then ~10 min for #8 and #18", {4, 8, 18}, {4: 3, 8: 10, 18: 10}),
 ])
 def test_parse_estimates_rules(text, ids, want):
     assert parse_estimates(text, ids) == pytest.approx(want)
+
+
+@pytest.mark.parametrize("text,ids,want", [
+    ("Status: #1, #11, #4, #15 are fixed and verified (full suite green). #8 and #18 are still open.",
+     {1, 4, 8, 11, 15, 18}, {1, 4, 11, 15}),
+    ("Bug #11 (urgent, masked setitem): DONE — fixed and verified. Bug #4: ETA ~5 min.", {4, 11}, {11}),
+    ("Bug #11 already fixed.", {11}, {11}),
+    ("#1 is fixed and verified. #2: ETA ~5 min.", {1, 2}, {1}),
+    ("#1 is fixed, #4 ~8 min", {1, 4}, {1}),
+    ("#4 will be fixed in ~5 min", {4}, set()),  # a future
+    ("#2 is not yet fixed", {2}, set()),  # negated
+    ("#4 ~5 min, then it is done", {4}, set()),  # the time took #4
+    ("#6 is fixed", {1}, set()),  # not a bug id
+    ("", {1}, set()),
+])
+def test_parse_done(text, ids, want):
+    assert parse_done(text, ids) == want
 
 
 @pytest.mark.parametrize("text,want", [
@@ -75,6 +98,12 @@ def test_parse_estimates_rules(text, ids, want):
     ("ETA ~20 min; #1 and #4 come first.", 20),  # a reply's own bug keeps a time before other ids
     ("#1 ~5 min first, then this one ~20 min.", 20),
     ("Fixed: the parser no longer drops the unit. Full suite green (1257 passed, 18 skipped).", None),
+    # a time left over for the reply's bug: the one after an ETA word, not an earlier approximate one
+    ("Test suite takes ~2 min; ETA 10 min.", 10),
+    ("Running the full suite (~2 min), then ETA ~8 min.", 8),
+    ("Reproducing takes ~2 min. ETA ~12 min.", 12),
+    ("Test suite takes ~2 min.", 2),  # no ETA word: the first time, as before
+    ("~10 min for #8, ~5 min for #4.", 10),  # its own bug among the ids: "for #" works
 ])
 def test_parse_estimates_of_a_bug_reply(text, want):
     assert parse_estimates(text, {1, 4, 8}, default=8).get(8) == want
@@ -191,6 +220,51 @@ def test_status_pairs(tmp_path):
     assert {p["right"] for p in status_pair_rows(bare)} == {None}
     assert {p["done_owed"] for p in status_pair_rows(bare)} == {None}
     assert status_pair_rows(make_trial(tmp_path / "y", [bug(1, 0, 0, "b0")], [rep(5, 1, eta=2)])) == []
+
+
+def test_l0_arrival_ends_where_l1s_next_check_would_be(tmp_path):
+    """Without status checks (L0), a bug's arrival window ends when L1's next check after it would
+    be sent (half an interval after bugs 2, 4, 6, ...: 360, 840, 1320 s at 240 s), so L0 and L1
+    arrival estimates share one window; a check that would fall at or after the deadline is none."""
+    inbox = [bug(k + 1, k, 240 * k, f"b{k}") for k in range(6)]  # #1..#6 at 0, 240, ..., 1200 s
+    replies = [rep(300, 1, eta=5), rep(400, 2, eta=5), rep(830, 3, eta=5), rep(1084, 4, "ETA ~5 min."),
+               rep(1100, 4, eta=3), rep(1500, 6, eta=2)]
+    t = make_trial(tmp_path / "a", inbox, replies, job="lv__r1__single_baseline")
+    got = [(r["msg_id"], round(r["est_session_sec"]), r["source"]) for r in estimate_rows(t)]
+    assert got == [(1, 300, "arrival"), (2, 400, "update"), (3, 830, "arrival"), (4, 1084, "update"),
+                   (4, 1100, "update"), (6, 1500, "update")]
+    # a 1300 s session: L1 would send no check after bug 5 (1320 s is past the deadline)
+    short = make_trial(tmp_path / "b", inbox, [rep(1290, 5, eta=1)], job="lv__r1__single_baseline", wall=1300)
+    assert [r["source"] for r in estimate_rows(short)] == ["arrival"]
+    # five bugs: L1 has no check after the last one (only after bugs 2 and 4), so its window is open
+    five = make_trial(tmp_path / "c", inbox[:5], [rep(1700, 5, eta=1)], job="lv__r1__single_baseline")
+    assert [r["source"] for r in estimate_rows(five)] == ["arrival"]
+    # with checks the window ends at the session's own next check, as before
+    l1 = make_trial(tmp_path / "d", inbox[:2] + [status(7, 0, 360)], [rep(300, 1, eta=5), rep(400, 2, eta=5)])
+    assert [r["source"] for r in estimate_rows(l1)] == ["arrival", "check"]
+
+
+def test_a_done_written_in_a_status_check_reply_counts(tmp_path):
+    """A reply to a status check's id that says a bug is done answers that bug's pair (via
+    text_status) and counts as said done, from the earlier of it and the bug's done: true reply."""
+    inbox = [bug(1, 0, 0, "b0"), bug(2, 1, 240, "b1"), status(3, 0, 360), bug(4, 2, 480, "b2"), status(5, 1, 840)]
+    replies = [rep(380, 3, "#1 is fixed and verified. #2: ETA ~5 min."), rep(900, 1, "Fixed.", done=True)]
+    sts = timeline([(0, dict.fromkeys(["b0", "b1", "b2"], "fail")), (100, {"b0": "pass", "b1": "fail", "b2": "fail"}),
+                    (700, {"b0": "pass", "b1": "pass", "b2": "fail"})])
+    t = make_trial(tmp_path, inbox, replies, states_=sts, verdicts={"b0": True, "b1": True, "b2": False})
+    pairs = {(p["check_id"], p["msg_id"]): p for p in status_pair_rows(t)}
+    # #1 was said done at 380 s (in text), before check #5, although its done: true came at 900 s
+    assert list(pairs) == [(3, 1), (3, 2), (5, 2), (5, 4)]
+    p = pairs[3, 1]
+    assert (p["answered"], p["reply_sec"], p["kind"], p["via"], p["right"]) == (True, 20, "done", "text_status", True)
+    assert (p["claimed"], p["done_owed"]) == (True, False)
+    p = pairs[3, 2]
+    assert (p["answered"], p["kind"], p["via"], p["claimed"]) == (True, "eta", "text_status", False)
+    assert (pairs[5, 2]["answered"], pairs[5, 2]["done_owed"]) == (False, True)  # fixed at 700 s, never said done
+    # the estimates and their claims are unchanged: the claim there is the done: true reply
+    (e,) = [r for r in estimate_rows(t) if r["msg_id"] == 2]
+    assert (e["via"], e["eta_min"], e["source"]) == ("text_status", 5, "check")
+    assert parse_done("#1 is fixed and verified.", {1}) == {1}
 
 
 def test_estimate_table(tmp_path):
