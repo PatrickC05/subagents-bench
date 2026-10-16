@@ -201,7 +201,11 @@ on it starts, and whether the earlier ones keep going:
 
 Hints name the files the bug's reference fix changes and its hidden tests' ids
 (`interactive.hint_detail: tests`); `report` uses bug reports written once per
-subtask by `subagents-bench hints configs/sweeps/swe_interactive.yaml`. The
+subtask by `subagents-bench hints configs/sweeps/swe_interactive.yaml`, and
+`symptom` reports of the observable behaviour only, as an end user would write
+them (no file, module or test names: `configs/sweeps/swe_interactive_hard.yaml`,
+written by `subagents-bench hints` too). `interactive.bundle: n` sends n bugs per
+message as a numbered list (the agent replies per bug with `reply(..., item)`). The
 analysis adds `hints.csv` (per hint: delivery, response, dispatch, first touch
 and first edit of its files, in seconds after it was sent, and whether the
 grader counts it fixed; and whether it was not started, continued or stopped
