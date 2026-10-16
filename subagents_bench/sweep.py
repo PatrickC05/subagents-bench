@@ -6,8 +6,8 @@ to pin its Dockerfiles' ``FROM`` lines in a copy under the jobs dir) and tasks, 
 harbor settings (``n_concurrent``, ``agent_timeout_multiplier``, ``extra_args`` for every harbor
 run), sweep-wide ``overrides`` (deep-merged onto the base before the conditions, e.g. the step
 budget) and the conditions (overrides deep-merged onto that); ``extends: <spec>`` merges it over
-another spec. Relative paths resolve against the repository root (the spec's nearest ancestor
-holding a pyproject.toml). Exit codes: 0 done, 1 jobs failed or need a retry, 2 spec or config
+another spec, where a parent's condition set to null is dropped. Relative paths resolve against
+the repository root (the spec's nearest ancestor holding a pyproject.toml). Exit codes: 0 done, 1 jobs failed or need a retry, 2 spec or config
 error (or another sweep running on the jobs dir), 3 billing error, 4 provider outage, 130 interrupted.
 """
 
@@ -98,7 +98,14 @@ def _yaml(path: Path) -> dict[str, Any]:
 def _read_spec(path: Path, root: Path) -> dict[str, Any]:
     raw = _yaml(path)
     parent = raw.pop("extends", None)
-    return deep_merge(_read_spec(root / parent, root), raw) if parent else raw
+    if not parent:
+        return raw
+    base = _read_spec(root / parent, root)
+    out = deep_merge(base, raw)
+    drop = [c for c, v in (raw.get("conditions") or {}).items() if v is None and c in (base.get("conditions") or {})]
+    if drop and isinstance(out.get("conditions"), dict):  # `<parent's condition>: null` drops it
+        out["conditions"] = {c: v for c, v in out["conditions"].items() if c not in drop}
+    return out
 
 
 def load_spec(path: str | os.PathLike) -> Spec:
