@@ -110,7 +110,12 @@ running jobs for unfinished ones and move them aside, so while a sweep (or
 preflight's oracle job) holds `jobs/<sweep>/.sweep.lock`, another exits 2 at
 once, before it writes anything: `another sweep is running on jobs/<sweep>
 (pid N: <its command>)`. To add jobs, let the running sweep end (or stop it)
-and start one sweep with every job, using `--job` for the odd ones.
+and start one sweep with every job, using `--job` for the odd ones. A sweep
+started by code from before `.sweep.lock` holds no lock, so nothing can tell
+it is running: a new sweep is not refused and moves its running jobs aside.
+Let such a sweep end first (`pgrep -fl 'subagents-bench sweep'` lists the
+sweeps on this machine). `--dry-run` neither takes nor checks the lock: while
+a sweep runs, its running jobs show as `move aside, rerun`.
 
 `analyze.sh [JOBS_DIR...]` aggregates the jobs (several dirs are one data
 set), draws the figures, and exits 3 if a subagent condition never delegated

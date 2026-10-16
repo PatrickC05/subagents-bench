@@ -655,8 +655,11 @@ lock (its oracle job is moved aside and the tasks staged there too), so
 other, take it in turn. The kernel drops the lock when the process ends,
 however it ends, so a crash or `kill -9` leaves no stale lock to clean up.
 harbor does not inherit it: after a `kill -9` of the sweep (no chance to stop
-harbor), its harbor runs go on unguarded until they end. A dry run only
-reads and takes no lock.
+harbor), its harbor runs go on unguarded until they end. A sweep started by
+code from before the lock holds none, so it cannot be detected: a new sweep
+starts as if the jobs dir were idle and moves its running jobs aside. A dry
+run only reads: it neither takes nor checks the lock, so while a sweep runs,
+its running jobs show as unfinished (`move aside, rerun`).
 
 **Resume.** A job whose dir has harbor's finished `result.json` and no trial
 needing a rerun is skipped. An unfinished job, or one with a trial needing a

@@ -13,7 +13,8 @@
 # SKIP_PREFLIGHT=1 skips preflight. On macOS the sweep runs under `caffeinate -i` so the
 # machine does not sleep (and drop the network); SB_NO_CAFFEINATE=1 turns that off.
 # Preflight's oracle job and the sweep each lock the jobs dir while they run, one after the
-# other; with another sweep on it, either exits 2 at once.
+# other; with another sweep on it, either exits 2 at once. A sweep run by code from before
+# the lock holds none and is not detected: let it end first.
 # Exit codes: 0 done, 1 failed jobs or preflight, 2 spec or config error or another sweep
 # running on the jobs dir, 3 billing error, 4 provider outage (the ABORT line names the model
 # and error), 130 interrupted.
