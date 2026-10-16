@@ -1,0 +1,20 @@
+<section id="why" data-transition="fade" style="background:#14213D;color:#F4F2EC;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:56px">
+<p style="font-size:28px;letter-spacing:3px;text-transform:uppercase;color:#E8894F;font-weight:600">Why</p>
+<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:64px;font-weight:600;line-height:1.15;color:#F4F2EC">Requests wait behind the model’s thinking, not behind its commands</h2>
+<div style="display:flex;gap:48px">
+<div style="flex:1;display:flex;flex-direction:column;gap:12px">
+<p style="font-family:'Source Serif 4', Georgia, serif;font-size:120px;font-weight:700;line-height:1;color:#E8894F">86–98%</p>
+<p style="font-size:30px;line-height:1.4;color:#C9D2E3">of bugs that found the orchestrator busy arrived during one of its model calls</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px">
+<p style="font-family:'Source Serif 4', Georgia, serif;font-size:120px;font-weight:700;line-height:1;color:#F4F2EC">0.3 s</p>
+<p style="font-size:30px;line-height:1.4;color:#C9D2E3">median length of the single agent’s own commands (25 s at most), even when told to test every fix</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px">
+<p style="font-family:'Source Serif 4', Georgia, serif;font-size:120px;font-weight:700;line-height:1;color:#F4F2EC">4.5 min</p>
+<p style="font-size:30px;line-height:1.4;color:#C9D2E3">longest single DeepSeek call in the smoke, about 21k reasoning tokens</p>
+</div>
+</div>
+<p style="font-size:32px;line-height:1.4;color:#C9D2E3">Managing subagents makes the orchestrator’s own calls longer, so offloading the commands buys nothing here.</p>
+<aside>Why does delegation lose? Because the waiting isn’t where we expected. Almost every bug that found the orchestrator busy arrived while it was thinking, in a model call, not while it was running a command. The single agent’s commands are tiny, a third of a second at the median, even when we required it to test each fix. And single calls can be huge: one DeepSeek call reasoned for about 21 thousand tokens over four and a half minutes. A manager coordinating subagents thinks longer per call, so moving the commands elsewhere doesn’t help.</aside>
+</section>

@@ -1,0 +1,20 @@
+<section id="batch" data-transition="fade" style="background:#F7F6F1;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:48px">
+<p style="font-size:28px;letter-spacing:3px;text-transform:uppercase;color:#C2551F;font-weight:600">First try: delegation for accuracy</p>
+<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:64px;font-weight:600;line-height:1.15">Given one task and 5 steps, delegation either never happened or never helped</h2>
+<div style="display:flex;gap:32px">
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#FFFFFF;border:1px solid #DCD8CE;border-radius:16px;padding:40px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#2F6DB5">Terminal-Bench</p>
+<p style="font-family:'Source Serif 4', Georgia, serif;font-size:96px;font-weight:700;line-height:1">0 of 64</p>
+<p style="font-size:30px;line-height:1.4">episodes delegated with the neutral prompt; 1 of 26 when told its steps were scarce</p>
+<p style="font-size:26px;line-height:1.4;color:#4A5568">“This is simple enough, I’ll do it myself.”</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#FFFFFF;border:1px solid #DCD8CE;border-radius:16px;padding:40px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#2F6DB5">SWE-sweep, whole repository</p>
+<p style="font-family:'Source Serif 4', Georgia, serif;font-size:96px;font-weight:700;line-height:1">0 of 152</p>
+<p style="font-size:30px;line-height:1.4">bugs fixed, though it delegated in 12 of 12 episodes</p>
+<p style="font-size:26px;line-height:1.4;color:#4A5568">Gemma subagents spent their 8 steps reading code; 80 of 82 ran out of steps</p>
+</div>
+</div>
+<p style="font-size:32px;line-height:1.4;color:#4A5568">Whether it delegates follows the task, not the prompt. And small subagents did not add accuracy. So we asked what else they could add: <b style="color:#14213D">availability</b>.</p>
+<aside>We first tried the usual question: does delegating to small models improve accuracy? On Terminal-Bench, the orchestrator with its own tools almost never delegated, zero of 64 episodes, and even when we told it its steps were scarce it said the task was simple and did it itself. On SWE-sweep, where the whole repository is the task, it delegated every time, but no bug was fixed: the small subagents spent their steps reading code. So uptake follows the task, and small subagents didn’t buy accuracy. That pushed us to a different benefit: keeping the agent available.</aside>
+</section>

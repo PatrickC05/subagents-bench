@@ -1,0 +1,15 @@
+<section id="bugsonly" data-transition="fade" style="background:#F7F6F1;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:36px">
+<p style="font-size:28px;letter-spacing:3px;text-transform:uppercase;color:#C2551F;font-weight:600">Result 1: bugs only</p>
+<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:64px;font-weight:600;line-height:1.15">When every request is a bug, the single agent is the most responsive</h2>
+<table style="font-size:30px;color:#14213D;width:1664px">
+<tr><th style="width:40%">Arrival-rate experiment, 24 sessions</th><th style="width:30%;text-align:right">Single agent</th><th style="width:30%;text-align:right">Background manager</th></tr>
+<tr><td>New bug received, median</td><td style="text-align:right">19–21 s</td><td style="text-align:right">36–41 s</td></tr>
+<tr><td>Its files first touched, median</td><td style="text-align:right">67 s</td><td style="text-align:right">119 s</td></tr>
+<tr><td>Bugs fixed</td><td style="text-align:right">36 / 156</td><td style="text-align:right">31 / 156</td></tr>
+<tr><td>Cost per session</td><td style="text-align:right">$0.08</td><td style="text-align:right">$0.22</td></tr>
+<tr><td>Bugs fixed with a bug every 60 s</td><td style="text-align:right">25%</td><td style="text-align:right">11%</td></tr>
+</table>
+<p style="font-size:32px;line-height:1.4;color:#4A5568">Same picture in the 15-minute smoke: new bug received in 9 s (single) vs 25 s (background manager) vs 53 s (blocking manager). Background beats blocking, but neither beats doing it yourself.</p>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#6A7280">Click and pint, 10 bugs at 60, 180 or 300 s, 2 rounds · DeepSeek-V4.1-Flash + Gemma-4-31B on Sail</p>
+<aside>First result. When every request is a bug, delegating does not make the agent more responsive. In the arrival-rate experiment, 24 sessions, the single agent received new bugs in about 20 seconds against about 40 for the background manager, touched the files twice as fast, fixed slightly more bugs, and cost a third as much. Sending bugs faster hurt the manager more, not less. The smokes agreed: background managers beat blocking managers, but neither beat the single agent.</aside>
+</section>

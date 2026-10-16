@@ -1,0 +1,16 @@
+<section id="requests" data-transition="fade" style="background:#F7F6F1;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<p style="font-size:28px;letter-spacing:3px;text-transform:uppercase;color:#C2551F;font-weight:600">Result 2: questions, status checks, urgent bugs</p>
+<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:64px;font-weight:600;line-height:1.15">Once the user asks questions too, subagents keep the agent available</h2>
+<table style="font-size:28px;color:#14213D;width:1664px">
+<tr><th style="width:37%">Per condition, 4 sessions each</th><th style="width:21%;text-align:right">Single agent</th><th style="width:21%;text-align:right">Background manager</th><th style="width:21%;text-align:right">All tools + background</th></tr>
+<tr><td>Questions answered</td><td style="text-align:right">27/48 (56%)</td><td style="text-align:right">39/48 (81%)</td><td style="text-align:right">39/48 (81%)</td></tr>
+<tr><td>Answer time, median</td><td style="text-align:right">293 s</td><td style="text-align:right">55 s</td><td style="text-align:right">61 s</td></tr>
+<tr><td>Status check answered, median</td><td style="text-align:right">142 s</td><td style="text-align:right">42 s</td><td style="text-align:right">42 s</td></tr>
+<tr><td>Requested bugs fixed</td><td style="text-align:right">9/24</td><td style="text-align:right">9/24</td><td style="text-align:right">11/24</td></tr>
+<tr><td>Urgent bug done first</td><td style="text-align:right">0%</td><td style="text-align:right">22%</td><td style="text-align:right">50%</td></tr>
+<tr><td>Cost per session</td><td style="text-align:right">$0.07</td><td style="text-align:right">$0.22</td><td style="text-align:right">$0.10</td></tr>
+</table>
+<p style="font-size:30px;line-height:1.4;color:#4A5568">With questions arriving, the all-tools orchestrator delegated on its own in 3 of 4 sessions, and fixed the most bugs at half the manager’s cost.</p>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#6A7280">Click and pint, 6 bugs every 4 min, 2 questions between bugs, 30-min sessions, 2 rounds · 20 sessions, $2.47 · directions, not effects</p>
+<aside>Then we changed what the user asks for. Between bugs, the user now asks questions about the code, checks status, and sometimes marks a bug urgent. Now the picture flips. The single agent answered only 56 percent of questions, with a median of almost five minutes. Both subagent conditions answered 81 percent within about a minute, and status checks in 42 seconds, while fixing the same number of bugs or more. And interestingly, once questions arrive, the orchestrator with all tools starts delegating by itself. Four sessions per condition, so these are directions.</aside>
+</section>

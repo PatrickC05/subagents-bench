@@ -1,0 +1,21 @@
+<section id="sessions" data-transition="fade" style="background:#EEF1F6;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:48px">
+<p style="font-size:28px;letter-spacing:3px;text-transform:uppercase;color:#2F6DB5;font-weight:600">Method: timed interactive sessions</p>
+<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:64px;font-weight:600;line-height:1.15">A simulated user sends a new request every few minutes</h2>
+<div style="display:flex;flex-direction:column;gap:12px">
+<div style="display:flex;gap:12px">
+<p style="flex:1;background:#2F6DB5;color:#F4F2EC;font-size:26px;padding:16px 20px;border-radius:10px">0:00 bug 1</p>
+<p style="flex:1;background:#2F6DB5;color:#F4F2EC;font-size:26px;padding:16px 20px;border-radius:10px">3:00 bug 2</p>
+<p style="flex:1;background:#5B87C9;color:#F4F2EC;font-size:26px;padding:16px 20px;border-radius:10px">4:30 question</p>
+<p style="flex:1;background:#2F6DB5;color:#F4F2EC;font-size:26px;padding:16px 20px;border-radius:10px">6:00 bug 3</p>
+<p style="flex:1;background:#C2551F;color:#F4F2EC;font-size:26px;padding:16px 20px;border-radius:10px">9:00 urgent bug</p>
+</div>
+<p style="font-size:26px;color:#4A5568">Each bug names the files its fix touches and a hidden test that should start passing. “Keep working on the earlier ones.”</p>
+</div>
+<table style="font-size:28px;color:#14213D;width:1664px">
+<tr><th style="width:26%">Measured per request</th><th style="width:74%">From the session’s own records</th></tr>
+<tr><td>Received, answered</td><td>Seconds until the orchestrator read it, and until it replied</td></tr>
+<tr><td>Touched, edited</td><td>Seconds until any agent opened or changed the bug’s files</td></tr>
+<tr><td>Fixed, correct, on time</td><td>Graded bugs, judged answers, ETA against the actual finish</td></tr>
+</table>
+<aside>So we built timed sessions on SWE-sweep. A simulated user sends a bug every few minutes, each one pointing at the files and a hidden test, and says keep working on the earlier ones. Later we added questions about the code, status checks and urgent bugs. For every request we measure how long until the orchestrator received it and answered it, how long until anyone touched or edited the relevant files, and in the end whether the bug was fixed, the answer correct, and the estimate accurate.</aside>
+</section>

@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Subagents for Interactivity</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+body{margin:0;background:#2b2f36;font-family:'IBM Plex Sans',Arial,sans-serif;padding:24px 16px}
+.frame{max-width:1280px;margin:0 auto;aspect-ratio:16/9;position:relative;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.4)}
+.scale{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:top left}
+.slide{position:relative;box-sizing:border-box;width:1920px;height:1080px;overflow:hidden}
+.slide *{margin:0;box-sizing:border-box}
+.notes{max-width:1280px;margin:12px auto 40px;color:#cfd5de;font-size:15px;line-height:1.5}
+</style></head><body>
+<div class="frame"><div class="scale"><section class="slide" id="cover" data-transition="fade" style="background:#14213D;color:#F4F2EC;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;justify-content:space-between">
+<p style="font-size:28px;letter-spacing:3px;text-transform:uppercase;color:#E8894F;font-weight:600">COS 597C · Project update</p>
+<div style="display:flex;flex-direction:column;gap:40px">
+<h1 style="font-family:'Source Serif 4', Georgia, serif;font-size:104px;font-weight:600;line-height:1.08;color:#F4F2EC">Can small subagents keep a big agent available?</h1>
+<p style="font-size:36px;line-height:1.4;color:#C9D2E3;width:1320px">A large orchestrator, small background workers, and a user who keeps asking for things while the work runs</p>
+</div>
+<p style="font-size:28px;color:#C9D2E3">Jonathan Liu · Patrick Chen · October 2026</p>
+
+</section>
+</div></div><p class="notes"><b>Notes:</b> Hi, we’re Jonathan and Patrick. Our project asks whether a large model that hands work to small subagents can stay available to the user while that work runs. We started from a different question, delegation for accuracy, and the results pushed us toward interactivity. I’ll walk through that path in about ten minutes.</p>
+<div class="frame"><div class="scale"><section class="slide" id="motivation" data-transition="fade" style="background:#F7F6F1;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:56px">
+<p style="font-size:28px;letter-spacing:3px;text-transform:uppercase;color:#C2551F;font-weight:600">Motivation</p>
+<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:64px;font-weight:600;line-height:1.15">One chat, many requests, not all about the same task</h2>
+<div style="display:flex;gap:24px">
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFFFF;border:1px solid #DCD8CE;border-radius:16px;padding:32px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#2F6DB5">0:00 · bug</p>
+<p style="font-size:30px;line-height:1.35">“Fix the bug in <b>core.py</b>.”</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFFFF;border:1px solid #DCD8CE;border-radius:16px;padding:32px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#2F6DB5">2:00 · question</p>
+<p style="font-size:30px;line-height:1.35">“What does this function return?”</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFFFF;border:1px solid #DCD8CE;border-radius:16px;padding:32px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#2F6DB5">4:00 · status</p>
+<p style="font-size:30px;line-height:1.35">“When will the first fix be done?”</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFFFF;border:2px solid #C2551F;border-radius:16px;padding:32px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#C2551F">6:00 · urgent</p>
+<p style="font-size:30px;line-height:1.35">“Drop that, this test is broken.”</p>
+</div>
+</div>
+<div style="display:flex;flex-direction:column;gap:16px">
+<div style="display:flex;gap:8px;height:56px">
+<div style="flex:5;background:#14213D;border-radius:8px;display:flex;align-items:center;padding:0 24px"><p style="font-size:26px;color:#F4F2EC">Agent thinking and running commands on bug 1</p></div>
+<div style="flex:2;background:#D9DEE8;border-radius:8px;display:flex;align-items:center;padding:0 24px"><p style="font-size:26px;color:#14213D">New messages wait</p></div>
+</div>
+<p style="font-size:32px;line-height:1.4;color:#4A5568">A coding agent reads new messages only between its own steps. While it works, the user waits.</p>
+</div>
+
+</section>
+</div></div><p class="notes"><b>Notes:</b> Picture how people actually use coding agents. You ask for a fix, and two minutes later you ask a question about the code, then you ask when the fix will land, then something urgent comes up. These requests are related, the same repository, but they are not the same task. An agent reads a new message only between its own steps, so while it is thinking or running a command, everything else waits. That is the user experience problem we care about.</p>
+<div class="frame"><div class="scale"><section class="slide" id="claim" data-transition="fade" style="background:#F7F6F1;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:56px">
+<p style="font-size:28px;letter-spacing:3px;text-transform:uppercase;color:#C2551F;font-weight:600">The claim we test</p>
+<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:64px;font-weight:600;line-height:1.15;width:1500px">Handing work to background subagents keeps the orchestrator free to answer the user</h2>
+<div style="display:flex;gap:48px">
+<div style="flex:1;display:flex;flex-direction:column;gap:20px;background:#FFFFFF;border:1px solid #DCD8CE;border-radius:16px;padding:40px">
+<h3 style="font-size:36px;font-weight:600">If it holds</h3>
+<ul style="font-size:30px;line-height:1.45;color:#4A5568">
+<li>New requests are read and answered sooner</li>
+<li>Earlier work keeps going</li>
+<li>Bugs still get fixed, at a cost we can name</li>
+</ul>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:20px;background:#FFFFFF;border:1px solid #DCD8CE;border-radius:16px;padding:40px">
+<h3 style="font-size:36px;font-weight:600">Closest work: AsyncTool</h3>
+<p style="font-size:30px;line-height:1.45;color:#4A5568">Delayed tool feedback hurts agents; models that coordinate task switching do better.</p>
+<p style="font-size:30px;line-height:1.45;color:#14213D"><b>We differ:</b> we measure availability to the user and to requests not yet known, and whether the agent can say when each fix will be ready.</p>
+</div>
+</div>
+
+</section>
+</div></div><p class="notes"><b>Notes:</b> The claim is simple. If the orchestrator hands work to subagents that run in the background, it should stay free to read and answer the user. If that holds, new requests get answered sooner, the earlier work keeps going, and we still fix bugs. The closest work we found is AsyncTool, which shows delayed tool feedback hurts agents. We differ in focus: we care about availability to the user and to requests that are not known yet, and whether the agent can predict when its work will be done.</p>
+<div class="frame"><div class="scale"><section class="slide" id="setup" data-transition="fade" style="background:#EEF1F6;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:56px">
+<p style="font-size:28px;letter-spacing:3px;text-transform:uppercase;color:#2F6DB5;font-weight:600">Setup</p>
+<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:64px;font-weight:600;line-height:1.15">A large orchestrator with small subagents, on real repositories</h2>
+<div style="display:flex;gap:32px">
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#FFFFFF;border-radius:16px;padding:40px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#2F6DB5">Models</p>
+<p style="font-size:30px;line-height:1.45"><b>Orchestrator:</b> DeepSeek-V4.1-Flash</p>
+<p style="font-size:30px;line-height:1.45"><b>Subagents:</b> Gemma-4-31B, up to 3 at once</p>
+<p style="font-size:26px;line-height:1.45;color:#4A5568">Both served by Sail; we log raw tokens and timings</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#FFFFFF;border-radius:16px;padding:40px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#2F6DB5">Harness</p>
+<p style="font-size:30px;line-height:1.45">Our own agent loop inside harbor + Docker</p>
+<p style="font-size:26px;line-height:1.45;color:#4A5568">Tools: bash, edit, read, list, search, and spawn_subagents</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#FFFFFF;border-radius:16px;padding:40px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#2F6DB5">Benchmark</p>
+<p style="font-size:30px;line-height:1.45">SWE-sweep: whole repositories with 6–14 hidden bugs</p>
+<p style="font-size:26px;line-height:1.45;color:#4A5568">Each bug graded separately, so each can be its own request</p>
+</div>
+</div>
+<p style="font-size:30px;line-height:1.4;color:#4A5568"><b style="color:#14213D">Conditions:</b> single agent · all-tools orchestrator that may delegate · <b style="color:#14213D">manager</b> that can only read, so every edit and test goes to a subagent · blocking or background spawns</p>
+
+</section>
+</div></div><p class="notes"><b>Notes:</b> Our setup: DeepSeek V4.1 Flash is the orchestrator, Gemma 4 31B is the subagent, up to three at a time, both on Sail. We wrote our own agent loop running inside harbor and Docker. The benchmark is SWE-sweep, where each task is a whole repository with several hidden bugs that are graded one by one. That matters because each bug can become its own user request. We compare a single agent, an orchestrator with all tools that may delegate, and a manager that can only read, so it must delegate, with spawns that either block or run in the background.</p>
+<div class="frame"><div class="scale"><section class="slide" id="batch" data-transition="fade" style="background:#F7F6F1;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:48px">
+<p style="font-size:28px;letter-spacing:3px;text-transform:uppercase;color:#C2551F;font-weight:600">First try: delegation for accuracy</p>
+<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:64px;font-weight:600;line-height:1.15">Given one task and 5 steps, delegation either never happened or never helped</h2>
+<div style="display:flex;gap:32px">
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#FFFFFF;border:1px solid #DCD8CE;border-radius:16px;padding:40px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#2F6DB5">Terminal-Bench</p>
+<p style="font-family:'Source Serif 4', Georgia, serif;font-size:96px;font-weight:700;line-height:1">0 of 64</p>
+<p style="font-size:30px;line-height:1.4">episodes delegated with the neutral prompt; 1 of 26 when told its steps were scarce</p>
+<p style="font-size:26px;line-height:1.4;color:#4A5568">“This is simple enough, I’ll do it myself.”</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#FFFFFF;border:1px solid #DCD8CE;border-radius:16px;padding:40px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#2F6DB5">SWE-sweep, whole repository</p>
+<p style="font-family:'Source Serif 4', Georgia, serif;font-size:96px;font-weight:700;line-height:1">0 of 152</p>
+<p style="font-size:30px;line-height:1.4">bugs fixed, though it delegated in 12 of 12 episodes</p>
+<p style="font-size:26px;line-height:1.4;color:#4A5568">Gemma subagents spent their 8 steps reading code; 80 of 82 ran out of steps</p>
+</div>
+</div>
+<p style="font-size:32px;line-height:1.4;color:#4A5568">Whether it delegates follows the task, not the prompt. And small subagents did not add accuracy. So we asked what else they could add: <b style="color:#14213D">availability</b>.</p>
+
+</section>
+</div></div><p class="notes"><b>Notes:</b> We first tried the usual question: does delegating to small models improve accuracy? On Terminal-Bench, the orchestrator with its own tools almost never delegated, zero of 64 episodes, and even when we told it its steps were scarce it said the task was simple and did it itself. On SWE-sweep, where the whole repository is the task, it delegated every time, but no bug was fixed: the small subagents spent their steps reading code. So uptake follows the task, and small subagents didn’t buy accuracy. That pushed us to a different benefit: keeping the agent available.</p>
+<div class="frame"><div class="scale"><section class="slide" id="sessions" data-transition="fade" style="background:#EEF1F6;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:48px">
+<p style="font-size:28px;letter-spacing:3px;text-transform:uppercase;color:#2F6DB5;font-weight:600">Method: timed interactive sessions</p>
+<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:64px;font-weight:600;line-height:1.15">A simulated user sends a new request every few minutes</h2>
+<div style="display:flex;flex-direction:column;gap:12px">
+<div style="display:flex;gap:12px">
+<p style="flex:1;background:#2F6DB5;color:#F4F2EC;font-size:26px;padding:16px 20px;border-radius:10px">0:00 bug 1</p>
+<p style="flex:1;background:#2F6DB5;color:#F4F2EC;font-size:26px;padding:16px 20px;border-radius:10px">3:00 bug 2</p>
+<p style="flex:1;background:#5B87C9;color:#F4F2EC;font-size:26px;padding:16px 20px;border-radius:10px">4:30 question</p>
+<p style="flex:1;background:#2F6DB5;color:#F4F2EC;font-size:26px;padding:16px 20px;border-radius:10px">6:00 bug 3</p>
+<p style="flex:1;background:#C2551F;color:#F4F2EC;font-size:26px;padding:16px 20px;border-radius:10px">9:00 urgent bug</p>
+</div>
+<p style="font-size:26px;color:#4A5568">Each bug names the files its fix touches and a hidden test that should start passing. “Keep working on the earlier ones.”</p>
+</div>
+<table style="font-size:28px;color:#14213D;width:1664px">
+<tr><th style="width:26%">Measured per request</th><th style="width:74%">From the session’s own records</th></tr>
+<tr><td>Received, answered</td><td>Seconds until the orchestrator read it, and until it replied</td></tr>
+<tr><td>Touched, edited</td><td>Seconds until any agent opened or changed the bug’s files</td></tr>
+<tr><td>Fixed, correct, on time</td><td>Graded bugs, judged answers, ETA against the actual finish</td></tr>
+</table>
+
+</section>
+</div></div><p class="notes"><b>Notes:</b> So we built timed sessions on SWE-sweep. A simulated user sends a bug every few minutes, each one pointing at the files and a hidden test, and says keep working on the earlier ones. Later we added questions about the code, status checks and urgent bugs. For every request we measure how long until the orchestrator received it and answered it, how long until anyone touched or edited the relevant files, and in the end whether the bug was fixed, the answer correct, and the estimate accurate.</p>
+<div class="frame"><div class="scale"><section class="slide" id="bugsonly" data-transition="fade" style="background:#F7F6F1;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:36px">
+<p style="font-size:28px;letter-spacing:3px;text-transform:uppercase;color:#C2551F;font-weight:600">Result 1: bugs only</p>
+<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:64px;font-weight:600;line-height:1.15">When every request is a bug, the single agent is the most responsive</h2>
+<table style="font-size:30px;color:#14213D;width:1664px">
+<tr><th style="width:40%">Arrival-rate experiment, 24 sessions</th><th style="width:30%;text-align:right">Single agent</th><th style="width:30%;text-align:right">Background manager</th></tr>
+<tr><td>New bug received, median</td><td style="text-align:right">19–21 s</td><td style="text-align:right">36–41 s</td></tr>
+<tr><td>Its files first touched, median</td><td style="text-align:right">67 s</td><td style="text-align:right">119 s</td></tr>
+<tr><td>Bugs fixed</td><td style="text-align:right">36 / 156</td><td style="text-align:right">31 / 156</td></tr>
+<tr><td>Cost per session</td><td style="text-align:right">$0.08</td><td style="text-align:right">$0.22</td></tr>
+<tr><td>Bugs fixed with a bug every 60 s</td><td style="text-align:right">25%</td><td style="text-align:right">11%</td></tr>
+</table>
+<p style="font-size:32px;line-height:1.4;color:#4A5568">Same picture in the 15-minute smoke: new bug received in 9 s (single) vs 25 s (background manager) vs 53 s (blocking manager). Background beats blocking, but neither beats doing it yourself.</p>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#6A7280">Click and pint, 10 bugs at 60, 180 or 300 s, 2 rounds · DeepSeek-V4.1-Flash + Gemma-4-31B on Sail</p>
+
+</section>
+</div></div><p class="notes"><b>Notes:</b> First result. When every request is a bug, delegating does not make the agent more responsive. In the arrival-rate experiment, 24 sessions, the single agent received new bugs in about 20 seconds against about 40 for the background manager, touched the files twice as fast, fixed slightly more bugs, and cost a third as much. Sending bugs faster hurt the manager more, not less. The smokes agreed: background managers beat blocking managers, but neither beat the single agent.</p>
+<div class="frame"><div class="scale"><section class="slide" id="why" data-transition="fade" style="background:#14213D;color:#F4F2EC;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:56px">
+<p style="font-size:28px;letter-spacing:3px;text-transform:uppercase;color:#E8894F;font-weight:600">Why</p>
+<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:64px;font-weight:600;line-height:1.15;color:#F4F2EC">Requests wait behind the model’s thinking, not behind its commands</h2>
+<div style="display:flex;gap:48px">
+<div style="flex:1;display:flex;flex-direction:column;gap:12px">
+<p style="font-family:'Source Serif 4', Georgia, serif;font-size:120px;font-weight:700;line-height:1;color:#E8894F">86–98%</p>
+<p style="font-size:30px;line-height:1.4;color:#C9D2E3">of bugs that found the orchestrator busy arrived during one of its model calls</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px">
+<p style="font-family:'Source Serif 4', Georgia, serif;font-size:120px;font-weight:700;line-height:1;color:#F4F2EC">0.3 s</p>
+<p style="font-size:30px;line-height:1.4;color:#C9D2E3">median length of the single agent’s own commands (25 s at most), even when told to test every fix</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px">
+<p style="font-family:'Source Serif 4', Georgia, serif;font-size:120px;font-weight:700;line-height:1;color:#F4F2EC">4.5 min</p>
+<p style="font-size:30px;line-height:1.4;color:#C9D2E3">longest single DeepSeek call in the smoke, about 21k reasoning tokens</p>
+</div>
+</div>
+<p style="font-size:32px;line-height:1.4;color:#C9D2E3">Managing subagents makes the orchestrator’s own calls longer, so offloading the commands buys nothing here.</p>
+
+</section>
+</div></div><p class="notes"><b>Notes:</b> Why does delegation lose? Because the waiting isn’t where we expected. Almost every bug that found the orchestrator busy arrived while it was thinking, in a model call, not while it was running a command. The single agent’s commands are tiny, a third of a second at the median, even when we required it to test each fix. And single calls can be huge: one DeepSeek call reasoned for about 21 thousand tokens over four and a half minutes. A manager coordinating subagents thinks longer per call, so moving the commands elsewhere doesn’t help.</p>
+<div class="frame"><div class="scale"><section class="slide" id="requests" data-transition="fade" style="background:#F7F6F1;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<p style="font-size:28px;letter-spacing:3px;text-transform:uppercase;color:#C2551F;font-weight:600">Result 2: questions, status checks, urgent bugs</p>
+<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:64px;font-weight:600;line-height:1.15">Once the user asks questions too, subagents keep the agent available</h2>
+<table style="font-size:28px;color:#14213D;width:1664px">
+<tr><th style="width:37%">Per condition, 4 sessions each</th><th style="width:21%;text-align:right">Single agent</th><th style="width:21%;text-align:right">Background manager</th><th style="width:21%;text-align:right">All tools + background</th></tr>
+<tr><td>Questions answered</td><td style="text-align:right">27/48 (56%)</td><td style="text-align:right">39/48 (81%)</td><td style="text-align:right">39/48 (81%)</td></tr>
+<tr><td>Answer time, median</td><td style="text-align:right">293 s</td><td style="text-align:right">55 s</td><td style="text-align:right">61 s</td></tr>
+<tr><td>Status check answered, median</td><td style="text-align:right">142 s</td><td style="text-align:right">42 s</td><td style="text-align:right">42 s</td></tr>
+<tr><td>Requested bugs fixed</td><td style="text-align:right">9/24</td><td style="text-align:right">9/24</td><td style="text-align:right">11/24</td></tr>
+<tr><td>Urgent bug done first</td><td style="text-align:right">0%</td><td style="text-align:right">22%</td><td style="text-align:right">50%</td></tr>
+<tr><td>Cost per session</td><td style="text-align:right">$0.07</td><td style="text-align:right">$0.22</td><td style="text-align:right">$0.10</td></tr>
+</table>
+<p style="font-size:30px;line-height:1.4;color:#4A5568">With questions arriving, the all-tools orchestrator delegated on its own in 3 of 4 sessions, and fixed the most bugs at half the manager’s cost.</p>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#6A7280">Click and pint, 6 bugs every 4 min, 2 questions between bugs, 30-min sessions, 2 rounds · 20 sessions, $2.47 · directions, not effects</p>
+
+</section>
+</div></div><p class="notes"><b>Notes:</b> Then we changed what the user asks for. Between bugs, the user now asks questions about the code, checks status, and sometimes marks a bug urgent. Now the picture flips. The single agent answered only 56 percent of questions, with a median of almost five minutes. Both subagent conditions answered 81 percent within about a minute, and status checks in 42 seconds, while fixing the same number of bugs or more. And interestingly, once questions arrive, the orchestrator with all tools starts delegating by itself. Four sessions per condition, so these are directions.</p>
+<div class="frame"><div class="scale"><section class="slide" id="example" data-transition="fade" style="background:#EEF1F6;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:48px">
+<p style="font-size:28px;letter-spacing:3px;text-transform:uppercase;color:#2F6DB5;font-weight:600">Example: the single agent, click, round 1</p>
+<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:64px;font-weight:600;line-height:1.15">It means to answer, then keeps fixing</h2>
+<div style="display:flex;gap:32px;align-items:stretch">
+<div style="flex:3;display:flex;flex-direction:column;gap:24px;background:#FFFFFF;border-radius:16px;padding:48px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:26px;color:#4A5568">reasoning</p>
+<p style="font-family:'Source Serif 4', Georgia, serif;font-size:56px;line-height:1.25;font-style:italic">“Let me answer #9 quickly.”</p>
+<p style="font-family:'Source Serif 4', Georgia, serif;font-size:40px;line-height:1.3;font-style:italic;color:#4A5568">“Let me reply to #17 and #18 quickly, then focus.”</p>
+<p style="font-family:'JetBrains Mono', monospace;font-size:26px;color:#C2551F">… 10–57 more steps, no reply</p>
+</div>
+<div style="flex:2;display:flex;flex-direction:column;gap:28px;justify-content:center">
+<p style="font-size:32px;line-height:1.4"><b>17 of 25</b> questions it left unanswered or answered late had a plan to answer in its reasoning, often with the answer worked out</p>
+<p style="font-size:32px;line-height:1.4">In one session its <b>last reply came at 2:47</b> of a 30-minute session</p>
+</div>
+</div>
+
+</section>
+</div></div><p class="notes"><b>Notes:</b> Here is what that looks like in a transcript. The single agent clearly intends to answer. Its reasoning says “let me answer number nine quickly”, often with the answer already worked out, and then it runs another ten to fifty-seven steps on its bugs without ever calling reply. In one click session its last reply came at two minutes forty-seven seconds into a thirty-minute session. Nothing blocks it; it just doesn’t switch.</p>
+<div class="frame"><div class="scale"><section class="slide" id="takeaways" data-transition="fade" style="background:#14213D;color:#F4F2EC;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:48px">
+<p style="font-size:28px;letter-spacing:3px;text-transform:uppercase;color:#E8894F;font-weight:600">Takeaways and next steps</p>
+<div style="display:flex;gap:40px">
+<div style="flex:1;display:flex;flex-direction:column;gap:20px">
+<h3 style="font-family:'Source Serif 4', Georgia, serif;font-size:44px;font-weight:600;line-height:1.2;color:#F4F2EC">What we learned</h3>
+<ul style="font-size:30px;line-height:1.45;color:#C9D2E3">
+<li>Small subagents didn’t add accuracy, and on bug fixing alone doing it yourself is faster and cheaper</li>
+<li>The wait is the big model’s thinking, not its tools</li>
+<li>With mixed requests, subagents keep the agent available: 81% vs 56% of questions answered, about 5× faster</li>
+</ul>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:20px">
+<h3 style="font-family:'Source Serif 4', Georgia, serif;font-size:44px;font-weight:600;line-height:1.2;color:#F4F2EC">Next</h3>
+<ul style="font-size:30px;line-height:1.45;color:#C9D2E3">
+<li>Accurate timing: only 21–38% of bugs got an estimate</li>
+<li>Steering and priorities: urgent bugs, changed plans</li>
+<li>More rounds; workloads with slow commands; a faster orchestrator</li>
+</ul>
+</div>
+</div>
+<p style="font-size:26px;line-height:1.4;color:#9AA7BF">Caveats: 4–12 sessions per condition; Sail latency varies; amd64 emulation on one Mac; manager subagents broke passing tests in 5 of 16 bugs-only sessions</p>
+
+</section>
+</div></div><p class="notes"><b>Notes:</b> To sum up. Small subagents didn’t buy accuracy, and when the user only sends bugs, doing the work yourself is faster and cheaper, because the waiting comes from the big model’s thinking. But when the user also asks questions and checks status, background subagents keep the agent available: far more questions answered, about five times faster, at the same fix rate. Next we want to measure timing, since agents rarely give estimates and miss them, and steering, plus more rounds and harder workloads. The caveats are small samples, provider latency, and emulation. Thanks.</p>
+<script>function f(){document.querySelectorAll('.frame').forEach(e=>e.firstElementChild.style.transform='scale('+e.clientWidth/1920+')')}addEventListener('resize',f);f();</script>
+</body></html>
