@@ -1,0 +1,13 @@
+# swe_interactive_hard.yaml on the four more tasks of swe_interactive_levels_more.yaml (dateutil, gin,
+# dayjs, luxon), so each condition gets six sessions with the click and echo run. Same conditions.
+#   scripts/run_experiment.sh configs/sweeps/swe_interactive_hard_more.yaml --jobs-at-once N
+extends: configs/sweeps/swe_interactive_hard.yaml
+name: swe_interactive_hard_more
+tasks:                               # language, bugs (the first 6 are sent)
+  - swe-sweep__dateutil              # Python, 10
+  - swe-sweep__gin                   # Go, 11
+  - swe-sweep__dayjs                 # JavaScript, 11
+  - swe-sweep__luxon                 # JavaScript, 14
+
+harbor:
+  n_concurrent: 4                    # the four sessions of a job at once
