@@ -248,10 +248,15 @@ the code does, not about style or history. Reply with only a JSON list of object
 
 QUESTION_JUDGE = """\
 You grade answers to questions about a code repository. You get the question, a reference \
-answer and the answer to grade. The answer is correct if it states what the reference states \
-(other wording, extra correct detail and a longer explanation are fine); it is wrong if it \
-contradicts the reference, misses its key fact, or only says how to find out. Reply with only a \
-JSON object {"correct": true or false, "why": "<one sentence>"}."""
+answer and a reply to grade, which may also be about other things: grade only what it says \
+about this question. The verdict is "correct" if the reply states what the reference states \
+(other wording, extra correct detail and a longer explanation are fine); "wrong" if it gives an \
+answer that contradicts the reference or misses its key fact; "none" if it is not an answer: an \
+acknowledgement, a promise or a plan to answer, only how to find out, or saying it does not \
+know. Reply with only a JSON object {"verdict": "correct" or "wrong" or "none", "why": "<one \
+sentence>"}."""
+VERDICTS = ("correct", "wrong", "none")  # QUESTION_JUDGE's; none: not an answer
+ANSWERS_VERSION = 2  # agent/answers.json: per-reply verdicts, three-way, at temperature 0 (grade_replies)
 
 
 def questions_path(hints_dir: str | Path, task_name: str) -> Path:
@@ -388,17 +393,68 @@ def write_questions(hints_dir: str | Path, task_name: str, model: str, questions
     return path
 
 
-def judge_answer(client: Any, question: str, reference: str, answer: str) -> tuple[bool | None, str]:
-    """(correct, why) of one answer; None when the judge's reply is unreadable."""
+def judge_answer(client: Any, question: str, reference: str, answer: str) -> tuple[str | None, str]:
+    """(verdict, why) of one reply: ``correct``, ``wrong`` or ``none`` (not an answer); None, with
+    the start of the judge's reply as ``why``, when that reply is unreadable. The judge's sampling
+    is the client's (``grade-answers`` runs it at temperature 0). The pre-version-2 shape
+    ``{"correct": true|false}`` (a boolean or the string "true"/"false") reads as correct/wrong; a
+    readable ``verdict`` wins over it."""
     r = client.complete(QUESTION_JUDGE, [Message("user", f"Question: {question}\n\nReference answer: {reference}\n\n"
-                                                         f"Answer to grade: {answer}")], [])
+                                                         f"Reply to grade: {answer}")], [])
     try:
         v = _json_value(r.text)
+        verdict = v.get("verdict")
+        if isinstance(verdict, str) and verdict.strip().lower() in VERDICTS:
+            return verdict.strip().lower(), str(v.get("why", ""))
         c = v["correct"]
         if isinstance(c, str) and c.strip().lower() in ("true", "false"):
             c = c.strip().lower() == "true"
         if isinstance(c, bool):
-            return c, str(v.get("why", ""))
-    except (ValueError, KeyError, TypeError):
+            return "correct" if c else "wrong", str(v.get("why", ""))
+    except (ValueError, KeyError, TypeError, AttributeError):  # AttributeError: a JSON list
         pass
     return None, r.text[:300]
+
+
+def cites(text: str, msg_id: int) -> bool:
+    """``text`` names message ``#<msg_id>`` as a whole token (``#3`` is not in ``#31``, ``##3`` or ``a#3``)."""
+    return re.search(rf"(?<![\w#])#{msg_id}(?!\w)", text) is not None
+
+
+def grade_replies(client: Any, inbox: list[dict], replies: list[dict]) -> dict[str, dict[str, Any]]:
+    """The judge's verdicts (:func:`judge_answer`) on an episode's replies to its questions, from its
+    ``inbox`` and ``replies`` records: ``{"answers": ..., "replies": ..., "elsewhere": ...}``, each
+    keyed by the question's msg_id as a string (no key for a question without such replies):
+
+    - ``replies``: the replies to the question's own id in time order (records of one step keep
+      their order), judged one by one up to and including the first correct one (an unreadable
+      verdict does not stop it): ``[{"t", "verdict", "correct", "why"}, ...]``;
+    - ``answers``: the first of them, ``{"correct", "verdict", "why"}`` (the reply the prompt calls
+      the answer; the shape before version 2, which had no ``verdict``);
+    - ``elsewhere``: replies to other ids that cite the question (:func:`cites`) and were sent after
+      it was delivered (none if it never was), judged the same way, ``[{"t", "to", "verdict",
+      "correct", "why"}, ...]``. Reported apart: only a reply to its own id answers a question.
+
+    ``correct`` is ``verdict == "correct"``, None when the verdict is unreadable. Calls the judge
+    once per judged reply; its errors propagate."""
+    ordered = sorted(replies, key=lambda r: r["t"])
+    out: dict[str, dict[str, Any]] = {"answers": {}, "replies": {}, "elsewhere": {}}
+    for q in sorted((m for m in inbox if m.get("kind") == "question"), key=lambda m: m["msg_id"]):
+        mid, delivered = q["msg_id"], q.get("t_delivered")
+        own = [r for r in ordered if r["to"] == mid]
+        other = [r for r in ordered if r["to"] != mid and delivered is not None and r["t"] > delivered
+                 and cites(r["text"], mid)]
+        for key, rs in (("replies", own), ("elsewhere", other)):
+            got = []
+            for r in rs:
+                verdict, why = judge_answer(client, q["question"], q["reference"], r["text"])
+                got.append({"t": r["t"], **({"to": r["to"]} if key == "elsewhere" else {}), "verdict": verdict,
+                            "correct": None if verdict is None else verdict == "correct", "why": why})
+                if verdict == "correct":
+                    break
+            if got:
+                out[key][str(mid)] = got
+        if own:
+            first = out["replies"][str(mid)][0]
+            out["answers"][str(mid)] = {"correct": first["correct"], "verdict": first["verdict"], "why": first["why"]}
+    return out

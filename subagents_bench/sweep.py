@@ -35,8 +35,9 @@ from typing import Any, Callable
 import yaml
 
 from .config import ConfigError, ExperimentConfig, ModelConfig, from_dict
-from .hints import (HINTS_DIR_ENV, HintError, fetch_source, generate_questions, generate_reports, judge_answer,
-                    load_questions, load_reports, load_subtasks, n_slots, schedule, write_questions, write_reports)
+from .hints import (ANSWERS_VERSION, HINTS_DIR_ENV, HintError, fetch_source, generate_questions, generate_reports,
+                    grade_replies, load_questions, load_reports, load_subtasks, n_slots, schedule, write_questions,
+                    write_reports)
 from .llm import BillingError, Message, SailClient
 from .records import git_commit
 
@@ -228,46 +229,68 @@ def make_questions(spec: Spec, per_task: int | None = None, force: bool = False)
 
 
 def grade_answers(spec: Spec, force: bool = False) -> int:
-    """Judge the first reply to every question of every finished trial of the sweep against its
-    reference answer, with the orchestrator's model of the first interactive condition; writes
-    ``<trial>/agent/answers.json``. 0 when every answer got a verdict, else 1."""
+    """Judge the replies to the questions of every finished trial of the sweep against their
+    reference answers (:func:`hints.grade_replies`: each reply to a question in time order up to
+    the first correct one, and apart, replies to other ids that cite it) with the orchestrator's
+    model of the first interactive condition at temperature 0; writes ``<trial>/agent/answers.json``:
+    ``{"version": 2, "judge_model", "judge_temperature", "graded_at", "answers", "replies",
+    "elsewhere"}`` (``answers``: the first reply's verdict per question, as before version 2).
+    Trials graded before version 2 (the first reply only, correct or not, at the model's own
+    temperature) or with an unreadable answers.json are graded again, the others only with
+    ``force``. A trial whose grading fails (its records, a judge call) writes nothing, so the next
+    run grades it. 0 when every reply judged now got a verdict and no trial failed, 3 on a billing
+    error (stops at once), else 1."""
     conds = interactive(spec)
     if not conds:
         say(f"sweep {spec.name!r} has no interactive condition: nothing to grade")
         return 0
-    model = next(iter(conds.values())).orchestrator
-    client, unread = SailClient(model), 0
+    judge = dataclasses.replace(next(iter(conds.values())).orchestrator, temperature=0.0)
+    client, unread, failed = SailClient(judge), 0, 0
+
+    def records(trial: Path, kind: str) -> list[dict[str, Any]]:
+        path = trial / f"{kind}.jsonl"
+        return [json.loads(x) for x in path.read_text().splitlines() if x.strip()] if path.is_file() else []
+
     try:
         for trial in sorted(spec.jobs_dir.glob("*/*/agent")):
             if trial.parent.parent.name.startswith(("_", ".")) or not (trial.parent / "result.json").is_file():
                 continue
-            out = trial / "answers.json"
-            if out.is_file() and not force:
+            out, name = trial / "answers.json", _rel(trial.parent, spec.root)
+            try:
+                version = json.loads(out.read_text()).get("version")
+            except (OSError, ValueError, AttributeError):  # none yet, cut mid-write, or not an object
+                version = None
+            if isinstance(version, int) and version >= ANSWERS_VERSION and not force:
                 continue
-            inbox = [json.loads(x) for x in (trial / "inbox.jsonl").read_text().splitlines() if x.strip()] \
-                if (trial / "inbox.jsonl").is_file() else []
-            questions = {r["msg_id"]: r for r in inbox if r.get("kind") == "question"}
-            if not questions:
-                continue
-            replies = [json.loads(x) for x in (trial / "replies.jsonl").read_text().splitlines() if x.strip()]
-            first: dict[int, str] = {}
-            for r in sorted(replies, key=lambda r: r["t"]):
-                first.setdefault(r["to"], r["text"])
-            answers = {}
-            for mid, q in questions.items():
-                if mid not in first:
+            try:
+                inbox = records(trial, "inbox")
+                questions = [m for m in inbox if m.get("kind") == "question"]
+                if not questions:
                     continue
-                correct, why = judge_answer(client, q["question"], q["reference"], first[mid])
-                unread += correct is None
-                answers[str(mid)] = {"correct": correct, "why": why}
-            out.write_text(json.dumps({"judge_model": model.model, "graded_at": time.time(),
-                                       "answers": answers}, indent=2) + "\n")
-            n_ok = sum(1 for a in answers.values() if a["correct"])
-            say(f"  [OK] {_rel(trial.parent, spec.root)}: {n_ok} of {len(questions)} questions "
-                f"answered correctly ({len(answers)} answered)")
+                graded = grade_replies(client, inbox, records(trial, "replies"))
+            except BillingError as e:  # every later call would fail the same way
+                say(f"  [FAIL] {name}: {type(e).__name__}: {str(e)[:300]}")
+                return 3
+            except Exception as e:  # one trial's failure does not lose the others'
+                say(f"  [FAIL] {name}: {type(e).__name__}: {str(e)[:300]}")
+                failed += 1
+                continue
+            out.write_text(json.dumps({"version": ANSWERS_VERSION, "judge_model": judge.model,
+                                       "judge_temperature": judge.temperature, "graded_at": time.time(), **graded},
+                                      indent=2) + "\n")
+            judged = [v for k in ("replies", "elsewhere") for vs in graded[k].values() for v in vs]
+            n_unread = sum(v["verdict"] is None for v in judged)
+            unread += n_unread
+            n_first = sum(1 for a in graded["answers"].values() if a["correct"])
+            n_any = sum(1 for vs in graded["replies"].values() if any(v["correct"] for v in vs))
+            n_else = sum(len(vs) for vs in graded["elsewhere"].values())
+            say(f"  [OK] {name}: {n_any} of {len(questions)} questions answered correctly ({n_first} by the first "
+                f"reply; {len(graded['answers'])} answered; {len(judged)} replies judged"
+                + (f", {n_else} of them to another id" if n_else else "")
+                + (f"; {n_unread} verdicts unreadable" if n_unread else "") + ")")
     finally:
         client.close()
-    return 1 if unread else 0
+    return 1 if unread or failed else 0
 
 
 def make_hints(spec: Spec, force: bool = False) -> int:
