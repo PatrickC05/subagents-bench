@@ -99,7 +99,9 @@ CONTROLS_NOTE = (" Controls (dashed cards) have no ids or replies: their bugs ar
                  "pickup (waited to be read, first edit after) and fixes.")
 PICKUP_NOTE = " {what}: per-bug pickup from <code>interactivity.csv</code>, over the bugs after the first."
 LEVELS_NOTE = ("<p>By level: each setting's levels, one row each, so a step down adds one kind of message; a cell is "
-               "\"–\" when the level sends no such message. Sessions: started, of those planned. Status check "
+               "\"–\" when the level sends no such message (or nothing has been measured yet), and a median is "
+               "\"never\" when at least half of its messages were never read, replied to or edited (they count "
+               "as infinitely late). Sessions: started, of those planned. Status check "
                "replied: the checks with any reply after them, and the median time to the first. Bugs fixed is the "
                "end-of-session grade; each bug's real fix time comes from the workspace snapshots after the run "
                "(<code>subagents-bench fix-times</code>) and is not on this page.</p>")
@@ -174,7 +176,9 @@ class Sweep:
 
     @property
     def n_bugs(self) -> int:
-        return int(self.icfg["max_hints"])
+        """The bugs a session is sent: ``max_hints``, or as many as fit in it (``hints.n_slots``: one
+        every ``interval_sec`` below the wall clock), e.g. 4 of 6 in the levels smoke's 2 minutes."""
+        return min(int(self.icfg["max_hints"]), max(1, math.ceil(self.wall / self.interval - 1e-9)))
 
     @property
     def n_sessions(self) -> int:
@@ -236,6 +240,13 @@ def clock(sec) -> str:
         return "–"
     sec = max(0, int(round(sec)))
     return f"{sec} s" if sec < 100 else f"{sec // 60}:{sec % 60:02d}"
+
+
+def censored(sec, n) -> str:
+    """A censored median over ``n`` values (``_median_censored``: NaN when it is infinite, i.e. at
+    least half were never answered or edited): "never" when there are values but no finite median,
+    else ``clock``."""
+    return "never" if n and not (isnum(sec) and math.isfinite(sec)) else clock(sec)
 
 
 def pct(v) -> str:
@@ -758,10 +769,13 @@ class Monitor:
         except (KeyError, TypeError, ValueError):
             return pd.DataFrame()
 
-    def cells(self, cond: str, ss, tab: pd.DataFrame) -> dict[str, str] | None:
+    def cells(self, cond: str, ss, tab: pd.DataFrame, never: bool = False) -> dict[str, str] | None:
         """A request condition's metrics as table cells, over its sessions that are not invalid (None
         before ``tab``, the request table, has it). Question cells are "–" when the condition asks
-        none; the status cell when it sends no status check."""
+        none; the status cell when it sends no status check. ``never``: a median that is infinite
+        (at least half never replied to) reads "never" (the levels ladder, where "–" means no such message),
+        not "–"."""
+        med = (lambda v, n: censored(v, n)) if never else (lambda v, n: clock(v))  # noqa: E731
         mine = [s for s in ss if s["condition"] == cond]
         g = tab[tab["condition"] == cond] if not tab.empty else tab
         if not mine or g.empty:
@@ -787,7 +801,7 @@ class Monitor:
         n_st = sum(r["reply_sec"] is not None for r in st)
         return {
             "answered": f"{n_ans}/{len(q)}" if asks else "–",
-            "answer_med": clock(x["answer_median_sec"]) if asks else "–",
+            "answer_med": med(x["answer_median_sec"], len(q)) if asks else "–",
             "answered_60s": pct(x["answered_60s"]) if asks else "–",
             "correct": correct if asks else "–",
             "fixed": f'{sum(bool(r["fixed"]) for r in graded_b)}/{len(graded_b)}' if graded_b else "–",
@@ -796,7 +810,7 @@ class Monitor:
             "on_time": pct(x["on_time_frac"]),
             "claims": (f'{pct(x["claim_precision"]) if claims else "–"}'
                        f'{f" <span class=muted>of {len(claims)}</span>" if claims else ""}'),
-            "status": (f'{n_st}/{len(st)} <span class="muted">· {clock(x["status_reply_median_sec"])}</span>'
+            "status": (f'{n_st}/{len(st)} <span class="muted">· {med(x["status_reply_median_sec"], len(st))}</span>'
                        if st else "–"),
             "urgent": pct(x["urgent_first_frac"]),
             "cost": f'${sum(s["cost"] for s in mine):.2f}',
@@ -852,12 +866,13 @@ class Monitor:
             for c in conds:
                 lv, short, _ = list(LEVELS.values())[level_of(c)[1]]
                 n = [s for s in ss if s["condition"] == c]
-                cell = self.cells(c, ss, tab) or {k: "–" for _, k in self.LADDER}
+                cell = self.cells(c, ss, tab, never=True) or {k: "–" for _, k in self.LADDER}
                 g = htab[htab["condition"] == c] if not htab.empty else htab
                 hx = g.iloc[0] if len(g) else None
                 plan = len(self.sw.tasks) * len(self.sw.plan.get(c, ()))
                 cell.update(sessions=f'{len(n)} <span class="muted">of {plan}</span>',
-                            wait=clock(_num(hx, "delivery_median_sec")), edit=clock(_num(hx, "edit_median_sec")))
+                            wait=censored(_num(hx, "delivery_median_sec"), _num(hx, "delivery_frac") is not None),
+                            edit=censored(_num(hx, "edit_median_sec"), _num(hx, "edit_frac") is not None))
                 if not n:
                     cell["cost"] = "–"
                 trs.append(f'<tr><td>{lv} <span class="muted">{esc(short)}</span></td>'
@@ -1259,8 +1274,9 @@ class Monitor:
                          f"L2 adds {x['q']} questions about the code after each bug" if k == 2 else
                          f"L3 makes the bug sent at {_and([_m(t) for t in x['urgent']])} urgent")
         snaps, eta, _ = self._rules()
-        pre = (f"A smoke of the levels sweep ({dur(sw.wall)} sessions), too short for results: it checks that every "
-               f"kind of message, the reply rule and the snapshots work. ") if smoke else ""
+        checks = ["every kind of message"] + ["the reply rule"] * eta + ["the snapshots"] * snaps
+        pre = (f"A smoke of the levels sweep ({dur(sw.wall)} sessions), too short for results: it checks that "
+               f"{_and(checks)} work{'s' * (len(checks) == 1)}. ") if smoke else ""
         return (f"{pre}A simulated user works with the agent on one repository for {dur(sw.wall)}, sending the same "
                 f"{len(s['bugs'])} bugs at the same times at every level, one every {dur(sw.interval)}. Each level "
                 f"adds one kind of message to the level below and changes nothing else: {'; '.join(steps)}. The user "
@@ -1427,7 +1443,7 @@ class Monitor:
         # the planned sessions, and any session of a round the plan left out (run with --rounds anyway)
         total = sw.n_sessions + sum(s["round"] not in sw.plan.get(s["condition"], ()) for s in ss)
         want = max((schedule(v)["n_q"] for v in sw.interactive.values()), default=0)  # questions per task
-        qs = " · ".join(f"{t} {n}/{want}" if n is not None else f"{t} not written yet"
+        qs = " · ".join(f"{t} {min(n, want)}/{want}" if n is not None else f"{t} not written yet"
                         for t, n in self.questions_ready())
         order = list(self.cond)
         if ss:

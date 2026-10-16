@@ -443,6 +443,7 @@ def test_levels_partial_run(tmp_path):
     l0, l1, l2, l3 = rows["Single agent"]
     # level, sessions, fixed, waited, first edit, answered, within 60 s, correct, ETA, done by ETA, status, urgent, cost
     assert l0[:3] == ["L0 bugs only", "1 of 4", "1/2"]
+    assert l0[3:5] == ["2 s", "never"]  # bug 2 (the only one after the first) read after 2 s, never edited
     assert l0[5:8] == ["–", "–", "–"] and l0[10:12] == ["–", "–"]  # no questions, status checks or urgent bug
     assert l1 == ["L1 status checks", "0 of 4"] + ["–"] * 11
     assert l2[1] == "0 of 8" and l3[1] == "1 of 8"  # round 3 is planned for L3
@@ -482,3 +483,24 @@ def test_levels_compared_with_the_baseline(tmp_path):
     assert '<td class="num">all</td>' in page and "pooled: a mark per session" in page
     head = page.split('<table class="grid">')[1].split("</thead>")[0]
     assert "L0<br>" in head and "L3<br>" in head and head.count('class="grp"') == 3  # a group per setting
+
+
+def test_levels_smoke_sends_the_bugs_that_fit(tmp_path):
+    """The smoke's 2-minute sessions fit 4 of max_hints' 6 bugs (one every 30 s): the comparison counts
+    4; more questions written than a session asks reads as ready; the lede names only the rules on."""
+    smoke = tmp_path / "swe_interactive_levels_smoke"
+    levels_json(smoke, "swe_interactive_levels_smoke", rounds=1)
+    doc = json.loads((smoke / "sweep.json").read_text())
+    for c in doc["configs"].values():
+        c["interactive"].update(wall_clock_sec=120, interval_sec=30, max_hints=6, snapshots=False)
+    (smoke / "sweep.json").write_text(json.dumps(doc))
+    assert load_sweep(smoke).n_bugs == 4
+    (smoke / "hints").mkdir()
+    for t in (TASK, TASK2):  # 8 asked per session (2 per bug at L2 and L3, 4 bugs); 12 written
+        (smoke / "hints" / f"{t}.questions.json").write_text(json.dumps({"questions": [{}] * 12}))
+    doc["configs"]["single_questions"]["interactive"]["questions_per_interval"] = 2
+    (smoke / "sweep.json").write_text(json.dumps(doc))
+    page = build(smoke, tmp_path / "o", page="smoke.html", transcripts=False)[0].read_text()
+    assert "<span>Questions ready: demo 8/8 · other 8/8</span>" in page
+    assert "it checks that every kind of message and the reply rule work." in page
+    assert "sending the same 4 bugs at the same times at every level, one every 30 s" in page
