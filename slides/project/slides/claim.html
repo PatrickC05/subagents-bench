@@ -11,10 +11,12 @@
 </ul>
 </div>
 <div style="flex:1;display:flex;flex-direction:column;gap:20px;background:#FFFFFF;border:1px solid #DCD8CE;border-radius:16px;padding:40px">
-<h3 style="font-size:36px;font-weight:600">Closest work: AsyncTool</h3>
-<p style="font-size:30px;line-height:1.45;color:#4A5568">Delayed tool feedback hurts agents; models that coordinate task switching do better.</p>
-<p style="font-size:30px;line-height:1.45;color:#14213D"><b>We differ:</b> we measure availability to the user and to requests not yet known, and whether the agent can say when each fix will be ready.</p>
+<h3 style="font-size:36px;font-weight:600">Closest work</h3>
+<p style="font-size:28px;line-height:1.4;color:#4A5568"><b style="color:#14213D">Gaia2</b> (Froger et al., ICLR 2026): environments that change on their own, with time limits; GPT-5 (high) leads at 42% but fails time-sensitive tasks.</p>
+<p style="font-size:28px;line-height:1.4;color:#4A5568"><b style="color:#14213D">AsyncTool:</b> delayed tool feedback hurts agents; those that coordinate task switching do better.</p>
+<p style="font-size:28px;line-height:1.4;color:#14213D"><b>We differ:</b> a coding agent’s availability to the user while its own work runs, whether delegating to small subagents buys it, and whether it can say when each fix will be ready.</p>
+<p style="font-size:24px;color:#6A7280">Gaia2: arxiv.org/abs/2602.11964</p>
 </div>
 </div>
-<aside>The claim is simple. If the orchestrator hands work to subagents that run in the background, it should stay free to read and answer the user. If that holds, new requests get answered sooner, the earlier work keeps going, and we still fix bugs. The closest work we found is AsyncTool, which shows delayed tool feedback hurts agents. We differ in focus: we care about availability to the user and to requests that are not known yet, and whether the agent can predict when its work will be done.</aside>
+<aside>The claim is simple. If the orchestrator hands work to subagents that run in the background, it should stay free to read and answer the user. If that holds, new requests get answered sooner, the earlier work keeps going, and we still fix bugs. The closest work is Gaia2, from Meta at ICLR 2026, which benchmarks agents in environments that change on their own under time limits; even the best model, GPT-5 on high, fails the time-sensitive tasks. AsyncTool shows delayed tool feedback hurts agents. We differ in focus: we care about availability to the user and to requests that are not known yet, and whether the agent can predict when its work will be done.</aside>
 </section>
