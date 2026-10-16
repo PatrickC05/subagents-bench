@@ -55,6 +55,7 @@ class Orchestrator:
         self.who = Who("orchestrator", "orchestrator")
         self.dispatches_left = config.subagent.max_dispatches
         self.messages: list[Message] = []
+        self.has_finish = True  # interactive episodes have no `finish`
 
     def run(self, instruction: str) -> str:
         """Run the episode, finalize its records and return the exit reason."""
@@ -125,7 +126,7 @@ class Orchestrator:
                     results.append(ToolResult(tc.id, "[not run: finish was called earlier in this step]", True))
                     continue
                 out = self._tool(tc, step, call_id, groups)
-                finished = tc.name == "finish"
+                finished = tc.name == "finish" and self.has_finish
                 results.append(ToolResult(tc.id, out.text, out.is_error))
                 if self.rec.stop_event.is_set():
                     raise AgentStopped("episode stopped")
@@ -143,7 +144,7 @@ class Orchestrator:
         def record(run: Callable[[], ToolOutput], who: Who = self.who) -> ToolOutput:
             return self.rec.tool(who, step, call_id, tc, run)
 
-        if tc.name == "finish":
+        if tc.name == "finish" and self.has_finish:
             return record(lambda: ToolOutput("Episode finished."))
         if tc.name == "spawn_subagents" and self.subagents:
             instructions = tc.arguments.get("instructions")
@@ -187,7 +188,7 @@ class Orchestrator:
                 sections = [(f"{d.agent_id}: {r.status}, {r.steps_used} steps", r.report) for d, r in zip(ds, results)]
         finally:
             self.rec.write("spawns", {
-                "group_id": group_id, "step": step, "strategy": s.strategy, "scope": s.scope,
+                "group_id": group_id, "step": step, "strategy": s.strategy, "scope": s.scope, "spawn_mode": "blocking",
                 "requested": len(instructions), "granted": granted, "dispatch_ids": dispatch_ids,
                 "arbitration_ids": arbitration_ids, "t_start": t_start, "t_end": time.time(),
             })

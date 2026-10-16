@@ -1,0 +1,16 @@
+# A 2-minute smoke of swe_interactive_baseline_modal.yaml for fast feedback that the Modal path works
+# end to end: a bug every 30 s (4 bugs), the 3 settings on click and echo, 1 round = 3 jobs, 6 sessions.
+#   scripts/run_experiment.sh configs/sweeps/swe_interactive_baseline_modal_smoke.yaml --jobs-at-once 3
+extends: configs/sweeps/swe_interactive_baseline_modal.yaml
+name: swe_interactive_baseline_modal_smoke
+rounds: 1
+
+overrides:
+  interactive:
+    wall_clock_sec: 120
+    interval_sec: 30
+
+harbor:
+  # x the tasks' 43200 s agent timeout = 432 s: the 120 s session, preflight's 120 s grace, and room
+  # for the subagents' shutdown and the end kill.
+  agent_timeout_multiplier: 0.01

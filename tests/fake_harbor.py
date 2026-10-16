@@ -8,7 +8,8 @@ reward 0), grader (the grader itself failed), verifier (its separate verifier fa
 started: no reward); shared_verifier is the same failure in a verifier that shares the agent's
 container (Terminal-Bench). Whole-job modes: absent (exit 1 before creating the job dir), slow
 (1 s between trials), outage (a provider failure, then hang until SIGINT), hang (no trial, hang
-until SIGINT).
+until SIGINT). ``$FAKE_HARBOR_TIMES``, if set, gets a ``start`` and an ``end`` line per call (with
+its job and ``time.time()``), to check how many run at once.
 """
 
 from __future__ import annotations
@@ -62,12 +63,26 @@ def write_job(job_dir: Path, n_total: int, finished: bool) -> None:
 
 
 def main(args: list[str]) -> int:
+    times = os.environ.get("FAKE_HARBOR_TIMES")
+    if not times or args == ["--version"]:
+        return _main(args)
+    job = args[args.index("--job-name") + 1]
+    with open(times, "a") as f:
+        f.write(json.dumps({"job": job, "event": "start", "t": time.time()}) + "\n")
+    try:
+        return _main(args)
+    finally:
+        with open(times, "a") as f:
+            f.write(json.dumps({"job": job, "event": "end", "t": time.time()}) + "\n")
+
+
+def _main(args: list[str]) -> int:
     if args == ["--version"]:
         print("0.24.0")
         return 0
     with open(os.environ["FAKE_HARBOR_LOG"], "a") as f:
         f.write(json.dumps({"argv": args, "config": os.environ.get("SUBAGENTS_BENCH_CONFIG"), "cwd": os.getcwd(),
-                            "pgid": os.getpgid(0)}) + "\n")
+                            "pgid": os.getpgid(0), "hints_dir": os.environ.get("SUBAGENTS_BENCH_HINTS_DIR")}) + "\n")
     tasks = [args[i + 1] for i, a in enumerate(args) if a == "-i"]
     job = args[args.index("--job-name") + 1]
     mode = json.loads(Path(os.environ["FAKE_HARBOR_MODES"]).read_text()).get(job, "ok")

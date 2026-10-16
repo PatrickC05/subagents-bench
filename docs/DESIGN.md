@@ -92,6 +92,19 @@ explicit context-length phrase, vLLM's "maximum model length" included.
 Neither is retried. Anything else that survives the retries is a
 `ProviderError`.
 
+**Several tool calls in one Gemma reply.** Sail's tool-call parsing for
+Gemma-4-31B fails when a reply holds more than one tool call. It streams the
+first call, sometimes under index 3, then an `upstream_error` chunk ("chat
+completion failed"). The same request fails the same way on every retry, so
+the provider fail-fast ended the session. In the interactive sweeps of
+2026-10-14 this happened on 3 of Gemma's 4 two-call replies, and on all 12
+replays of them; its 415 one-call replies never failed, and
+`parallel_tool_calls: false` is ignored. When a stream error comes once a tool
+call has started, the client retries with a note at the end of the system
+prompt ("Reply with exactly one tool call"). The model then answers with one
+call: 9 of 9 replays succeeded on that retry. The call records
+`one_call_retry`. Every other request is sent unchanged.
+
 ## Runtime
 
 ### Environment and tools (`environment.py`, `tools.py`)
@@ -196,6 +209,330 @@ fails its delegation gate (exit 3) when a subagent condition never
 delegated in any valid episode, so a sweep cannot quietly measure the wrong
 thing.
 
+### Interactive sessions (`interactive.py`, `hints.py`)
+
+A batch episode gives the orchestrator one request and a step budget. An
+interactive episode (`interactive:` in the config) is a timed session
+that measures something else: how fast the agent turns to a new request
+while earlier ones are still in progress, the way a user keeps adding
+"and also look at X" to a running session. SWE-sweep fits this because one
+task is one repository with 6-14 bugs (subtasks) in the sweeps' 10
+repositories, each graded on its own hidden tests, so a request about bug k
+is a new area of the same codebase rather than a fresh context.
+
+**The schedule.** The harness reads the task dir's
+`tests/swesweep_eval.json` on the host (the agent's container has no
+`tests/`), shuffles the subtasks with a seed per task (`order_seed`, the same
+order in every condition, so conditions are compared on the same sequence)
+and sends subtask k as a hint at `k x interval_sec` (300 s), as many as fit
+in `wall_clock_sec` (3600 s: 12) and the task has. With
+`vary_order_by_round` (the default) round k of a sweep uses seed
+`order_seed + k - 1`: the conditions of a round see the same order, and the
+rounds sample different ones, so hint position is not tied to one subtask.
+The first user message is the task instruction plus `Hint: <hint 0>`
+(SWE-sweep's instruction already allows a `Hint:` section in the first
+message); later ones say "Another one, while you keep working on the earlier
+ones." SWE-sweep's instruction asks for every bug in the repository; with
+`scope: reported` (the default) the first message adds that in this session
+the user points out the bugs and the agent fixes those, the rules still
+applying. Otherwise a bug the agent found and fixed before its hint would
+look like a hint it never started (the analysis also records such work as
+`pre_touched`/`pre_edited` rather than crediting it). A hint names the
+files the reference fix changes (`files`) and by default the hidden tests'
+ids (`tests`). Those ids describe the behaviour in most repositories
+(`test_symlink_resolution`), not in goawk (`interp::TestInterp`) or libexpat
+(`runtests`), which is why `swe_interactive.yaml` uses click, pint, isort
+and echo. Some hidden tests extend a test the repository has (echo's
+`TestContext_Scheme` gains cases), so the hint says "the version of it that
+checks this is not in the repository" rather than that the test is new. `report` instead sends a one-to-three-sentence bug report written
+beforehand from the hidden test patch by `subagents-bench hints` (the first
+interactive condition's orchestrator model, told not to describe the fix),
+read from `jobs/<sweep>/hints/<task>.json`. A scripted, timed user rather
+than harbor's simulated user (an LLM that converses through a bridge): the
+stimulus must be identical across conditions and arrive at fixed times,
+whatever the agent does.
+
+**Delivery.** Messages are delivered only between steps, as one user
+message (hints and reports in arrival order, merged into the previous
+message when that is a user message, so turns alternate). A hint that
+arrives during the orchestrator's LLM call, its own tools or a blocking
+`spawn_subagents` waits for the step to end. That queueing is the quantity
+of interest: a single agent running a 10-minute test suite cannot hear the
+user until it finishes, and neither can an orchestrator blocked on its
+subagents. There is no `finish` (a call to it is an unknown tool), and the
+note after each step is `[m:ss of 60:00 elapsed; subagents running: sub-3
+(2:10), ...; dispatch budget left: D]`. `wait(timeout_sec?)` blocks until a
+hint is due, a report is ready or the timeout passes; a reply without a
+tool call waits the same way (the end of a chat turn), recorded as a `wait`
+tool with `{"implicit": true}`. `timeout_sec` 0 or less checks once,
+numeric strings are read, and anything longer than the session is capped.
+The session ends at `wall_clock_sec` (a timer sets the recorder's stop
+event, every agent unwinds as on harbor's cancel, exit `deadline`) or, with
+`end_when_idle`, when every hint was sent, nothing runs and the orchestrator
+waits without a timeout (exit `idle`): a timed `wait` runs its course, since
+the agent may be waiting on its own background command, and a `wait` that
+found nothing left does not end the session when a later tool of the same
+step started a subagent. Nothing is delivered after the last step: what is
+pending then is recorded undelivered. `budget.orchestrator_steps` is only a
+safety cap (2000 in the sweep: every wait is a step). Afterwards the harbor agent runs the cancel's kill script, since
+commands of stopped subagents keep running in the container, and records
+`end_kill`.
+
+**Background subagents.** With `subagent.spawn_mode: background` (parallel
+strategy only), `spawn_subagents` starts each granted instruction on a pool
+of `max_concurrent` threads and returns at once, naming the subagents;
+granted = min(requested, free slots, dispatches left). Each report is
+delivered like a hint when its subagent ends, capped like a blocking spawn's.
+`blocking` keeps the batch behaviour, so the three interactive conditions
+separate where a hint waits: behind the agent's own commands (single),
+behind its subagents (blocking), or nowhere but the LLM call (background).
+`delegation_hint` in an interactive episode needs background mode and says
+that delegating keeps the orchestrator free to respond; the batch hint's
+step argument does not apply without a step budget. For the parallel
+strategy, the blocking and background prompts share their Subagents text
+apart from when the call returns (the batch text's "one spawn_subagents call
+uses one of your steps" would frame delegation differently). The dispatch
+budget is 60 in the sweep (the batch study's 15 would run out within
+minutes), and subagents get 20 steps: 8 rarely suffice to investigate, fix
+and test one bug under emulation.
+
+**Context.** A one-hour single agent can outgrow the model's context.
+`max_context_chars` (400000 in the sweep, about 100k tokens) works oldest
+message first once the conversation is over the limit, down to 75% of it so
+the cached prompt prefix changes rarely: tool outputs and delivered
+subagent reports become a marker and old reasoning is dropped (never the
+task message or the newest message); `n_elided_results` counts them. The
+orchestrator's own messages and tool-call arguments are kept, so the limit
+is a target, not a hard bound.
+
+**Session note.** `interactive.session_note` adds a paragraph to the
+first message, before hint 0, the same in every condition; the slow-command
+experiment uses it to make every agent test each fix, so its own commands
+run for minutes.
+
+**Fairplay flags.** SWE-sweep forbids learning a fix from the code's
+"future" or the network. `analysis/fairplay.py` flags tool calls of any
+agent that probe git objects or refs beyond the working tree, use the
+network, or read other installed copies; the analysis warns and reports them
+per tool, episode and condition. A flag is for review: the task images'
+git holds only the `baseline` commit, so the first smoke's `git cat-file
+--batch-all-objects` found nothing.
+
+**Checks.** `preflight` fails an interactive sweep when a task has no
+subtasks, when `report` hints are missing, or when harbor's agent timeout
+(the task's 43200 s x `agent_timeout_multiplier`) is below the session plus
+120 s: SWE-sweep's 0.0833 gives 3599 s, which would cancel a 3600 s session,
+so `swe_interactive.yaml` uses 0.0903 (3900 s). A spec with an interactive
+condition must set `dataset_path`.
+
+#### Requests
+
+The bug-only sessions measure when the agent turns to a request, read off
+its tool calls. That leaves out what the user sees: an agent can keep working
+on the bugs it knows, score well on those latencies and never tell the user
+anything, and nothing rewards it for staying available for requests that have
+not arrived. With `interactive.replies` the user also asks questions about the
+code and checks on progress, and sees only what the agent sends with `reply`;
+the questions are about the user's time (answered or not, how fast, right or
+not), the bugs about fixes and about how well the agent predicts when each
+will be done.
+
+**The stream.** Bugs arrive at `k x interval_sec` as before.
+`questions_per_interval` q puts a question at `k x interval_sec + j x
+interval_sec / (q + 1)`, j = 1..q, after every bug including the last (below
+`wall_clock_sec`); `status_every` n puts a status check at `(k + 0.5) x
+interval_sec` after every bug k with `(k + 1) % n == 0`; `urgent_every` n
+marks bugs n, 2n, ... urgent (never bug 0). Messages due at the same time go
+bug, status check, question, and get ids 1, 2, ... in that order. The texts
+are `Request #4: another bug, while you keep working on the earlier ones.`
+(urgent: `... and this one is urgent: fix it before the earlier ones.`),
+`Question #5: <question>` and `Status check #6: how long until each of your
+open bug requests is fixed? Reply to each with an updated eta_min.`; the
+first message ends with `Request #1: a bug.` and its hint. Questions are drawn
+from the task's pool shuffled with `<seed>:<task>`, so the conditions of a
+round get the same questions in the same order and rounds differ. Questions,
+status checks or urgent bugs without `replies` are a config error (each comes
+with message ids and `reply`); without `replies` nothing changes (no ids, the
+earlier texts). With `end_when_idle` the session can end only after the last
+message of any kind was sent.
+
+**The sweep.** `swe_interactive_requests.yaml` runs 30-minute sessions (6
+bugs every 4 minutes, the last at 20:00, then 10 minutes; harbor's timeout
+0.05 x 43200 s = 2160 s: the 1800 s session, preflight's 120 s grace, and
+240 s more for the background subagents' shutdown and the end kill) on click
+and pint, 2 rounds. Three conditions get the requests (`single_requests`,
+`manager_background_requests`, `background_hinted_requests`); two controls,
+`single_bugsonly` and `manager_background_bugsonly`, set `replies: false`
+and no questions, status checks or urgent bugs, so they get the same bugs at
+the same times as plain hints. They are the baseline for what answering
+costs in fixes and in how fast a new bug is picked up (`hints.csv`,
+`interactivity.csv`), run on the same day and provider as the requests; the
+arrival-rate sessions are a looser second reference (10 bugs, another day).
+5 conditions x 2 tasks x 2 rounds = 20 sessions.
+
+**The reply tool.** `reply(to, text, eta_min?, done?)` writes a line to
+`replies.jsonl` and returns `[sent to the user, re #3]`; nothing is sent back.
+`to` must be the id of a delivered message (`3`, `3.0`, `"3"` and `"#3"` are
+read; any other value, `true` or a string of 10 or more digits included, is
+an error that lists the delivered ids), `text` non-empty. `eta_min` is read as a number of minutes in [0,
+10^6) (a numeric string too); `done` as `true`/`false`, `1`/`0` or the
+strings `"true"`, `"false"`, `"yes"`, `"no"`. Anything else is not dropped
+silently: the reply is still sent, without the estimate (null) or with
+`done` false, and the result says so (`[sent to the user, re #3; eta_min
+ignored: expected a number of minutes >= 0]`, `...; done ignored: expected
+true or false`), so the agent can resend it. The first reply to a question
+also says it was taken as the answer (`[sent to the user, re #5; taken as
+your answer to this question]`); a later reply to the same question, or a
+reply to a bug or status check, does not. So an agent that acknowledged a
+question with "on it" learns, at that step, that the acknowledgement is what
+gets graded. The system prompt adds a
+*Replying to the user* section: the user reads only `reply`, not the agent's
+other text or its tool calls; answer a question from the code, and the first
+reply to a question is taken as the answer, so send it when you have it;
+reply to a bug with `eta_min` (minutes from now) in the first response after
+it arrives, again whenever the estimate changes, and with `done: true` once
+it is fixed and checked; answer a status check with an updated `eta_min` for
+each open bug; fix an urgent bug before the earlier ones. Asking for the
+estimate in the first response (not "once planned") makes `eta_sec` a
+latency the conditions share, and telling the agent the first reply is the
+answer keeps an "on it" acknowledgement from being graded. One channel is what makes "when was the question answered"
+a measurement: in free text an answer can sit in any assistant message, mixed
+with reasoning or stated only implicitly, while here it is the first `reply`
+to the question's id, at a known time, with a text to grade. The cost is that
+an answer written as plain text, or sent with `to` naming the wrong message,
+counts as no answer. The section is the same in every condition, appended
+after the tools; the conditions still differ only in tools, spawn mode and the
+delegation hint.
+
+**Questions.** `subagents-bench questions SPEC`, once before the run, clones
+each task's repository at the ref its Dockerfile checks out (`git clone URL
+/src`, `git -C /src checkout REF`: the source in the image) shallowly to
+`jobs/<sweep>/src/<task>` (`git clone --depth 1 --branch REF`; when REF is a
+commit sha, which `--branch` cannot take and 4 SWE-sweep Dockerfiles check
+out, the failed clone is removed and the whole history is cloned and the sha
+checked out), lists its source files (`.py .go .js .ts .c .h .rs
+.java .rb`, 1500-40000 bytes) minus the files any subtask touches, shuffles
+them per task, and asks the orchestrator model of the first interactive
+condition for two questions per file until it has the most one session asks
+(`--per-task` overrides; 12 in `swe_interactive_requests.yaml`). Skipped:
+a dot dir at the top; any directory in `SKIP_DIRS` (`doc(s)`,
+`example(s)`, `vendor`, `node_modules`, `bench`, `benchmark(s)`,
+`script(s)`, `tools`) or whose name starts or ends with `test` (`tests`,
+`testing`, `unittest`); a file whose name has `test` or `tests` as a
+whole `_`-separated word (`test_units.py`, `units_test.go`, `tests.py`) or
+is `conftest.*` (a `test` inside a word, as in `latest.py` or
+`testing.py`, is kept). The touched files (`touched_files`) are the
+subtasks' target files plus every file named in a `diff --git` header of the
+task's oracle and subtask patches (`tests/oracle/*.patch`,
+`tests/subtasks/*/*.patch`): target files can name a later layout than the
+image's source (pint's `pint/facets/numpy/numpy_func.py` is
+`pint/numpy_func.py` in the image), so excluding them alone would let a
+question land on a file a fix changes. Each question must be answerable from
+that file alone in a sentence or two and name the file or function; the
+reference answer is a value, a name, an exception type or a short
+behaviour. Excluding the touched files keeps the questions off code a fix or
+its tests change (where the reference could turn wrong mid-session, or the
+question could hint at a bug); the agent can still edit a question's file
+before it is asked. A failed call or a reply that is not JSON skips its file
+(a `{"questions": [...]}` object is unwrapped); with too few questions the
+error gives the eligible files and how many were skipped. A billing error is
+not one file's failure: it is re-raised and stops the task's generation,
+rather than being counted as a skip on every remaining file. Existing
+questions are kept unless `--force`, except those about a file now touched
+(written before a patch naming it was known): they are dropped, and their
+file is not asked about again.
+Written to `jobs/<sweep>/hints/<task>.questions.json`; `preflight` builds
+every schedule and fails when a task has fewer questions than a session asks.
+The questions and reference answers are the model's and are not checked by
+hand, and the generator, the judge and the agents can be the same model.
+
+**Grading answers.** `subagents-bench grade-answers SPEC`, after the run,
+judges the first reply to each question of every finished trial (a
+`result.json`; `_`-prefixed job dirs skipped) against the reference answer,
+with the same model as `questions`: correct if it states what the reference
+states (other wording and extra correct detail are fine), wrong if it
+contradicts it, misses its key fact or only says how to find out. Only the
+first reply counts: the user may act on it, and a later correction would let
+an agent answer fast and fix the answer at leisure. Unanswered questions are
+not sent to the judge and have no verdict (`correct` null): `requests.csv`
+gives accuracy both over answered questions (`correct_of_answered`) and over
+every question asked (`correct_of_asked`, an unanswered one counting as not
+correct), so speed and accuracy are not mixed in one number. The verdict must
+be a JSON boolean (or the string `"true"` or `"false"`); anything else, such
+as `"yes"`, `1` or a missing key, is unreadable: `correct: null` and the
+command exits 1. Trials with `answers.json` are skipped unless `--force`.
+Rerun the analysis after grading.
+
+**Estimates.** Done is the first reply with `done: true` (`done_sec`). A
+bug's estimate is its first reply with `eta_min` sent before that done reply
+and not itself the done reply, sent at `eta_sec`; it predicts done at
+`eta_sec + 60 x eta_min`. An `eta_min` on the done reply or after it is not
+an estimate (nothing left to predict). `eta_log2_err = log2(actual /
+predicted)`, with predicted `60 x eta_min` and actual the time from the
+estimate to done, both floored at 30 s so an estimate of 0 or an immediate
+done stays finite; > 0 is late, 1 is twice as long as predicted. Only the
+first estimate is scored, as what the user is first told; it and the later
+ones before done (status checks ask for them) are counted in
+`n_estimates`. A bug estimated and never said done is late: its error is
++inf and `on_time` false, when the session ran past the predicted time or
+ended for any reason but its deadline (`exit_reason` other than `deadline`
+or `cancelled`: the agent stopped, e.g. `idle` or `finished`, so it gave the
+bug up). Only when the deadline (or harbor's cancel) came before the
+predicted time is it censored: error and `on_time` null, since it might
+still have made it. A bug never estimated has neither. Medians of the error
+keep the +inf values (`eta_abs_log2_median` can be +inf when most estimated
+bugs were never said done) and `n_eta_never_done` counts them, so a
+condition that promises fixes and never delivers does not look accurate by
+dropping its misses. Read the error with `done_claimed_frac` and
+`on_time_frac`.
+
+`eta_log2_err` scores the estimate over its own horizon, from when it was
+sent. A late estimate (given after most of the work) has a short horizon, so
+its ratio says little about the wait the user had: a miss of a minute is a
+factor of 2 on a 1-minute horizon, and a horizon under 30 s is floored to
+an error near 0. `eta_total_log2_err = log2((done - sent) / (predicted
+done - sent))`, both floored at 30 s, scores the same prediction from when the
+bug was sent, against the user's whole wait: a bug sent at 0, estimated at
+9:00 as 2 minutes and done at 10:00 is -1 on its own horizon (60 s for 120)
+and log2(600 / 660) = -0.14 from the arrival; one estimated at 0:10 as 1
+minute and done at 10:00 is log2(590 / 60) = 3.3 and log2(600 / 70) = 3.1.
+The never-done and censored cases are those of `eta_log2_err` (+inf, null).
+`eta_total_abs_log2_median` is its median absolute value. Neither error
+charges for estimating late as such (an estimate given just before done is
+close to right on both): that is `eta_sec`, so read the two errors with it.
+
+**Done claims.** `claim_ok` is a done claim the grader confirms: the
+subtask resolved with no visible regression, graded once at the end of the
+session, not when the claim was made. A bug fixed and later broken by other
+work, or any visible regression in the trial, makes its claim false.
+`claim_precision` is over claimed bugs; `fixed_frac` over all bugs, claimed
+or not.
+
+**Urgent first.** For an urgent bug, the earlier bugs still open when it was
+sent (no done reply by then); `urgent_first` is the share of them it was said
+done before, a bug never said done counting as later (an urgent bug never
+said done scores 0), and null when none was open. It uses done claims, not
+the grader or edits: it measures the order the agent reports, which is what
+the user sees.
+
+**Status checks.** The agent is asked to reply to each open bug, so its
+answers go to the bugs' ids; a status check's `reply_sec` is the time from
+when it was sent to the first reply of any kind made after it was delivered
+(a reply in the step that saw it, or later), which a reply the agent was
+about to send anyway also satisfies; a reply made before the agent could see
+the check does not count, and a check never delivered has none. Its
+`eta_min` updates are not scored on their own (they add to `n_estimates`).
+
+**Analysis.** `hints.csv` and `interactivity.csv` still cover only bugs
+(inbox kind `hint`, now with `urgent`); `analysis/requests.py` builds
+`messages.csv` (per message) and `requests.csv` (per condition, valid
+trials). Medians of times count a missing reply as infinitely late (NaN when
+more than half are missing); `first_reply_median_sec` and `eta_median_sec`
+leave out bug 0, which arrives with the task. `episodes.csv` adds
+`n_questions` and `n_replies` per episode. The bugs-only controls have no
+`reply`, so they have no rows in `messages.csv` or `requests.csv`; compare
+them with the request conditions in `hints.csv` and `interactivity.csv`.
+
 ### Provider fail-fast (`records.py`, `orchestrator.py`)
 
 The first provider failure after retries in a call of any role
@@ -283,7 +620,7 @@ the verifier.
 ### Records (`records.py`)
 
 One JSONL file per kind (calls, tools, steps, spawns, dispatches,
-arbitrations, transcript) plus `episode.json`, written as events happen by
+arbitrations, inbox, transcript) plus `episode.json`, written as events happen by
 a thread-safe recorder. Failed and abandoned LLM calls are recorded too.
 `finalize` computes every episode total from the records written, so the
 totals equal the JSONL sums, and closes the episode: records that arrive
@@ -448,10 +785,48 @@ episodes whose critical path exceeds their wall clock (a check that should
 stay 0). With the test fakes, overhead is under 10% of wall clock (thread
 start-up, the marker and `find` execs).
 
+**Interactivity.** `analysis/interactivity.py` turns each hint of an
+interactive episode into a row of latencies after the hint was sent:
+delivery (into the conversation), response (the first orchestrator call that
+saw it returned), dispatch (a subagent started whose instruction names a
+target file or a hidden test's name), touch (any tool call naming a target
+file) and edit (an `edit_file` on one, or a bash command segment naming one
+that writes), plus what the orchestrator was doing when it arrived, what
+had happened to it when the next hint arrived (not started, continued,
+stopped; a stopped hint later counted fixed was finished, otherwise
+dropped), and the grader's verdict for the subtask from
+`verifier/eval.json` (a valid trial without a verdict, e.g. a patch that
+broke the build, counts it unfixed, as the reward does). Summaries leave out
+hint 0, which arrives with the task. Tool records
+keep their arguments (strings cut to 2000 characters) and dispatches their
+instruction for this. File matching is textual: a path or its last two
+components, or a bare basename not inside another path (an agent that `cd`s
+into the package), only when no other hinted target file has that basename
+(pint has three `quantity.py`). It is a heuristic in two ways. Subtasks
+share files: 2231 of SWE-sweep's 4068 subtasks share a target file with
+another subtask of their task, so work on an earlier hint's bug can register
+as touching a later one; the rows flag `shared_files` (an earlier hint) and
+`shares_any` (any other), the summary reports touch and edit for unshared
+hints too, and the status at the next hint only over hints that share no
+file (echo's 6 bugs are in 6 files). And `search`
+over the whole repository is not a touch. Missing events (never happened
+before the session ended) count as infinitely late in the medians, and
+`*_before_next` is the share within one interval, before the next request.
+For a background spawn the critical path counts only starting it (its
+subagents run off the orchestrator's chain), so it stays below the wall
+clock; waits, explicit and implicit, are tool time.
+
+**Requests.** `analysis/requests.py` turns each message of an episode with
+`interactive.replies` (bugs, questions, status checks) into a row of what the
+user got back: the first reply, a question's verdict from `answers.json`, a
+bug's first estimate, done claim and grader verdict, and for the urgent bug
+the order of done claims (definitions under *Interactive sessions*,
+*Requests*). There is no figure for it yet.
+
 **Statistics.** Resolve rates with Wilson 95% intervals; mean cost, wall
 clock and tokens with a seeded percentile bootstrap (2000 resamples).
 
-**Figures.** Eight PNGs with captions in `index.md` (docs/DATA.md). Colour
+**Figures.** Nine PNGs (the ninth for interactive sessions) with captions in `index.md` (docs/DATA.md). Colour
 is the strategy (parallel blue, sequential orange, arbiter aqua; single agent
 grey); critical-path parts use orchestrator blue, subagent orange, judge
 aqua, tools yellow and overhead grey.

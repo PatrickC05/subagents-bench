@@ -1,0 +1,25 @@
+# The claim: delegating to background subagents keeps the agent responsive to new requests.
+# swe_interactive_smoke.yaml's sessions (echo and click, 15 minutes, a bug every 3 minutes) with two
+# manager conditions, whose orchestrator has only read tools, so every edit and test run goes
+# through a subagent and the spawn mode is what differs:
+#   manager_blocking     spawn_subagents waits for all reports: a new bug waits behind them
+#   manager_background   spawn_subagents returns at once: the orchestrator stays free
+# against single_interactive (no subagents) and background_interactive (all tools: does it choose
+# to delegate), from the parent spec. Run the 4 together:
+#   scripts/run_experiment.sh configs/sweeps/swe_interactive_managers_smoke.yaml \
+#     --only single_interactive manager_blocking manager_background background_interactive
+# First run (2026-10-14, 8 of 8 valid, $0.42): both managers delegated in every session, and
+# background beat blocking on every latency, but the single agent was more responsive than either
+# (median 9 s to receive a new bug vs 25 s and 53 s) and fixed more (5 of 10 sent vs 3 and 3).
+# Its own commands took under 10 s, so it was never stuck behind them; the managers' own LLM
+# calls were longer. tests/test_sweep.py checks the conditions.
+extends: configs/sweeps/swe_interactive_smoke.yaml
+name: swe_interactive_managers_smoke
+
+conditions:
+  manager_blocking:
+    subagent: {strategy: parallel, scope: hard, spawn_mode: blocking}
+    tools: &manager {orchestrator_tools: [read_file, list_dir, search]}
+  manager_background:
+    subagent: {strategy: parallel, scope: hard, spawn_mode: background}
+    tools: *manager

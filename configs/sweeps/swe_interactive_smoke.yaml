@@ -1,0 +1,24 @@
+# Smoke of swe_interactive.yaml: its 4 conditions on 2 repositories x 1 round = 4 harbor jobs,
+# 8 episodes, in 15-minute sessions with a hint every 3 minutes (5 hints) instead of 60 and 5.
+# It checks the whole path (hints, background subagents, wait, records, grading, the
+# interactivity analysis) and gives a first cost and latency per session before the full run.
+#   scripts/run_experiment.sh configs/sweeps/swe_interactive_smoke.yaml
+# First run (2026-10-14, the 4 conditions at once): 8 of 8 trials valid, about 16 min per job,
+# $0.22 in all; 17 of the 40 bugs sent were fixed, and 1 of the 6 subagent sessions delegated.
+# tests/test_sweep.py checks it against swe_interactive.yaml.
+extends: configs/sweeps/swe_interactive.yaml   # its conditions and overrides; everything set here wins
+name: swe_interactive_smoke
+tasks:                               # language, bugs
+  - swe-sweep__echo                  # Go, 6 (every bug in its own file)
+  - swe-sweep__click                 # Python, 13
+rounds: 1
+
+overrides:
+  interactive:
+    wall_clock_sec: 900
+    interval_sec: 180
+
+harbor:
+  # x the tasks' 43200 s agent timeout = 1296 s: the 900 s session plus preflight's 120 s grace,
+  # with room; a stuck trial is cut after about 22 minutes instead of 65.
+  agent_timeout_multiplier: 0.03

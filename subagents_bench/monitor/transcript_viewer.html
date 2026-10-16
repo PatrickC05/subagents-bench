@@ -1,0 +1,320 @@
+<style>
+/* Transcript viewer: hidden until asked for; loads transcripts/<job>__<trial>.json on first open. */
+.tx { display: grid; gap: 10px; min-width: 0; border-top: 1px solid var(--grid); padding-top: 10px; }
+.tx > .meta { margin-left: 2px; }
+.txbtn, .txf button { font: 500 12.5px var(--body); color: var(--ink); background: var(--bg); border: 1px solid var(--rule); border-radius: 5px; padding: 5px 12px; cursor: pointer; }
+.txbtn { justify-self: start; }
+.txbtn:hover, .txf button:hover { border-color: var(--muted); }
+.txbtn:focus-visible, .txf button:focus-visible, .tx summary:focus-visible { outline: 2px solid var(--think); outline-offset: 2px; }
+.txbody { display: grid; gap: 8px; min-width: 0; }
+.txbody[hidden] { display: none; }
+.txhead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+.txf { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.txf button { padding: 3px 10px; font-size: 12px; color: var(--ink2); }
+.txf button[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.txmsg { margin: 0; color: var(--muted); font-size: 13px; }
+.txmsg.err { color: var(--bad-fg); }
+.txl { display: grid; gap: 2px; min-width: 0; }
+.m { display: grid; grid-template-columns: 50px minmax(0, 1fr); gap: 2px 10px; padding: 6px 8px 6px 0; border-bottom: 1px solid var(--grid); min-width: 0; }
+.m > .ck { font: 11.5px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; padding-top: 1px; }
+.m > .bd { min-width: 0; display: grid; gap: 4px; }
+.rl { font: 600 10.5px var(--mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); overflow-wrap: anywhere; }
+.chg { font-size: 12px; color: var(--ink2); overflow-wrap: anywhere; }
+.chg code { font: 11.5px var(--mono); }
+.m.user { background: color-mix(in srgb, var(--grid) 55%, transparent); border-left: 3px solid var(--bug); }
+.m.user .rl { color: var(--ink); }
+.m.user.k-question { border-left-color: var(--question); }
+.m.user.k-question .rl { color: var(--question); }
+.m.user.k-status { border-left-color: var(--status); }
+.m.user.k-status .rl { color: var(--status); }
+.m.user.urgent { border-left-color: var(--urgent); }
+.m.user.urgent .rl { color: var(--urgent); }
+.m.report { border-left: 3px solid var(--sub); }
+.m.report .rl { color: var(--sub); }
+.m.reply { background: color-mix(in srgb, var(--live-bg) 70%, transparent); border-left: 3px solid var(--live-fg); }
+.m.reply .rl { color: var(--live-fg); }
+.txt { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; color: var(--ink); max-width: 100ch; }
+.m.tool .txt, .m.assistant .txt { color: var(--ink2); }
+.tc { display: grid; gap: 3px; min-width: 0; }
+.tc .nm { font: 500 12px var(--mono); color: var(--tool); }
+.tc .nm .arg { color: var(--ink2); font-weight: 400; overflow-wrap: anywhere; }
+.tx pre { margin: 0; font: 11.5px/1.45 var(--mono); color: var(--ink2); background: var(--bg); border: 1px solid var(--grid); border-radius: 4px; padding: 6px 8px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 340px; overflow: auto; min-width: 0; }
+.tx pre.err { border-color: var(--bad-fg); }
+.tx details > summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.tx details[open] > summary { margin-bottom: 4px; }
+.tx details.rsn > summary { color: var(--think); }
+.subgrp { border: 1px solid var(--rule); border-left: 3px solid var(--sub); border-radius: 4px; padding: 6px 8px; margin: 4px 0 4px 20px; min-width: 0; }
+.tx .subgrp > summary { color: var(--ink2); font-size: 12.5px; overflow-wrap: anywhere; }
+.subgrp > summary b { color: var(--sub); font-family: var(--mono); font-weight: 600; }
+.subgrp .txl { margin-top: 6px; }
+.txsubs { display: grid; gap: 4px; }
+.txbody.f-talk .m:not(.talk), .txbody.f-talk .subgrp, .txbody.f-talk .sysp, .txbody.f-talk .txsubs { display: none; }
+.txbody.f-nosubs .subgrp, .txbody.f-nosubs .txsubs { display: none; }
+@media (max-width: 520px) { .m { grid-template-columns: 40px minmax(0, 1fr); gap: 2px 6px; } .subgrp { margin-left: 4px; } }
+</style>
+<script>
+(() => {
+  const LONG = 700, LONG_LINES = 14;
+  const clock = (s) => {
+    if (s == null || !isFinite(s)) return "\u2013";
+    const neg = s < 0; s = Math.abs(Math.round(s));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = String(s % 60).padStart(2, "0");
+    return (neg ? "-" : "") + (h ? h + ":" + String(m).padStart(2, "0") + ":" + x : m + ":" + x);
+  };
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function pre(text, cls) { return el("pre", cls, text == null ? "" : String(text)); }
+  function isLong(t) { return t.length > LONG || t.split("\n", LONG_LINES + 1).length > LONG_LINES; }
+  // a long block collapses behind a summary; a short one shows as is
+  function block(text, label, cls) {
+    text = text == null ? "" : String(text);
+    if (!isLong(text)) return pre(text, cls);
+    const d = el("details");
+    const lines = text.split("\n").length;
+    d.append(el("summary", null, label + " \u00b7 " + lines + " lines, " + text.length.toLocaleString() + " chars"), pre(text, cls));
+    return d;
+  }
+  function row(t, cls, label) {
+    const m = el("div", "m " + cls);
+    const bd = el("div", "bd");
+    bd.append(el("div", "rl", label));
+    m.append(el("div", "ck", clock(t)), bd);
+    return [m, bd];
+  }
+  // One transcript turn can hold several deliveries ("[m:ss elapsed] Message from the user: ..." or
+  // "[m:ss elapsed] Report from subagent ..."); each becomes its own row with its own label.
+  const SEG_RE = /^\[[^\]\n]*elapsed\] (?=Message from the user:|Report from subagent)/gm;
+  const USER_RE = /^\s*(?:\[[^\]\n]*\]\s*)?Message from the user:\s*(?:(Question|Request|Status check) #(\d+))?/;
+  function segments(c) {
+    c = c || "";
+    const at = [];
+    let mm;
+    SEG_RE.lastIndex = 0;
+    while ((mm = SEG_RE.exec(c))) at.push(mm.index);
+    if (!at.length || at[0] > 0) at.unshift(0);
+    return at.map((a, i) => c.slice(a, i + 1 < at.length ? at[i + 1] : c.length).replace(/\s+$/, ""));
+  }
+  function userLabel(c, st) {
+    // st: per-thread state {first, bugs (count by arrival), urgent (Set of inbox msg ids)}
+    c = c || "";
+    if (st.first) {
+      st.first = false;
+      if (/\bHint:/.test(c)) {
+        st.bugs = 1;
+        return { cls: "user talk", label: "Task with " + (/\bRequest #1\b/.test(c) ? "bug #1" : "bug 1") + " \u00b7 from the user" };
+      }
+      return { cls: "user talk", label: "Task \u00b7 from the user" };
+    }
+    if (/^\s*(\[[^\]\n]*\]\s*)?Report from subagent/.test(c)) return { cls: "report", label: "Subagent report (delivered to the orchestrator)" };
+    const mm = USER_RE.exec(c);
+    if (mm && mm[1]) {
+      const kind = mm[1] === "Request" ? "bug" : mm[1] === "Question" ? "question" : "status";
+      if (kind === "bug") st.bugs++;
+      const head = c.slice(mm[0].length).split("\n", 1)[0];
+      const urgent = kind === "bug" && (st.urgent.has(Number(mm[2])) || /\burgent\b/i.test(head));
+      const name = kind === "bug" ? "Bug" : mm[1];
+      return { cls: "user talk k-" + kind + (urgent ? " urgent" : ""), label: name + " #" + mm[2] + (urgent ? " \u00b7 urgent" : "") + " \u00b7 from the user" };
+    }
+    if (mm && /\bHint:/.test(c)) {  // a bug with no number in the text (bugs-only sessions): numbered by arrival
+      st.bugs++;
+      const urgent = /\burgent\b/i.test(c.slice(mm[0].length).split("\n", 2).join(" "));
+      return { cls: "user talk k-bug" + (urgent ? " urgent" : ""), label: "Bug " + st.bugs + " (by arrival)" + (urgent ? " \u00b7 urgent" : "") + " \u00b7 from the user" };
+    }
+    return { cls: "user talk", label: "Message to the agent" };
+  }
+  const STATUS = { submitted: "submitted a report", no_tool_call: "stopped without submitting", max_steps: "hit the step limit", running: "running" };
+  function argLine(name, a) {
+    a = a && typeof a === "object" ? a : {};
+    switch (name) {
+      case "read_file": return (a.path || "") + (a.start_line != null || a.end_line != null ? "  lines " + (a.start_line ?? "") + "\u2013" + (a.end_line ?? "") : "");
+      case "edit_file": case "list_dir": return a.path || "";
+      case "search": return JSON.stringify(a.pattern ?? "") + (a.path ? "  in " + a.path : "");
+      case "wait": return a.timeout_sec != null ? a.timeout_sec + " s" : "";
+      case "spawn_subagents": return (Array.isArray(a.instructions) ? a.instructions.length : "?") + " instruction(s)";
+      default: return "";
+    }
+  }
+  function toolCall(name, a) {
+    const box = el("div", "tc");
+    const nm = el("div", "nm", "\u2192 " + name + " ");
+    nm.append(el("span", "arg", argLine(name, a)));
+    box.append(nm);
+    a = a && typeof a === "object" ? a : {};
+    if (name === "bash") box.append(block(a.command ?? "", "command"));
+    else if (name === "edit_file") {
+      const d = el("details");
+      d.append(el("summary", null, "old \u2192 new"), el("div", "rl", "old"), pre(a.old), el("div", "rl", "new"), pre(a.new));
+      box.append(d);
+    } else if (name === "spawn_subagents" && Array.isArray(a.instructions)) {
+      a.instructions.forEach((ins, i) => box.append(block(ins, "instruction " + (i + 1))));
+    } else if (name === "submit") box.append(block(a.report ?? "", "report"));
+    else if (!["read_file", "list_dir", "search", "wait"].includes(name)) box.append(block(JSON.stringify(a, null, 1), "arguments"));
+    return box;
+  }
+  function renderThread(msgs, names, opts) {
+    // names: call id -> tool name (shared per thread); opts.after: index -> [nodes to put after it]
+    const frag = document.createDocumentFragment();
+    const st = { first: true, bugs: 0, urgent: new Set(opts.urgent || []) };
+    msgs.forEach((m, i) => {
+      if (m.r === "user") {
+        (opts.sub ? [m.c || ""] : segments(m.c)).forEach((c) => {
+          const u = opts.sub ? { cls: "user", label: "Instruction" } : userLabel(c, st);
+          const [r, bd] = row(m.t, u.cls, u.label);
+          if (opts.sub || (u.label.startsWith("Task") && isLong(c))) {
+            const d = el("details");
+            d.append(el("summary", null, (opts.sub ? "instruction" : "task") + " \u00b7 " + c.length.toLocaleString() + " chars"), pre(c));
+            bd.append(d);
+          } else bd.append(el("div", "txt", c));
+          frag.append(r);
+        });
+      } else if (m.r === "assistant") {
+        const calls = m.tc || [];
+        const others = calls.filter((c) => c[1] !== "reply");
+        if (m.c || m.k || others.length || !calls.length) {
+          const [r, bd] = row(m.t, "assistant", opts.sub ? "Subagent" : "Agent");
+          if (m.k) {
+            const d = el("details", "rsn");
+            d.append(el("summary", null, "Reasoning \u00b7 " + m.k.length.toLocaleString() + " chars"), pre(m.k));
+            bd.append(d);
+          }
+          if (m.c) bd.append(el("div", "txt", m.c));
+          others.forEach((c) => bd.append(toolCall(c[1], c[2])));
+          if (!m.c && !m.k && !calls.length) bd.append(el("div", "txt muted", "(empty message)"));
+          frag.append(r);
+        }
+        calls.forEach((c) => {
+          names[c[0]] = c[1];
+          if (c[1] !== "reply") return;
+          const a = c[2] || {};
+          const bits = ["Reply to #" + (a.to ?? "?")];
+          if (a.eta_min != null) bits.push("eta " + a.eta_min + " min");
+          if (a.done) bits.push("done");
+          const [r, bd] = row(m.t, "reply talk", bits.join(" \u00b7 ") + " \u00b7 what the user saw");
+          bd.append(el("div", "txt", a.text ?? ""));
+          frag.append(r);
+        });
+      } else if (m.r === "tool") {
+        const [r, bd] = row(m.t, "tool", "Tool result" + ((m.tr || []).length > 1 ? "s" : ""));
+        (m.tr || []).forEach((x) => {
+          const nm = names[x[0]] || "tool";
+          const lab = nm + (x[2] ? " \u00b7 error" : "");
+          const t = x[1] ?? "";
+          if (!isLong(t)) bd.append(el("div", "rl", lab));
+          bd.append(block(t, lab, x[2] ? "err" : null));
+        });
+        if (m.c) bd.append(el("div", "txt", m.c));
+        frag.append(r);
+      } else {
+        const [r, bd] = row(m.t, "system", m.r === "system" ? (opts.sub ? "Subagent system prompt" : "System message") : (m.r || "message"));
+        bd.append(block(m.c ?? "", "text"));
+        frag.append(r);
+      }
+      const extra = opts.after && opts.after[i];
+      if (extra) extra.forEach((n) => frag.append(n));
+    });
+    return frag;
+  }
+  function subGroup(s, startLabel) {
+    const d = el("details", "subgrp");
+    const sm = el("summary");
+    const first = (s.instruction || "").split("\n").find((l) => l.trim()) || "(no instruction recorded)";
+    const nf = (s.files || []).length;
+    const meta = [s.status ? (STATUS[s.status] || s.status) : "?", (s.steps != null ? s.steps + " steps" : null),
+      clock(s.t_start) + "\u2013" + (s.t_end != null ? clock(s.t_end) : "running"),
+      nf ? nf + (nf === 1 ? " file" : " files") + " changed" : null].filter(Boolean).join(" \u00b7 ");
+    sm.append(el("b", null, s.agent || s.dispatch || "sub"), document.createTextNode(" " + (startLabel || "") + meta + " \u00b7 " + (first.length > 160 ? first.slice(0, 160) + "\u2026" : first)));
+    d.append(sm);
+    d.addEventListener("toggle", () => {  // a subagent's messages are built on first open
+      if (!d.open || d.dataset.built) return;
+      d.dataset.built = "1";
+      const l = el("div", "txl");
+      if ((s.files && s.files.length) || s.noise) {
+        const ch = el("div", "chg", "Changed: ");
+        (s.files || []).forEach((f, i) => { if (i) ch.append(", "); ch.append(el("code", null, f)); });
+        if (!(s.files || []).length) ch.append("no source files");
+        if (s.noise) ch.append(" (plus " + s.noise + " git or test-cache file" + (s.noise === 1 ? "" : "s") + ", not listed)");
+        l.append(ch);
+      }
+      l.append(renderThread(s.msgs || [], {}, { sub: true }));
+      if (!(s.msgs || []).length) l.append(el("p", "txmsg", "No messages recorded yet."));
+      d.append(l);
+    });
+    return d;
+  }
+  function render(body, data) {
+    body.textContent = "";
+    const head = el("div", "txhead");
+    const nSub = (data.subs || []).length;
+    head.append(el("span", "meta", (data.msgs || []).length + " orchestrator messages \u00b7 " + nSub + " subagent run" + (nSub === 1 ? "" : "s") + (data.live ? " \u00b7 live: as of the last build" : "")));
+    const f = el("div", "txf");
+    f.setAttribute("role", "group");
+    f.setAttribute("aria-label", "Filter the transcript");
+    [["all", "Show all"], ["talk", "Only user messages and replies"], ["nosubs", "Hide subagents"]].forEach(([k, lab]) => {
+      const b = el("button", null, lab);
+      b.type = "button";
+      b.dataset.f = k;
+      b.setAttribute("aria-pressed", k === "all" ? "true" : "false");
+      f.append(b);
+    });
+    f.addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-f]");
+      if (!b) return;
+      f.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b ? "true" : "false"));
+      body.classList.toggle("f-talk", b.dataset.f === "talk");
+      body.classList.toggle("f-nosubs", b.dataset.f === "nosubs");
+    });
+    head.append(f);
+    body.append(head);
+    if (data.sys) {
+      const d = el("details", "sysp");
+      d.append(el("summary", null, "System prompt \u00b7 " + data.sys.length.toLocaleString() + " chars"), pre(data.sys));
+      body.append(d);
+    }
+    const after = {}, loose = [];
+    (data.subs || []).forEach((s) => {
+      if (s.after != null) (after[s.after] = after[s.after] || []).push(subGroup(s));
+      else loose.push(s);
+    });
+    const l = el("div", "txl");
+    l.append(renderThread(data.msgs || [], {}, { after, urgent: data.urgent }));
+    body.append(l);
+    if (loose.length) {
+      const box = el("div", "txsubs");
+      box.append(el("div", "eyebrow", "Subagents"));
+      loose.forEach((s) => box.append(subGroup(s, "spawned " + clock(s.t_start) + " \u00b7 ")));
+      body.append(box);
+    }
+  }
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest(".txbtn");
+    if (!btn) return;
+    const wrap = btn.closest(".tx");
+    const body = document.getElementById(btn.getAttribute("aria-controls"));
+    const open = btn.getAttribute("aria-expanded") !== "true";
+    btn.setAttribute("aria-expanded", String(open));
+    btn.textContent = open ? "Hide transcript" : "Show transcript";
+    body.hidden = !open;
+    if (!open || wrap.dataset.state === "loading" || wrap.dataset.state === "done") return;
+    wrap.dataset.state = "loading";
+    body.textContent = "";
+    body.append(el("p", "txmsg", "Loading transcript\u2026"));
+    fetch(wrap.dataset.src).then((r) => {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    }).then((data) => {
+      render(body, data);
+      wrap.dataset.state = "done";
+    }).catch((err) => {
+      wrap.dataset.state = "";
+      body.textContent = "";
+      const local = location.protocol === "file:";
+      body.append(el("p", "txmsg err", "Could not load this transcript (" + (err && err.message || err) + "). " +
+        (local ? "Opened as a local file, the page cannot fetch it: serve the folder or open the published page." : "Hide and show again to retry.")));
+    });
+  });
+})();
+</script>

@@ -1,4 +1,4 @@
-"""``python -m subagents_bench.plots ANALYSIS_DIR --out FIGDIR``: the eight figures as PNG plus
+"""``python -m subagents_bench.plots ANALYSIS_DIR --out FIGDIR``: the figures as PNG plus
 ``index.md`` with a caption for each."""
 
 from __future__ import annotations
@@ -10,13 +10,14 @@ import pandas as pd
 
 from .figures import FIGURES
 
-TABLES = ("episodes", "conditions", "calls", "tools", "dispatches", "arbitrations")
+TABLES = ("episodes", "conditions", "calls", "tools", "dispatches", "arbitrations", "interactivity",
+          "hint_positions")
 
 
 def _read(path: Path) -> pd.DataFrame:
     try:
         return pd.read_csv(path)
-    except pd.errors.EmptyDataError:  # a table without rows (e.g. no arbitrations)
+    except (pd.errors.EmptyDataError, FileNotFoundError):  # a table without rows, or from an older analysis
         return pd.DataFrame()
 
 

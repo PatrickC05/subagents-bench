@@ -1,4 +1,4 @@
-"""Command line: ``subagents-bench validate|preflight|sweep`` (exit codes in :mod:`subagents_bench.sweep`)."""
+"""Command line: ``subagents-bench validate|preflight|sweep|hints|questions|grade-answers`` (exit codes in :mod:`subagents_bench.sweep`)."""
 
 from __future__ import annotations
 
@@ -33,6 +33,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true", help="print the jobs and their harbor commands; run nothing")
     p.add_argument("--only", nargs="+", metavar="COND", help="run only these conditions")
     p.add_argument("--rounds", type=_rounds, help="comma-separated rounds to run, e.g. 1,2")
+    p.add_argument("--jobs-at-once", type=int, default=1, metavar="N",
+                   help="harbor jobs to run side by side (default 1; each runs its own sessions)")
+    p = sub.add_parser("hints", help="write the bug reports of an interactive sweep (hint_detail: report)")
+    p.add_argument("spec", help="sweep spec (configs/sweeps/*.yaml)")
+    p.add_argument("--force", action="store_true", help="rewrite reports that already exist")
+    p = sub.add_parser("questions", help="write the code questions of an interactive sweep (questions_per_interval)")
+    p.add_argument("spec", help="sweep spec (configs/sweeps/*.yaml)")
+    p.add_argument("--per-task", type=int, help="questions per task (default: the most one session asks)")
+    p.add_argument("--force", action="store_true", help="rewrite questions that already exist")
+    p = sub.add_parser("grade-answers", help="judge the answers to the questions of a sweep's finished trials")
+    p.add_argument("spec", help="sweep spec (configs/sweeps/*.yaml)")
+    p.add_argument("--force", action="store_true", help="grade again trials that already have answers.json")
     return parser
 
 
@@ -64,7 +76,16 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.cmd == "preflight":
             return sweep.preflight(spec, oracle=args.oracle)
-        return sweep.run(spec, jobs, dry_run=args.dry_run)
+        if args.cmd == "hints":
+            return sweep.make_hints(spec, force=args.force)
+        if args.cmd == "questions":
+            return sweep.make_questions(spec, per_task=args.per_task, force=args.force)
+        if args.cmd == "grade-answers":
+            return sweep.grade_answers(spec, force=args.force)
+        if args.jobs_at_once < 1:
+            print("[FAIL] --jobs-at-once must be at least 1", file=sys.stderr)
+            return 2
+        return sweep.run(spec, jobs, dry_run=args.dry_run, jobs_at_once=args.jobs_at_once)
     except KeyboardInterrupt:
         return 130
 

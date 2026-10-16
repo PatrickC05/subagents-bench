@@ -1,11 +1,13 @@
 """Measured critical path of an episode, split into orchestrator LLM, subagent LLM,
 judge/debate LLM and tool time (overhead = wall clock - critical path).
 
-Every agent is a chain of its calls and tools in series. A ``spawn_subagents`` tool on the
-orchestrator chain counts as its group: parallel = max over its dispatches, sequential = sum,
+Every agent is a chain of its calls and tools in series. A blocking ``spawn_subagents`` tool on
+the orchestrator chain counts as its group: parallel = max over its dispatches, sequential = sum,
 arbiter = its arbitrations in series, each = copy setup + max over candidates + per round
 (max over the concurrent debate calls + the judge calls) + the rest (diffs, leak restore,
-apply, cleanup). Arbiter shell steps count as tool time.
+apply, cleanup). Arbiter shell steps count as tool time. A background spawn (interactive
+episodes) returns at once, so it counts as its own short tool time: its subagents run off the
+orchestrator's chain, and the orchestrator's ``wait`` calls are tool time.
 """
 
 from __future__ import annotations
@@ -49,7 +51,8 @@ class _Episode:
         for r in sorted(self.chains[key], key=lambda r: r["t_start"]):
             if "name" not in r:  # an LLM call
                 out[CATEGORY[r["role"]]] += _dur(r)
-            elif r["name"] == "spawn_subagents" and r["group_id"] in self.spawns:
+            elif (r["name"] == "spawn_subagents" and r["group_id"] in self.spawns
+                  and self.spawns[r["group_id"]].get("spawn_mode", "blocking") == "blocking"):
                 out = _sum([out, self.group(self.spawns[r["group_id"]])])
             else:
                 out["tool"] += _dur(r)

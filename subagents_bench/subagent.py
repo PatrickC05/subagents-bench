@@ -5,6 +5,7 @@ from __future__ import annotations
 import shlex
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,7 +14,7 @@ from .environment import AgentStopped
 from .llm import LLMError, Message, ToolResult, ToolSpec
 from .prompts import LAST_STEP_NOTE, LENGTH_CUTOFF_NOTE, LENGTH_CUTOFF_REPLY, subagent_prompt
 from .records import EpisodeRecorder, Who
-from .tools import SCOPE_TOOLS, ToolContext, ToolOutput, run_tool, tool_specs
+from .tools import SCOPE_TOOLS, ToolContext, ToolOutput, run_tool, tool_specs, truncate
 
 SUBMIT_SPEC = ToolSpec(
     "submit",
@@ -21,7 +22,17 @@ SUBMIT_SPEC = ToolSpec(
     {"type": "object", "properties": {"report": {"type": "string", "description": "Your concise, concrete report."}},
      "required": ["report"]},
 )
+HELPER_SPEC = ToolSpec(
+    "spawn_subagents",
+    "Start helper subagents in the same container, one per self-contained instruction, all at once; returns "
+    "their reports when all have finished.",
+    {"type": "object", "properties": {"instructions": {"type": "array", "items": {"type": "string"},
+                                                       "description": "One self-contained instruction per helper."}},
+     "required": ["instructions"]},
+)
+MIN_HELPER_REPORT_CHARS = 2000  # per helper report in a spawn result
 FILES_CAP = 200
+INSTRUCTION_CHARS = 4000  # of the instruction in the dispatch record (the transcript has it whole)
 
 
 @dataclass
@@ -52,6 +63,7 @@ class Dispatch:
     arbitration_id: str | None = None
     candidate_index: int | None = None
     private_copy: bool = False  # cwd is an arbiter candidate's copy of the workdir
+    parent: str | None = None  # the agent_id of the subagent that started this helper
 
     @property
     def who(self) -> Who:
@@ -76,8 +88,9 @@ def run_dispatch(rt: Runtime, d: Dispatch) -> DispatchResult:
     """Run one subagent and write its dispatch record; never raises."""
     cfg, s = rt.config, rt.config.subagent
     names = SCOPE_TOOLS[s.scope]
-    specs = tool_specs(names, cfg.budget) + [SUBMIT_SPEC]
-    system = subagent_prompt(s.scope, s.max_steps, d.cwd, rt.workdir if d.private_copy else None)
+    helpers_left = s.max_children if d.parent is None and not d.private_copy else 0
+    specs = tool_specs(names, cfg.budget) + ([HELPER_SPEC] if helpers_left else []) + [SUBMIT_SPEC]
+    system = subagent_prompt(s.scope, s.max_steps, d.cwd, rt.workdir if d.private_copy else None, helpers_left)
     ctx = ToolContext(rt.env, d.agent_id, d.cwd, s.max_output_chars, cfg.budget.command_timeout_sec,
                       cfg.budget.max_command_timeout_sec, (rt.workdir, d.cwd) if d.private_copy else None)
     who, rec = d.who, rt.rec
@@ -117,6 +130,8 @@ def run_dispatch(rt: Runtime, d: Dispatch) -> DispatchResult:
                     rep = tc.arguments.get("report")
                     report, status = (rep if isinstance(rep, str) else r.text), "submitted"
                     out = rec.tool(who, step, call_id, tc, lambda: ToolOutput("Report submitted."))
+                elif tc.name == "spawn_subagents" and s.max_children and d.parent is None and not d.private_copy:
+                    out, helpers_left = _helpers(rt, d, tc, step, call_id, helpers_left)
                 elif tc.name in names:
                     out = rec.tool(who, step, call_id, tc, lambda tc=tc: run_tool(ctx, tc.name, tc.arguments))
                 else:
@@ -147,10 +162,44 @@ def run_dispatch(rt: Runtime, d: Dispatch) -> DispatchResult:
     rec.write("dispatches", {
         "dispatch_id": d.dispatch_id, "group_id": d.group_id, "agent_id": d.agent_id,
         "arbitration_id": d.arbitration_id, "candidate_index": d.candidate_index,
-        "instruction_index": d.instruction_index, "status": status, "steps_used": steps, "t_start": t_start,
+        "instruction_index": d.instruction_index, "instruction": d.instruction[:INSTRUCTION_CHARS],
+        "parent_agent_id": d.parent,
+        "status": status, "steps_used": steps, "t_start": t_start,
         "t_end": time.time(), "report_chars": len(report), "files_modified": files, "error": error,
     })
     return DispatchResult(status, report, steps)
+
+
+def _helpers(rt: Runtime, d: Dispatch, tc: Any, step: int, call_id: str, left: int) -> tuple[ToolOutput, int]:
+    """A subagent's spawn_subagents: run min(requested, left) helpers at once, blocking, and return their reports."""
+    instructions = tc.arguments.get("instructions")
+    if isinstance(instructions, str):
+        instructions = [instructions]
+    if not isinstance(instructions, list) or not instructions or not all(isinstance(x, str) and x.strip()
+                                                                         for x in instructions):
+        out = rt.rec.tool(d.who, step, call_id, tc,
+                          lambda: ToolOutput("[error] 'instructions' must be a non-empty list of strings", True))
+        return out, left
+    granted = min(len(instructions), left)
+    group_id = rt.rec.new_id("group")
+    kids = [new_dispatch(rt, text, i, group_id, step, cwd=d.cwd, parent=d.agent_id)
+            for i, text in enumerate(instructions[:granted])]
+
+    def run() -> ToolOutput:
+        results = []
+        if kids:
+            with ThreadPoolExecutor(len(kids)) as pool:
+                results = list(pool.map(lambda k: run_dispatch(rt, k), kids))
+        parts = [f"[spawn_subagents: ran {granted} of {len(instructions)} helper(s); helper runs left: {left - granted}]"]
+        if granted < len(instructions):
+            parts.append(f"[note: instruction(s) {granted + 1}-{len(instructions)} were NOT run: no helper runs left]")
+        cap = max(MIN_HELPER_REPORT_CHARS, rt.config.subagent.max_output_chars // max(granted, 1))
+        parts += [f"### Helper {i + 1} ({k.agent_id}: {r.status}, {r.steps_used} steps)\n{truncate(r.report, cap)}"
+                  for i, (k, r) in enumerate(zip(kids, results))]
+        text = "\n\n".join(parts)
+        return ToolOutput(text, output_chars=len(text))
+
+    return rt.rec.tool(d.who, step, call_id, tc, run), left - granted
 
 
 def _marker(rt: Runtime, name: str) -> str:
