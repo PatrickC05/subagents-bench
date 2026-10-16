@@ -24,8 +24,10 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 import tomllib
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -33,14 +35,16 @@ from typing import Any, Callable
 import yaml
 
 from .config import ConfigError, ExperimentConfig, ModelConfig, from_dict
-from .hints import HINTS_DIR_ENV, HintError, generate_reports, load_reports, load_subtasks, schedule, write_reports
-from .llm import Message, SailClient
+from .hints import (HINTS_DIR_ENV, HintError, fetch_source, generate_questions, generate_reports, judge_answer,
+                    load_questions, load_reports, load_subtasks, n_slots, schedule, write_questions, write_reports)
+from .llm import BillingError, Message, SailClient
 from .records import git_commit
 
 AGENT = "subagents_bench.harness.harbor_agent:OrchestratorAgent"
 SPEC_KEYS = {"extends", "name", "base", "dataset", "dataset_path", "platform", "tasks", "rounds", "order_seed",
              "harbor", "overrides", "conditions", "jobs_dir"}
-HARBOR_KEYS = {"n_concurrent", "agent_timeout_multiplier", "extra_args"}
+HARBOR_KEYS = {"n_concurrent", "agent_timeout_multiplier", "extra_args", "environment"}
+ENVIRONMENTS = ("docker", "modal")  # where harbor runs the task containers (`harbor.environment`)
 FROM_RE = re.compile(r"^FROM (?!--platform)", re.M)  # a Dockerfile FROM without a platform (instructions in upper case)
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")  # job names are <sweep>__r<k>__<condition>
 POLL_SEC = 10.0  # live trial lines
@@ -71,6 +75,7 @@ class Spec:
     jobs_dir: Path
     configs: dict[str, ExperimentConfig]  # condition -> resolved config
     raw: dict[str, Any]  # the spec after `extends`
+    environment: str = "docker"  # harbor's -e: the local Docker, or Modal sandboxes
 
 
 def deep_merge(base: Any, over: Any) -> Any:
@@ -121,6 +126,9 @@ def load_spec(path: str | os.PathLike) -> Spec:
         raise ConfigError(f"{path}: platform must be a string like linux/amd64 and needs dataset_path (images built here)")
     if not (isinstance(extra_args, list) and all(isinstance(a, str) for a in extra_args)):
         raise ConfigError(f"{path}: harbor.extra_args must be a list of strings")
+    spec.environment = harbor.get("environment", "docker")
+    if spec.environment not in ENVIRONMENTS:
+        raise ConfigError(f"{path}: harbor.environment must be one of {', '.join(ENVIRONMENTS)}")
     bad = [n for n in (name, *conditions) if not NAME_RE.fullmatch(str(n)) or "__" in str(n)]
     if bad:
         raise ConfigError(f"{path}: invalid name(s) {bad}: use letters, digits, '_', '.', '-' but not '__'")
@@ -159,7 +167,7 @@ def check_interactive(spec: Spec) -> list[str]:
         try:
             load_subtasks(task)
             for c, cfg in conds.items():
-                if cfg.interactive.hint_detail == "report":
+                if cfg.interactive.hint_detail == "report" or cfg.interactive.replies:
                     schedule(cfg.interactive, task, t, hints_dir(spec))
         except HintError as e:
             problems.append(f"{t}: {e}")
@@ -172,6 +180,94 @@ def check_interactive(spec: Spec) -> list[str]:
             problems.append(f"{t}: harbor's agent timeout {timeout:.0f}s ({spec.timeout_multiplier} x the task's) "
                             f"would cancel a {longest:.0f}s session: raise harbor.agent_timeout_multiplier")
     return problems
+
+
+def questions_needed(spec: Spec) -> int:
+    """The most questions one session of the sweep asks (every round draws from the same pool)."""
+    n = 0
+    for cfg in interactive(spec).values():
+        i = cfg.interactive
+        if i.replies and i.questions_per_interval:
+            bugs = min(n_slots(i), i.max_hints or n_slots(i))
+            n = max(n, bugs * i.questions_per_interval)
+    return n
+
+
+def make_questions(spec: Spec, per_task: int | None = None, force: bool = False) -> int:
+    """Write questions about each task's source (``questions_per_interval``) with the orchestrator's
+    model of the first interactive condition, from a clone of the task's repository at its ref in
+    ``<jobs_dir>/src``. Existing questions are kept unless ``force``. 0 if every task has enough."""
+    need = per_task or questions_needed(spec)
+    if not need:
+        say(f"sweep {spec.name!r} asks no questions (interactive.questions_per_interval): nothing to generate")
+        return 0
+    model = next(iter(interactive(spec).values())).orchestrator
+    client, failed = SailClient(model), 0
+    try:
+        for t in spec.tasks:
+            try:
+                existing = [] if force else load_questions(hints_dir(spec), t)
+            except HintError:
+                existing = []
+            try:
+                src = fetch_source(spec.dataset_path / t, spec.jobs_dir / "src" / t)
+                qs = generate_questions(spec.dataset_path / t, src, client, need, existing)
+            except BillingError as e:  # every later task would fail the same way
+                say(f"  [FAIL] {t}: {type(e).__name__}: {str(e)[:300]}")
+                return 3
+            except Exception as e:  # one task's failure does not lose the others'
+                say(f"  [FAIL] {t}: {type(e).__name__}: {str(e)[:300]}")
+                failed += 1
+                continue
+            path = write_questions(hints_dir(spec), t, model.model, qs)
+            new = len({q.id for q in qs} - {q.id for q in existing})
+            say(f"  [OK] {t}: {len(qs)} questions ({new} new) -> {_rel(path, spec.root)}")
+    finally:
+        client.close()
+    return 1 if failed else 0
+
+
+def grade_answers(spec: Spec, force: bool = False) -> int:
+    """Judge the first reply to every question of every finished trial of the sweep against its
+    reference answer, with the orchestrator's model of the first interactive condition; writes
+    ``<trial>/agent/answers.json``. 0 when every answer got a verdict, else 1."""
+    conds = interactive(spec)
+    if not conds:
+        say(f"sweep {spec.name!r} has no interactive condition: nothing to grade")
+        return 0
+    model = next(iter(conds.values())).orchestrator
+    client, unread = SailClient(model), 0
+    try:
+        for trial in sorted(spec.jobs_dir.glob("*/*/agent")):
+            if trial.parent.parent.name.startswith(("_", ".")) or not (trial.parent / "result.json").is_file():
+                continue
+            out = trial / "answers.json"
+            if out.is_file() and not force:
+                continue
+            inbox = [json.loads(x) for x in (trial / "inbox.jsonl").read_text().splitlines() if x.strip()] \
+                if (trial / "inbox.jsonl").is_file() else []
+            questions = {r["msg_id"]: r for r in inbox if r.get("kind") == "question"}
+            if not questions:
+                continue
+            replies = [json.loads(x) for x in (trial / "replies.jsonl").read_text().splitlines() if x.strip()]
+            first: dict[int, str] = {}
+            for r in sorted(replies, key=lambda r: r["t"]):
+                first.setdefault(r["to"], r["text"])
+            answers = {}
+            for mid, q in questions.items():
+                if mid not in first:
+                    continue
+                correct, why = judge_answer(client, q["question"], q["reference"], first[mid])
+                unread += correct is None
+                answers[str(mid)] = {"correct": correct, "why": why}
+            out.write_text(json.dumps({"judge_model": model.model, "graded_at": time.time(),
+                                       "answers": answers}, indent=2) + "\n")
+            n_ok = sum(1 for a in answers.values() if a["correct"])
+            say(f"  [OK] {_rel(trial.parent, spec.root)}: {n_ok} of {len(questions)} questions "
+                f"answered correctly ({len(answers)} answered)")
+    finally:
+        client.close()
+    return 1 if unread else 0
 
 
 def make_hints(spec: Spec, force: bool = False) -> int:
@@ -240,7 +336,7 @@ def harbor_cmd(spec: Spec, job: str, agent: str = AGENT) -> list[str]:
     cmd = [harbor_bin() or "harbor", "run", *source]
     for t in spec.tasks:
         cmd += ["-i", t]
-    cmd += ["-a", agent, "-e", "docker", "-n", str(spec.n_concurrent), "-k", "1",
+    cmd += ["-a", agent, "-e", spec.environment, "-n", str(spec.n_concurrent), "-k", "1",
             "-o", _rel(spec.jobs_dir, spec.root), "--job-name", job]
     if agent == AGENT:
         cmd += ["--agent-timeout-multiplier", str(spec.timeout_multiplier)]
@@ -461,8 +557,11 @@ def _write_status(spec: Spec, status: str, t_start: float) -> None:
     (spec.jobs_dir / "sweep.json").write_text(json.dumps(doc, indent=2) + "\n")
 
 
-def run(spec: Spec, jobs: list[tuple[int, str]], dry_run: bool = False) -> int:
-    """Run the planned jobs in order (``dry_run``: print them); returns the exit code."""
+def run(spec: Spec, jobs: list[tuple[int, str]], dry_run: bool = False, jobs_at_once: int = 1) -> int:
+    """Run the planned jobs in order, ``jobs_at_once`` harbor jobs at a time (``dry_run``: print
+    them); returns the exit code. An abort or Ctrl-C stops every running job (each is rerun on
+    resume); the manifest records ``jobs_at_once`` per job, since sessions running side by side
+    share the machine and the provider."""
     configs_dir = spec.jobs_dir / "configs"
     say(f"Sweep {spec.name!r}: {len(jobs)} jobs x {len(spec.tasks)} tasks, jobs dir {_rel(spec.jobs_dir, spec.root)}")
     if dry_run:
@@ -484,49 +583,90 @@ def run(spec: Spec, jobs: list[tuple[int, str]], dry_run: bool = False) -> int:
     t_start = time.time()
     _write_status(spec, "running", t_start)
     models = sweep_models(spec)
-    code, n_failed = None, 0
-    for i, (r, cond) in enumerate(jobs, 1):
+    stop = threading.Event()  # an abort or Ctrl-C: the other running jobs stop too (they are rerun on resume)
+    interrupted = threading.Event()
+
+    def one(i: int, r: int, cond: str) -> tuple[str, int | None, str | None]:
+        try:
+            return one_job(i, r, cond)
+        except BaseException:
+            stop.set()  # the other running jobs stop now, not when the main thread reaches this one
+            raise
+
+    def one_job(i: int, r: int, cond: str) -> tuple[str, int | None, str | None]:
+        """Run one job -> (state, abort code or None, abort reason)."""
         job = job_name(spec, r, cond)
         job_dir, ids, prefix = spec.jobs_dir / job, {"job": job, "round": r, "condition": cond}, f"[{i}/{len(jobs)}] {job}"
         state, why = job_state(job_dir)
         if state == "complete":
             say(f"{prefix}: complete ({why}) -> skip")
             _log(spec, "skipped", **ids)
-            continue
+            return state, None, None
+        if stop.is_set():
+            return "absent", None, None
         if state != "absent":
             moved = _rel(move_aside(job_dir, spec.jobs_dir), spec.root)
             say(f"{prefix}: {state} ({why}) -> moved to {moved}")
             _log(spec, "moved", **ids, state=state, why=why, to=moved)
         say(f"{prefix}: running {len(spec.tasks)} trials")
         watcher, t0 = Watcher(job_dir, models), time.time()
-        env = {**os.environ, "SUBAGENTS_BENCH_CONFIG": str(configs_dir / f"{cond}.yaml"),
-               HINTS_DIR_ENV: str(hints_dir(spec))}
+        env = harbor_env(spec, SUBAGENTS_BENCH_CONFIG=str(configs_dir / f"{cond}.yaml"), **{HINTS_DIR_ENV: str(hints_dir(spec))})
         try:
-            rc = run_job(harbor_cmd(spec, job), env, spec.root, watcher.poll)
-        except KeyboardInterrupt:
+            rc = run_job(harbor_cmd(spec, job), env, spec.root, lambda: watcher.poll() or stop.is_set())
+        except KeyboardInterrupt:  # one job at a time: the Ctrl-C reached this thread
+            interrupted.set()
+        if interrupted.is_set():
             say(f"{prefix}: interrupted; re-run the same command to resume")
             _log(spec, "interrupted", **ids)
-            code = 130
-            break
+            return "interrupted", 130, None
         watcher.poll()  # trials that finished after the last poll
         state, why = job_state(job_dir)
         say(f"{prefix}: harbor exit {rc}, {state} ({why}), {time.time() - t0:.0f}s")
-        _log(spec, "run", **ids, rc=rc, state=state, why=why, duration_sec=time.time() - t0)
-        if state == "absent" and rc != 0 and watcher.abort is None:
+        _log(spec, "run", **ids, rc=rc, state=state, why=why, duration_sec=time.time() - t0, jobs_at_once=jobs_at_once)
+        if state == "absent" and rc != 0 and watcher.abort is None and not stop.is_set():
             # harbor resolves the dataset online first: a dropped network kills it before the job dir exists
             say(f"{prefix}: harbor exited before creating the job: probing every model ...")
             failing = probe(models)
             if failing:
                 watcher.abort = f"harbor could not start {job}; models failing too: {'; '.join(failing)}"
+        code = reason = None
         if any(retry_reason(t) == "billing" for t in _trials(job_dir)):
             code, reason = 3, f"billing error in {job}: top up the Sail account"
         elif watcher.abort is not None:
             code, reason = 4, watcher.abort
         if code is not None:
+            stop.set()
             say(f"ABORT: {reason}. Re-run the same command later to resume (this job is rerun).")
             _log(spec, "abort", **ids, code=code, reason=reason)
-            break
-        n_failed += state != "complete"
+        return state, code, reason
+
+    code, n_failed, results = None, 0, []
+    if jobs_at_once == 1:
+        for i, (r, cond) in enumerate(jobs, 1):
+            results.append(one(i, r, cond))
+            if results[-1][1] is not None:
+                break
+    else:
+        pool = ThreadPoolExecutor(jobs_at_once, thread_name_prefix="job")
+        futures = [pool.submit(one, i, r, cond) for i, (r, cond) in enumerate(jobs, 1)]
+        try:
+            for f in futures:
+                results.append(f.result())
+        except BaseException as e:  # Ctrl-C, or a job thread's error: stop every running harbor first
+            if isinstance(e, KeyboardInterrupt):
+                interrupted.set()  # each running job stops its harbor and logs its interruption
+            stop.set()
+            pool.shutdown(wait=True, cancel_futures=True)
+            if not isinstance(e, KeyboardInterrupt):
+                _write_status(spec, "error", t_start)
+                _log(spec, "error", error=f"{type(e).__name__}: {e}"[:500])
+                raise
+            results = [f.result() for f in futures if f.done() and not f.cancelled() and f.exception() is None]
+        pool.shutdown(wait=True)
+    for state, c, _ in results:
+        if c == 130 or (code is None and c is not None):
+            code = c
+        n_failed += state not in ("complete", "interrupted") and c is None
     if code is None:
         code = 1 if n_failed else 0
     _write_status(spec, STATUS[code], t_start)
@@ -535,6 +675,32 @@ def run(spec: Spec, jobs: list[tuple[int, str]], dry_run: bool = False) -> int:
     if code == 0:
         say(f"Next: scripts/analyze.sh {_rel(spec.jobs_dir, spec.root)}")
     return code
+
+
+# Modal's legacy image builder pip-installs its client into every task image, which fails on images
+# without pip (echo's Go image); 2025.06 needs nothing in the image. An explicit setting wins.
+MODAL_IMAGE_BUILDER = "2025.06"
+
+
+def harbor_env(spec: Spec, **extra: str) -> dict[str, str]:
+    """The environment of a harbor run: ours, plus Modal's image builder version on Modal."""
+    env = {**os.environ, **extra}
+    if spec.environment == "modal":
+        env.setdefault("MODAL_IMAGE_BUILDER_VERSION", MODAL_IMAGE_BUILDER)
+    return env
+
+
+def modal_ready() -> tuple[bool, str]:
+    """The modal package (the `modal` extra) and a Modal token: MODAL_TOKEN_ID/SECRET or ~/.modal.toml."""
+    try:
+        import modal  # noqa: F401
+    except ImportError:
+        return False, "the modal package is missing: uv sync --all-extras (or pip install 'harbor[modal]')"
+    if os.environ.get("MODAL_TOKEN_ID") and os.environ.get("MODAL_TOKEN_SECRET"):
+        return True, "token from MODAL_TOKEN_ID/MODAL_TOKEN_SECRET"
+    if (Path.home() / ".modal.toml").is_file():
+        return True, "token from ~/.modal.toml"
+    return False, "no Modal token: run `modal token new` (or set MODAL_TOKEN_ID and MODAL_TOKEN_SECRET)"
 
 
 def preflight(spec: Spec, oracle: bool = False) -> int:
@@ -547,8 +713,12 @@ def preflight(spec: Spec, oracle: bool = False) -> int:
         say(f"  [{'PASS' if ok else 'FAIL'}] {name}: {detail}")
 
     say(f"Preflight for sweep {spec.name!r}:")
-    docker = _output(["docker", "info", "--format", "{{.ServerVersion}}"])
-    check("docker", docker is not None, f"server {docker}" if docker else "not running: start Docker")
+    if spec.environment == "docker":
+        docker = _output(["docker", "info", "--format", "{{.ServerVersion}}"])
+        check("docker", docker is not None, f"server {docker}" if docker else "not running: start Docker")
+    elif spec.environment == "modal":
+        ok, why = modal_ready()
+        check("modal", ok, why)
     harbor = harbor_bin()
     check("harbor", harbor is not None, f"{harbor} {_output([harbor, '--version'])}" if harbor
           else "not found: run scripts/setup.sh")
@@ -577,7 +747,7 @@ def preflight(spec: Spec, oracle: bool = False) -> int:
             stage_tasks(spec)
             cmd = harbor_cmd(spec, "_oracle", agent="oracle")
             say(f"  oracle: $ {shlex.join(cmd)}")
-            run_job(cmd, dict(os.environ), spec.root)
+            run_job(cmd, harbor_env(spec), spec.root)
         unsolved = _unsolved(spec, job_dir)
         check("oracle solves every task", not unsolved, f"unsolved: {unsolved}" if unsolved else f"{len(spec.tasks)} tasks")
     say(f"  -> {'ALL PASSED' if all(results) else 'FAILED'}")

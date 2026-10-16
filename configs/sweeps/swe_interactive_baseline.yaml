@@ -1,0 +1,85 @@
+# Baseline: bugs only, the same 6 bugs in the same order everywhere.
+# A 30-minute session: a bug every 4 minutes (6, the last at 20:00), then 10 minutes to finish. No
+# questions, status checks or urgent bug; the reply tool is on, so the user sees only `reply` calls
+# and every bug gets an answer time. swe_interactive_requests.yaml's session with the requests off.
+# Every model is DeepSeek-V4.1-Flash (subagent.model: null): the subagents run the orchestrator's
+# model, so the conditions differ only in who does the work.
+# Metrics kept, per condition: time to first reply (until the agent first acknowledges each bug,
+# messages.csv reply_sec), requested bugs fixed, and cost per session.
+# The bug order is fixed (order_seed 0, vary_order_by_round false), so every condition sends the
+# same bugs at the same times, and the order is the one the requests sweep's round 1 used: click's
+# first 6 bugs match it, and echo sends all 6 of its bugs. One round: with the order fixed, a second
+# round would rerun the same sessions, and pooling those repeats would count one setting twice.
+# The three settings:
+#   single_baseline              the agent alone, with all tools (and reply)
+#   manager_background_baseline  read-only agent; every edit and test goes to background subagents
+#   background_hinted_baseline   all tools plus background subagents, told delegating keeps it free
+#   manager_available_baseline   the manager, told to stay available: short steps, and each bug handed
+#                                at once to a subagent with a short instruction (it works out the problem)
+#   manager_owner_baseline       manager_available, and that subagent is in charge of its bug and may
+#                                start up to 10 helper subagents of its own (one level deep)
+#   dispatcher_hinted_baseline   no tools of its own at all (not even reading): only spawn_subagents,
+#                                wait and reply, and told delegating keeps it free
+# 6 conditions x 2 repositories x 1 round = 6 harbor jobs, 12 thirty-minute sessions.
+#   scripts/run_experiment.sh configs/sweeps/swe_interactive_baseline.yaml
+name: swe_interactive_baseline
+base: configs/sail/base.yaml
+dataset_path: ../class-6-swe-sweep/swe-sweep/tasks
+platform: linux/amd64
+tasks:                               # language, bugs
+  - swe-sweep__click                 # Python, 13 (6 sent)
+  - swe-sweep__echo                  # Go, 6 (all 6 sent; every bug in its own file)
+rounds: 1
+order_seed: 0
+
+overrides:
+  interactive:
+    wall_clock_sec: 1800             # 6 bugs every 4 minutes (the last at 20:00), then 10 minutes
+    interval_sec: 240
+    max_hints: 6
+    hint_detail: tests
+    order_seed: 0
+    vary_order_by_round: false       # the same order in every round, condition and experiment
+    scope: reported
+    end_when_idle: true
+    max_context_chars: 400000
+    replies: true                    # the user sees only `reply` calls: each bug's answer time
+    questions_per_interval: 0        # baseline: no questions,
+    status_every: 0                  # no status checks,
+    urgent_every: 0                  # no urgent bug
+  budget:
+    orchestrator_steps: 2000
+    command_timeout_sec: 600
+    max_command_timeout_sec: 1800
+  subagent:
+    # No practical limit on subagents: as many at once as the dispatch budget, and a step cap that
+    # only guards against a runaway (the session's deadline ends every subagent).
+    max_dispatches: 60
+    max_concurrent: 60
+    max_steps: 2000
+    model: null                      # every model is DeepSeek-V4.1-Flash: subagents run the orchestrator's
+
+harbor:
+  n_concurrent: 3
+  # x the tasks' 43200 s agent timeout = 2160 s: the 1800 s session, preflight's 120 s grace and 240 s
+  # more for the background subagents' shutdown and the end kill (as in swe_interactive_requests.yaml).
+  agent_timeout_multiplier: 0.05
+  extra_args: [--override-cpus, "3", --override-memory-mb, "7000"]
+
+conditions:
+  single_baseline: {topology: single}
+  manager_background_baseline:
+    subagent: {strategy: parallel, scope: hard, spawn_mode: background}
+    tools: {orchestrator_tools: [read_file, list_dir, search]}
+  background_hinted_baseline:
+    subagent: {strategy: parallel, scope: hard, spawn_mode: background, delegation_hint: true}
+  manager_available_baseline:
+    subagent: {strategy: parallel, scope: hard, spawn_mode: background, availability_hint: true}
+    tools: {orchestrator_tools: [read_file, list_dir, search]}
+  manager_owner_baseline:
+    subagent: {strategy: parallel, scope: hard, spawn_mode: background, availability_hint: true, owner_hint: true,
+               max_children: 10}
+    tools: {orchestrator_tools: [read_file, list_dir, search]}
+  dispatcher_hinted_baseline:
+    subagent: {strategy: parallel, scope: hard, spawn_mode: background, delegation_hint: true}
+    tools: {orchestrator_tools: []}

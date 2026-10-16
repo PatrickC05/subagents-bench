@@ -1,0 +1,80 @@
+# Requests: is the agent available to the user while it works?
+# The earlier interactive runs sent only bugs, and the agent could serve the known ones and still
+# look responsive. Here a bug arrives every 4 minutes and two questions about the code arrive
+# between consecutive bugs; after every second bug a status check asks how long each open bug
+# will take, and bug 3 of each session is urgent ("fix it before the earlier ones"). The user sees
+# only `reply` calls (interactive.replies): a question is answered when a reply to it arrives, and
+# every bug reply may carry an estimate (eta_min) or a done claim.
+# What the user cares about, per condition (requests.csv, messages.csv):
+#   - questions: answer time (answer_median_sec, answered_60s) and accuracy (correct_of_answered, after
+#     `subagents-bench grade-answers`);
+#   - bugs: fixed (fixed_frac), and whether the estimates were right (eta_abs_log2_median,
+#     on_time_frac) and the done claims true (claim_precision);
+#   - priority: the urgent bug done before the earlier open ones (urgent_first_frac).
+# The *_bugsonly controls send the same bugs at the same times with none of this (no ids, no reply
+# tool, no questions, status checks or urgency): what the requests cost in fixes and in how fast
+# a new bug is picked up (hints.csv, interactivity.csv), on the same day and provider.
+# 5 conditions x 2 repositories x 2 rounds = 10 harbor jobs, 20 thirty-minute sessions.
+#   .venv/bin/subagents-bench questions configs/sweeps/swe_interactive_requests.yaml   # once, before
+#   scripts/run_experiment.sh configs/sweeps/swe_interactive_requests.yaml
+#   .venv/bin/subagents-bench grade-answers configs/sweeps/swe_interactive_requests.yaml  # after
+name: swe_interactive_requests
+base: configs/sail/base.yaml
+dataset_path: ../class-6-swe-sweep/swe-sweep/tasks
+platform: linux/amd64
+# The arrival-rate experiment's tasks (swe_interactive_rate.yaml): its sessions are a second,
+# looser reference (10 bugs every 60-300 s, another day); the controls below are the baseline.
+tasks:                               # language, bugs
+  - swe-sweep__click                 # Python, 13
+  - swe-sweep__pint                  # Python, 13
+rounds: 2
+order_seed: 0
+
+overrides:
+  interactive:
+    wall_clock_sec: 1800             # 6 bugs every 4 minutes (the last at 20:00), then 10 minutes
+    interval_sec: 240
+    max_hints: 6
+    hint_detail: tests
+    order_seed: 0
+    vary_order_by_round: true
+    scope: reported
+    end_when_idle: true
+    max_context_chars: 400000
+    replies: true
+    questions_per_interval: 2        # at 80 s and 160 s after each bug: 12 questions
+    status_every: 2                  # 120 s after bugs 1, 3 and 5 (0-based)
+    urgent_every: 3                  # bug 3
+  budget:
+    orchestrator_steps: 2000
+    command_timeout_sec: 600
+    max_command_timeout_sec: 1800
+  subagent:
+    max_dispatches: 60
+    max_concurrent: 3
+    max_steps: 20
+    model:
+      max_retries: 8
+      retry_budget_sec: 300
+
+harbor:
+  n_concurrent: 3
+  # x the tasks' 43200 s agent timeout = 2160 s: the 1800 s session, preflight's 120 s grace and 240 s
+  # more for the background subagents' shutdown and the end kill.
+  agent_timeout_multiplier: 0.05
+  extra_args: [--override-cpus, "3", --override-memory-mb, "7000"]
+
+conditions:
+  single_requests: {topology: single}
+  manager_background_requests:
+    subagent: {strategy: parallel, scope: hard, spawn_mode: background}
+    tools: {orchestrator_tools: [read_file, list_dir, search]}
+  background_hinted_requests:         # all tools, background subagents, told they keep it free to respond
+    subagent: {strategy: parallel, scope: hard, spawn_mode: background, delegation_hint: true}
+  single_bugsonly:
+    topology: single
+    interactive: &bugsonly {replies: false, questions_per_interval: 0, status_every: 0, urgent_every: 0}
+  manager_background_bugsonly:
+    subagent: {strategy: parallel, scope: hard, spawn_mode: background}
+    tools: {orchestrator_tools: [read_file, list_dir, search]}
+    interactive: *bugsonly

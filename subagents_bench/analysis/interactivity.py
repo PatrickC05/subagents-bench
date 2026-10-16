@@ -114,6 +114,29 @@ def _writes(segment: str, path: str, basename_ok: bool) -> bool:
     return WRITE_RE.search(segment) is not None
 
 
+HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_]\w*)\1")
+
+
+def strip_data_heredocs(cmd: str) -> str:
+    """``cmd`` without the bodies of heredocs that ``cat``/``tee`` save to a file: data, not commands
+    (a scratch script ``cat <<'EOF' > /tmp/s.py`` listing repository paths edits none of them). The
+    header line stays, so ``cat <<EOF > pint/x.py`` still edits pint/x.py."""
+    lines, out, i = cmd.split("\n"), [], 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        i += 1
+        m = HEREDOC_RE.search(line)
+        if not m:
+            continue
+        before, after = re.split(r"&&|\|\||;|\||\(", line[:m.start()])[-1], line[m.end():]
+        if (re.match(r"\s*(?:cat|tee)\b", before) and "|" not in after
+                and (">" in before + after or before.strip().startswith("tee"))):
+            while i < len(lines) and lines[i].strip() != m.group(2):
+                i += 1  # the body; the terminator line is kept
+    return "\n".join(out)
+
+
 def tool_touches(tool: dict, files: list[str], basename_ok: set[str] | None = None) -> tuple[bool, bool]:
     """(touches, edits) one of ``files``; ``basename_ok``: the files a bare basename may stand for
     (default: all)."""
@@ -130,6 +153,7 @@ def tool_touches(tool: dict, files: list[str], basename_ok: set[str] | None = No
         cmd = args.get("command")
         if not isinstance(cmd, str):
             return False, False
+        cmd = strip_data_heredocs(cmd) if "<<" in cmd else cmd
         touched = edited = False
         for seg in segments(cmd):
             named = [f for f in files if names_file(seg, f, ok(f))]
@@ -140,19 +164,20 @@ def tool_touches(tool: dict, files: list[str], basename_ok: set[str] | None = No
     return False, False
 
 
-def _busy(t: float, calls: list[dict], tools: list[dict], spawns: dict[str, dict]) -> str:
-    """What the orchestrator was doing at ``t``: llm, tool, spawn (a blocking spawn), wait or idle."""
+def _busy(t: float, calls: list[dict], tools: list[dict], spawns: dict[str, dict]) -> tuple[str, str | None, float | None]:
+    """What the orchestrator was doing at ``t`` (llm, tool, spawn = a blocking spawn, wait or idle),
+    the call or tool's name (``llm`` for a call), and how long it still ran after ``t``."""
     for c in calls:
         if c["role"] == "orchestrator" and c["t_start"] <= t < c["t_end"]:
-            return "llm"
+            return "llm", "llm", c["t_end"] - t
     for x in tools:
         if x["role"] == "orchestrator" and x["t_start"] <= t < x["t_end"]:
             if x["name"] == "wait":
-                return "wait"
+                return "wait", "wait", x["t_end"] - t
             if x["name"] == "spawn_subagents" and (spawns.get(x["group_id"]) or {}).get("spawn_mode", "blocking") == "blocking":
-                return "spawn"
-            return "tool"
-    return "idle"
+                return "spawn", x["name"], x["t_end"] - t
+            return "tool", x["name"], x["t_end"] - t
+    return "idle", None, None
 
 
 def eval_subtasks(trial_dir: Path) -> tuple[dict[str, dict], bool | None, bool]:
@@ -207,11 +232,14 @@ def hint_rows(t: Trial, keys: dict[str, Any], valid: bool) -> list[dict[str, Any
         row = {**keys, "valid": valid, "topology": ep.get("topology"),
                "spawn_mode": sub.get("spawn_mode", "blocking") if ep.get("topology") == "subagents" else None,
                "hint_detail": icfg.get("hint_detail"), "scope": icfg.get("scope", "all"), "interval_sec": interval,
-               "hint_index": h["hint_index"], "subtask_id": h["subtask_id"], "target_files": ";".join(files),
+               "hint_index": h["hint_index"], "urgent": bool(h.get("urgent")), "subtask_id": h["subtask_id"], "target_files": ";".join(files),
                "n_target_files": len(files), "shared_files": bool(set(files) & earlier_files),
                "shares_any": any(file_hints[f] > 1 for f in files), "t_ready_sec": t0 - session_t0,
-               "delivered": h["t_delivered"] is not None,
-               "busy_at_arrival": _busy(t0, r["calls"], r["tools"], spawns) if k else "start"}
+               "delivered": h["t_delivered"] is not None}
+        busy, blocker, left = _busy(t0, r["calls"], r["tools"], spawns) if k else ("start", None, None)
+        # what the hint waited behind: the orchestrator's call or tool in progress, and how much of it was left
+        row.update(busy_at_arrival=busy, blocked_by=blocker if busy in BUSY else None,
+                   blocked_sec=left if busy in BUSY else None)
         earlier_files |= set(files)
         lat: dict[str, float | None] = dict.fromkeys(LATENCIES)
         if h["t_delivered"] is not None:
@@ -286,7 +314,8 @@ def condition_table(hints: pd.DataFrame) -> pd.DataFrame:
         row = {"condition": cond, "topology": all_g["topology"].iloc[0], "spawn_mode": all_g["spawn_mode"].iloc[0],
                "n_episodes": all_g["trial_name"].nunique(), "n_hints": len(all_g), "n_later_hints": len(g),
                "delivered_frac": _frac(g["delivered"]), "busy_at_arrival_frac": _frac(g["busy_at_arrival"].isin(BUSY)),
-               "pre_edited_frac": _frac(_flag(g, "pre_edited"))}
+               "pre_edited_frac": _frac(_flag(g, "pre_edited")),
+               "blocked_median_sec": _median_censored(g["blocked_sec"].dropna()) if "blocked_sec" in g else math.nan}
         for m in ("response", "touch", "edit"):
             row[f"first_{m}_median_sec"] = _median_censored(first[f"{m}_sec"])
         fresh = g[~_flag(g, "pre_edited")]  # touch and edit of bugs not already worked on before they were sent

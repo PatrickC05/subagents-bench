@@ -226,6 +226,24 @@ def test_stream_errors_and_5xx_are_retried(bad):
     assert client(Server(bad, ok("fine"))).complete("s", USER, []).text == "fine"
 
 
+def test_a_stream_error_after_a_tool_call_is_retried_asking_for_one_call():
+    """Sail's Gemma-4 parsing streams the first of two tool calls (under index 3), then fails, on
+    every attempt; the retry adds ONE_CALL_NOTE to the system prompt and is recorded."""
+    two_calls = sse(chunk({"role": "assistant"}), chunk(call(3, args='{"command": "ls"}', call_id="x_3")),
+                    chunk(call(3, args='{"command": "pwd"}')),
+                    {"error": {"code": "", "message": "chat completion failed", "type": "upstream_error"}}, done=False)
+    one = sse(chunk(call(0, args='{"command": "ls"}', call_id="c1")), chunk({}, "tool_calls"))
+    server = Server(two_calls, one)
+    r = client(server).complete("SYS", USER, [BASH])
+    assert r.tool_calls == [ToolCall("c1", "bash", {"command": "ls"})] and r.one_call_retry and r.n_attempts == 2
+    first, second = (json.loads(q.content)["messages"][0]["content"] for q in server.requests)
+    assert first == "SYS" and second == "SYS" + llm.ONE_CALL_NOTE
+    # an error before any tool call, or a request without tools, retries the same request
+    server = Server(sse(chunk({"content": "x"}), {"error": {"message": "upstream failed"}}, done=False), ok("fine"))
+    r = client(server).complete("SYS", USER, [BASH])
+    assert not r.one_call_retry and json.loads(server.requests[1].content)["messages"][0]["content"] == "SYS"
+
+
 def test_retries_exhausted_raise_provider_error():
     server = Server(*[error(503, "down")] * 5)
     with pytest.raises(ProviderError) as ei:

@@ -56,6 +56,13 @@ class SubagentConfig:
     max_steps: int = 8
     max_output_chars: int = 12000
     delegation_hint: bool = False  # tell the orchestrator its steps are scarce and subagents' steps free
+    # Interactive, background only: tell the orchestrator to stay available to the user (short steps,
+    # a short instruction per bug at once, the subagent works out the problem itself)
+    availability_hint: bool = False
+    # Interactive, background only: tell the orchestrator to put one subagent in charge of each bug
+    owner_hint: bool = False
+    # Helper subagents a subagent may start itself (`spawn_subagents`, blocking, one level deep); 0: none
+    max_children: int = 0
     # Interactive episodes only: `background` returns from spawn_subagents at once and delivers each
     # report as a message when its subagent ends; `blocking` waits for all of them, as in batch episodes.
     spawn_mode: str = "blocking"
@@ -86,8 +93,15 @@ class InteractiveConfig:
     order_seed: int = 0  # the subtasks' order, shuffled per task with this seed (same for every condition)
     vary_order_by_round: bool = True  # round k of a sweep uses order_seed + k - 1 (each round its own order)
     scope: str = "reported"  # reported: fix the bugs the user sends (the task's "fix all bugs" is set aside); all
+    session_note: str | None = None  # a paragraph for the first message, before hint 0 (e.g. a testing rule)
     end_when_idle: bool = True  # end once every hint was sent, nothing runs and the orchestrator waits
     max_context_chars: int | None = None  # beyond this, elide old tool output and reports, drop old reasoning
+    # Requests (docs/DESIGN.md, *Requests*): every user message gets an id and the agent answers with
+    # `reply`; the user sees nothing else. Bugs then ask for an ETA when planned and a done reply.
+    replies: bool = False
+    questions_per_interval: int = 0  # code questions sent between consecutive bugs, evenly spaced (needs replies)
+    status_every: int = 0  # 0: none; n: after every n-th bug, a status check halfway to the next asks for ETAs
+    urgent_every: int = 0  # 0: none; n: bugs n, 2n, ... (0-based) are urgent: "fix this one before the others"
 
 
 @dataclass
@@ -153,6 +167,15 @@ def from_dict(raw: Any) -> ExperimentConfig:
             raise ConfigError(f"{where}: {value!r} is not one of {', '.join(choices)}")
     if not isinstance(cfg.subagent.delegation_hint, bool):
         raise ConfigError(f"subagent.delegation_hint: expected true or false, got {cfg.subagent.delegation_hint!r}")
+    if not isinstance(cfg.subagent.owner_hint, bool):
+        raise ConfigError(f"subagent.owner_hint: expected true or false, got {cfg.subagent.owner_hint!r}")
+    mc = cfg.subagent.max_children
+    if isinstance(mc, bool) or not isinstance(mc, int) or mc < 0:
+        raise ConfigError(f"subagent.max_children: expected an integer >= 0, got {mc!r}")
+    if mc and cfg.subagent.strategy == "arbiter":
+        raise ConfigError("subagent.max_children: helper subagents are not supported with strategy arbiter")
+    if not isinstance(cfg.subagent.availability_hint, bool):
+        raise ConfigError(f"subagent.availability_hint: expected true or false, got {cfg.subagent.availability_hint!r}")
     bad = sorted(set(cfg.tools.orchestrator_tools or []) - set(TOOL_NAMES))
     if bad:
         raise ConfigError(f"tools.orchestrator_tools: unknown tool(s) {bad}; choose from {list(TOOL_NAMES)}")
@@ -167,6 +190,8 @@ def from_dict(raw: Any) -> ExperimentConfig:
 
 def _check_interactive(cfg: ExperimentConfig) -> None:
     i = cfg.interactive
+    if i.session_note is not None and not (isinstance(i.session_note, str) and i.session_note.strip()):
+        raise ConfigError(f"interactive.session_note: expected null or non-empty text, got {i.session_note!r}")
     if i.scope not in SESSION_SCOPES:
         raise ConfigError(f"interactive.scope: {i.scope!r} is not one of {', '.join(SESSION_SCOPES)}")
     if i.hint_detail not in HINT_DETAILS:
@@ -180,7 +205,14 @@ def _check_interactive(cfg: ExperimentConfig) -> None:
             raise ConfigError(f"interactive.{name}: expected null or an integer >= {lo}, got {v!r}")
     if isinstance(i.order_seed, bool) or not isinstance(i.order_seed, int):
         raise ConfigError(f"interactive.order_seed: expected an integer, got {i.order_seed!r}")
-    for name in ("end_when_idle", "vary_order_by_round"):
+    for name in ("questions_per_interval", "status_every", "urgent_every"):
+        v = getattr(i, name)
+        if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+            raise ConfigError(f"interactive.{name}: expected an integer >= 0, got {v!r}")
+    if not i.replies and (i.questions_per_interval or i.status_every or i.urgent_every):
+        raise ConfigError("interactive: questions, status checks and urgent bugs come with message ids and `reply`: "
+                          "set replies: true")
+    for name in ("end_when_idle", "vary_order_by_round", "replies"):
         if not isinstance(getattr(i, name), bool):
             raise ConfigError(f"interactive.{name}: expected true or false, got {getattr(i, name)!r}")
     if cfg.topology == "subagents" and cfg.subagent.spawn_mode == "background" and cfg.subagent.strategy != "parallel":
@@ -189,6 +221,14 @@ def _check_interactive(cfg: ExperimentConfig) -> None:
     if cfg.topology == "subagents" and cfg.subagent.delegation_hint and cfg.subagent.spawn_mode != "background":
         raise ConfigError("subagent.delegation_hint: in an interactive episode it says background subagents keep "
                           "the orchestrator free, so it needs spawn_mode background")
+    if cfg.subagent.owner_hint and not (cfg.interactive and cfg.topology == "subagents"
+                                        and cfg.subagent.spawn_mode == "background"):
+        raise ConfigError("subagent.owner_hint: it tells an interactive orchestrator to put background subagents "
+                          "in charge of bugs, so it needs interactive, topology subagents and spawn_mode background")
+    if cfg.subagent.availability_hint and not (cfg.interactive and cfg.topology == "subagents"
+                                               and cfg.subagent.spawn_mode == "background"):
+        raise ConfigError("subagent.availability_hint: it tells an interactive orchestrator to hand bugs to "
+                          "background subagents, so it needs interactive, topology subagents and spawn_mode background")
 
 
 def load_config(path: str | os.PathLike) -> ExperimentConfig:

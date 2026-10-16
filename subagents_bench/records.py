@@ -23,7 +23,7 @@ from .llm import BillingError, LLMError, LLMResponse, Message, ProviderError, To
 from .tools import ToolOutput
 
 ROLES = ("orchestrator", "subagent", "arbiter", "debate")
-KINDS = ("calls", "tools", "steps", "spawns", "dispatches", "arbitrations", "inbox", "transcript")
+KINDS = ("calls", "tools", "steps", "spawns", "dispatches", "arbitrations", "inbox", "replies", "transcript")
 POLL_SEC = 0.2
 ARG_CHARS = 2000  # per string argument of a tool call in its record (the transcript has them whole)
 
@@ -165,7 +165,7 @@ class EpisodeRecorder:
                 **base, "t_start": t0, "t_first_chunk": None, "t_end": time.time(), "prompt_tokens": 0,
                 "cached_tokens": 0, "completion_tokens": 0, "reasoning_tokens": None, "finish_reason": None,
                 "n_tool_calls": 0, "n_attempts": getattr(e, "n_attempts", 0), "backoff_sec": getattr(e, "backoff_sec", 0.0),
-                "stream_repairs": 0, "error": "cancelled" if isinstance(e, AgentStopped) else f"{type(e).__name__}: {e}"[:2000],
+                "stream_repairs": 0, "one_call_retry": False, "error": "cancelled" if isinstance(e, AgentStopped) else f"{type(e).__name__}: {e}"[:2000],
             })
             if isinstance(e, (ProviderError, BillingError)):
                 self.fail(e)
@@ -174,7 +174,8 @@ class EpisodeRecorder:
             **base, "t_start": r.t_start, "t_first_chunk": r.t_first_chunk, "t_end": r.t_end,
             "prompt_tokens": r.prompt_tokens, "cached_tokens": r.cached_tokens, "completion_tokens": r.completion_tokens,
             "reasoning_tokens": r.reasoning_tokens, "finish_reason": r.finish_reason, "n_tool_calls": len(r.tool_calls),
-            "n_attempts": r.n_attempts, "backoff_sec": r.backoff_sec, "stream_repairs": r.stream_repairs, "error": None,
+            "n_attempts": r.n_attempts, "backoff_sec": r.backoff_sec, "stream_repairs": r.stream_repairs,
+            "one_call_retry": r.one_call_retry, "error": None,
         })
         return r, call_id
 
@@ -230,7 +231,9 @@ class EpisodeRecorder:
             if self.episode["config"].get("interactive") is not None:
                 hints = [r for r in self.records["inbox"] if r["kind"] == "hint"]
                 self.episode.update(n_hints=len(hints),
-                                    n_hints_delivered=sum(1 for h in hints if h["t_delivered"] is not None))
+                                    n_hints_delivered=sum(1 for h in hints if h["t_delivered"] is not None),
+                                    n_questions=sum(1 for r in self.records["inbox"] if r["kind"] == "question"),
+                                    n_replies=len(self.records["replies"]))
             self._write_episode()
             return self.episode
 

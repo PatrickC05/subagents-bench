@@ -1,0 +1,70 @@
+# Experiment 2: does the single agent fall behind when bugs arrive faster?
+# The same 10 bugs (`max_hints`) sent every 60, 180 or 300 s, to the single agent and to a
+# background manager (read-only orchestrator, background subagents). Each session runs 10 minutes
+# past its last bug. If background subagents help, it shows at 60 s: the single agent's time to
+# first edit grows with each bug as they queue (hint_positions.csv `edit_median_sec` by
+# `hint_index`), while the manager's parallel subagents fix more bugs within the session.
+# 6 conditions x 2 repositories x 2 rounds = 12 harbor jobs, 24 sessions of 20, 40 and 60 minutes.
+#   scripts/run_experiment.sh configs/sweeps/swe_interactive_rate.yaml
+# Everything but the tasks, the session and the conditions is swe_interactive.yaml's;
+# tests/test_sweep.py checks that.
+name: swe_interactive_rate
+base: configs/sail/base.yaml
+dataset_path: ../class-6-swe-sweep/swe-sweep/tasks
+platform: linux/amd64
+tasks:                               # language, bugs
+  - swe-sweep__click                 # Python, 13 (fast suite: the smokes' best-scoring repository)
+  - swe-sweep__pint                  # Python, 13
+rounds: 2
+order_seed: 0
+
+overrides:
+  interactive:
+    max_hints: 10
+    hint_detail: tests
+    order_seed: 0
+    vary_order_by_round: true
+    scope: reported
+    end_when_idle: true
+    max_context_chars: 400000
+  budget:
+    orchestrator_steps: 2000
+    command_timeout_sec: 600
+    max_command_timeout_sec: 1800
+  subagent:
+    max_dispatches: 60
+    max_concurrent: 3
+    max_steps: 20
+    model:                           # Sail's Gemma fails ~0.7% of calls ("upstream chat completion failed"),
+      max_retries: 8                 # and one failure ends the session: retry 8 times within 5 minutes
+      retry_budget_sec: 300          # instead of 4 within 2 (2026-10-14, the rate sweep's first manager job)
+
+harbor:
+  n_concurrent: 4
+  # x the tasks' 43200 s agent timeout = 3900 s: the longest (3600 s) session plus its shutdown.
+  agent_timeout_multiplier: 0.0903
+  extra_args: [--override-cpus, "3", --override-memory-mb, "7000"]
+
+# The wall clock is 10 x interval + 600 s: the last bug gets the same 10 minutes in every condition.
+conditions:
+  single_every60:
+    topology: single
+    interactive: {interval_sec: 60, wall_clock_sec: 1200}
+  single_every180:
+    topology: single
+    interactive: {interval_sec: 180, wall_clock_sec: 2400}
+  single_every300:
+    topology: single
+    interactive: {interval_sec: 300, wall_clock_sec: 3600}
+  manager_background_every60:
+    subagent: &bg {strategy: parallel, scope: hard, spawn_mode: background}
+    tools: &manager {orchestrator_tools: [read_file, list_dir, search]}
+    interactive: {interval_sec: 60, wall_clock_sec: 1200}
+  manager_background_every180:
+    subagent: *bg
+    tools: *manager
+    interactive: {interval_sec: 180, wall_clock_sec: 2400}
+  manager_background_every300:
+    subagent: *bg
+    tools: *manager
+    interactive: {interval_sec: 300, wall_clock_sec: 3600}
