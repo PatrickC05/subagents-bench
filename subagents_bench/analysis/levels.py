@@ -33,7 +33,9 @@ with nothing. Per urgent bug, against its twins:
 - ``order``: per pair of sessions, over the earlier bugs failing at the urgent bug's send time in
   both (``fixes.state_at``; ``unknown`` counts as failing unless the bug's fix time is before),
   1 if the urgent bug was fixed before the earlier bug, 0 after, 0.5 if neither was fixed (or at
-  the same time); the mean over those bugs, then over pairs; ``twin_order`` the same in the twins;
+  the same time), the earlier bug by its first fix after the send time (``fixes.fixed_after``
+  when its ``fixed_sec`` fix broke before then); the mean over those bugs, then over pairs;
+  ``twin_order`` the same in the twins;
 - ``fixed_240``/``fixed_480``: fixed within 240 s (before the next bug) and 480 s
   (``twin_fixed_*``: the share of the twins);
 - ``win_rate`` over the urgent x twin session pairs: 1 if the urgent bug was fixed more than 30 s
@@ -270,8 +272,10 @@ def _failing(status: str | None, fix_at: float | None, t: float) -> bool:
 def bug_rows(t: Trial, keys: dict[str, Any], valid: bool, fixes: dict[str, dict] | None = None,
              hints: list[dict] | None = None) -> list[dict[str, Any]]:
     """One row per bug sent in an interactive episode (none otherwise): its fix times
-    (``fixes``: ``fixes.fix_times(t)`` unless given), start, preemption, and the earlier bugs
-    failing when it was sent (``open_before``, a list). ``hints``: the trial's ``hint_rows``."""
+    (``fixes``: ``fixes.fix_times(t)`` unless given), start, preemption, the earlier bugs
+    failing when it was sent (``open_before``, a list) and their first fix after then
+    (``open_fixed_session_sec``: subtask id -> seconds into the session or None; ``fixed_sec``'s
+    fix unless it was at or before the send time). ``hints``: the trial's ``hint_rows``."""
     ep, r = t.episode or {}, t.records
     inbox = sorted((x for x in r.get("inbox", []) if x.get("kind") == "hint"), key=lambda x: x["hint_index"])
     if (ep.get("config") or {}).get("interactive") is None or not inbox:
@@ -319,10 +323,16 @@ def bug_rows(t: Trial, keys: dict[str, Any], valid: bool, fixes: dict[str, dict]
         rows.append(row)
     for row in rows:
         earlier = [x["subtask_id"] for x in rows if x["hint_index"] < row["hint_index"]]
-        row["open_before"] = None
+        row["open_before"] = row["open_fixed_session_sec"] = None
         if row["timed"] and earlier:
-            at = fixes_mod.state_at(t, row["t_ready_sec"]) or {}
-            row["open_before"] = [s for s in earlier if _failing(at.get(s), fix_at.get(s), row["t_ready_sec"])]
+            sent_t = row["t_ready_sec"]
+            at = fixes_mod.state_at(t, sent_t) or {}
+            row["open_before"] = [s for s in earlier if _failing(at.get(s), fix_at.get(s), sent_t)]
+            # their first fix after it was sent: fixed_sec's, unless that fix broke before then (the next one)
+            old = [s for s in row["open_before"] if fix_at.get(s) is not None and fix_at[s] <= sent_t]
+            after = fixes_mod.fixed_after(t, sent_t) if old else {}
+            row["open_fixed_session_sec"] = {s: after.get(s) if s in old else fix_at.get(s)
+                                             for s in row["open_before"]}
     return rows
 
 
@@ -342,12 +352,14 @@ def _fix_at(b: dict) -> float:
 
 def order_score(session: dict[str, dict], sid: str, earlier: list[str]) -> float | None:
     """Mean over ``earlier`` of 1 if ``sid`` was fixed before it, 0 after, 0.5 if neither was fixed
-    (or at the same time); None without earlier bugs."""
+    (or at the same time); None without earlier bugs. An earlier bug failing when ``sid`` was sent
+    counts by its first fix after then (``open_fixed_session_sec``), not by a fix that broke before."""
     if not earlier:
         return None
-    mine = _fix_at(session[sid])
-    return float(np.mean([1.0 if mine < _fix_at(session[e]) else 0.0 if mine > _fix_at(session[e]) else 0.5
-                          for e in earlier]))
+    mine, after = _fix_at(session[sid]), session[sid].get("open_fixed_session_sec")
+    other = [_fix_at(session[e]) if after is None or e not in after else math.inf if after[e] is None else after[e]
+             for e in earlier]
+    return float(np.mean([1.0 if mine < o else 0.0 if mine > o else 0.5 for o in other]))
 
 
 def _session_key(b: dict) -> tuple:

@@ -238,8 +238,9 @@ def grade_answers(spec: Spec, force: bool = False) -> int:
     ``{"version": 2, "judge_model", "judge_temperature", "graded_at", "answers", "replies",
     "elsewhere"}`` (``answers``: the first reply's verdict per question, as before version 2).
     Trials graded before version 2 (the first reply only, correct or not, at the model's own
-    temperature) or with an unreadable answers.json are graded again, the others only with
-    ``force``. A trial whose grading fails (its records, a judge call) writes nothing, so the next
+    temperature), with an unreadable answers.json, or graded as version 2 with an unread verdict
+    (``verdict`` null: the judge's reply could not be read, perhaps only this time) are graded
+    again, the others only with ``force``. A trial whose grading fails (its records, a judge call) writes nothing, so the next
     run grades it. 0 when every reply judged now got a verdict and no trial failed, 3 on a billing
     error (stops at once), else 1."""
     conds = interactive(spec)
@@ -259,10 +260,14 @@ def grade_answers(spec: Spec, force: bool = False) -> int:
                 continue
             out, name = trial / "answers.json", _rel(trial.parent, spec.root)
             try:
-                version = json.loads(out.read_text()).get("version")
-            except (OSError, ValueError, AttributeError):  # none yet, cut mid-write, or not an object
-                version = None
-            if isinstance(version, int) and version >= ANSWERS_VERSION and not force:
+                doc = json.loads(out.read_text())
+                version = doc.get("version")
+                unread_before = version == ANSWERS_VERSION and any(  # an unread verdict: judge it again
+                    not isinstance(v, dict) or v.get("verdict") is None
+                    for k in ("replies", "elsewhere") for vs in (doc.get(k) or {}).values() for v in vs)
+            except (OSError, ValueError, AttributeError, TypeError):  # none yet, cut mid-write, or not an object
+                version, unread_before = None, True
+            if isinstance(version, int) and version >= ANSWERS_VERSION and not unread_before and not force:
                 continue
             try:
                 inbox = records(trial, "inbox")

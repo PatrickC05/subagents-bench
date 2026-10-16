@@ -7,9 +7,12 @@ estimate (``via`` ``structured``). Estimates written only in text are read by re
 (``parse_estimates``): a bug reply without ``eta_min`` (``text_bug``: ``ETA ~10 min``), and a reply
 to a status check's id, once per bug it gives a time for (``text_status``: ``#4 ~8 min; #5 ~6
 min``, ``#8 and #18 ... ETA ~10 min each``). Each estimate has a ``source``: ``arrival`` (the
-bug's first estimate, sent before the next status check after the bug; with no check after it,
-whenever it came), ``check`` (sent within ``CHECK_SEC`` = 120 s after a status check that lists
-the bug: every bug sent before the check, ``check_id``), else ``update``.
+bug's first estimate, sent before the next status check after the bug; in a session without
+checks (L0), before the time L1's next check after it would be sent (``ARRIVAL_EVERY``: L1's
+``status_every``, a check half an interval after every second bug, before the deadline), so that
+L0 and L1 arrival estimates share one window; with no such check after it, whenever it came),
+``check`` (sent within ``CHECK_SEC`` = 120 s after a status check that lists the bug: every bug
+sent before the check, ``check_id``), else ``update``.
 
 **Scoring.** An estimate of m minutes sent at t predicts the fix at ``pred = t + 60 m``, with a
 grace of max(60 s, 25% of 60 m). It is ``eligible`` iff pred + grace falls within the session
@@ -30,11 +33,13 @@ the share whose bug was fixed by the deadline (``fixed_by_deadline``).
   counts once; ``estimate_table`` recomputes it within each subset it reports.
 
 **Status pairs.** For each status check and each bug it lists that was not said done before the
-check was sent: the first estimate (any via) or done reply for the bug after the check was sent
-(``reply_sec``, ``kind`` ``eta``/``done``, ``via``); ``answered`` iff within ``CHECK_SEC`` (a fixed
-window: in L2/L3 a question follows each check after 40 s). ``right``: a done on a bug fixed by
-then, an estimate on one not fixed (by ``fixed_sec``); ``done_owed``: fixed by the check and never
-said done in the session.
+check was sent: the first estimate (any via) or done for the bug after the check was sent
+(``reply_sec``, ``kind`` ``eta``/``done``, ``via``); said done is a reply to the bug with ``done:
+true`` (``structured``) or a done written in a reply to a status check's id (``text_status``,
+``parse_done``: ``#1 is fixed and verified``), whichever came first. ``answered`` iff within
+``CHECK_SEC`` (a fixed window: in L2/L3 a question follows each check after 40 s). ``right``: a
+done on a bug fixed by then, an estimate on one not fixed (by ``fixed_sec``); ``done_owed``: fixed
+by the check and never said done in the session.
 
 All times are seconds after the message was sent (the bug for estimates, the check for pairs),
 except ``*_session_sec`` (from the session's start).
@@ -59,6 +64,7 @@ GRACE_FRAC = 0.25
 FLOOR_SEC = 30.0  # log2 floor on the predicted and the actual horizon
 WITHIN_MIN = (1, 2, 5)
 SOURCES = ("arrival", "check", "update")
+ARRIVAL_EVERY = 2  # L1's status_every: where a session without checks (L0) ends a bug's arrival window
 VIAS = ("structured", "text_bug", "text_status")
 
 # -- text estimates ----------------------------------------------------------------------------
@@ -72,6 +78,9 @@ DURATION_RE = re.compile(
 CUE_RE = re.compile(r"\b(?:ETAs?|estimated?|estimates|expect(?:ed|s)?)\b", re.IGNORECASE)
 FUTURE_RE = re.compile(r"\b(?:will|should|shall)\b|'ll\b", re.IGNORECASE)
 DONE_RE = re.compile(r"\b(?:fixed|done|resolved)\b", re.IGNORECASE)
+FOR_RE = re.compile(r"\s*(?:for|on)\s+(?:bugs?\s+|requests?\s+)?#", re.IGNORECASE)  # "~5 min for #2"
+ID_LIST_RE = re.compile(r"(?:[\s,/&+]|\b(?:and|or|bugs?|requests?)\b)*", re.IGNORECASE)  # between ids of one list
+PAREN_RE = re.compile(r"\([^()]*\)")  # "#8 (envvar flag) and #18"
 NOT_DONE_RE = re.compile(r"(?:\b(?:be|being|get|getting|not|once|when|until|if|before)|n't)\s+(?:\S+\s+)?$",
                          re.IGNORECASE)
 
@@ -96,20 +105,25 @@ def parse_estimates(text: str, ids: Collection[int], default: int | None = None)
 
     Only ``#N`` with N in ``ids`` names a bug. Within a sentence a time goes to the ids named since
     the previous time (``#1 ~5 min; #4 ~8 min``, ``#8 and #18 ... ETA ~10 min each``); a sentence whose
-    only time comes before its ids gives it to all of them (``ETA ~10 min for #8 and #18``); a done
-    word (``#1 is fixed``) drops the ids named before it. Ids of a sentence without a time carry to
-    the next one if that starts with a time (``#8 and #18 are open. ETA ~10 min.``). A time left
-    over goes to ``default`` (the bug a reply is addressed to) unless it got one; with a ``default``,
-    a time is given to other ids before or after it in this way only when ``default`` is among them
-    (a reply's ETA is for its own bug)."""
+    only time comes before its ids gives it to all of them (``ETA ~10 min for #8 and #18``), and with
+    more times, a time followed by ``for #`` goes to the ids after it (``ETA ~10 min for #8, ~5 min
+    for #2``); a done word (``#1 is fixed``) drops the ids named before it. Ids of a sentence without
+    a time carry to the next one if that starts with a time (``#8 and #18 are open. ETA ~10 min.``).
+    A time left over goes to ``default`` (the bug a reply is addressed to) unless it got one, the
+    first one after an ETA word if any (``Test suite takes ~2 min; ETA 10 min``: 10); with a
+    ``default``, a time is given to other ids before or after it in this way only when ``default``
+    is among them (a reply's ETA is for its own bug)."""
     ids = set(ids)
     out: dict[int, float] = {}
     leftover: float | None = None  # the first time no id took
+    leftover_cue: float | None = None  # ... of those after an ETA word
     carried: list[int] = []
     for sentence in SENTENCE_RE.split(text or ""):
+        times = [m for m in DURATION_RE.finditer(sentence) if _cued(sentence, m)]
+        forward = {m.start() for m in times if FOR_RE.match(sentence, m.end())}  # for the ids after it
+        cue = {m.start() for m in times if CUE_RE.search(sentence[:m.start()])}
         events = sorted([(m.start(), "id", int(m[1])) for m in ID_RE.finditer(sentence) if int(m[1]) in ids]
-                        + [(m.start(), "time", _minutes(m)) for m in DURATION_RE.finditer(sentence)
-                           if _cued(sentence, m)]
+                        + [(m.start(), "time", _minutes(m)) for m in times]
                         + [(m.start(), "done", None) for m in DONE_RE.finditer(sentence)
                            if not NOT_DONE_RE.search(sentence[:m.start()])], key=lambda e: e[0])
         had_time = any(kind == "time" for _, kind, _ in events)
@@ -122,27 +136,61 @@ def parse_estimates(text: str, ids: Collection[int], default: int | None = None)
         time_first = (events and events[0][1] == "time" and sum(kind == "time" for _, kind, _ in events) == 1
                       and (default is None or default in named))  # else the reply's own bug's time
         pending: list[int] = []
-        free: list[float] = []  # times no id took (yet)
-        for _, kind, x in events:
+        free: list[tuple[float, bool]] = []  # times no id took (yet), and whether an ETA word cued them
+        fwd: float | None = None  # a time written before the ids it is for (not time_first)
+        for pos, kind, x in events:
             if kind == "id":
-                pending += [] if x in pending else [x]
+                if fwd is not None:
+                    out.setdefault(x, fwd)
+                else:
+                    pending += [] if x in pending else [x]
             elif kind == "done":
-                pending = []
+                pending, fwd = [], None
             elif pending:
                 for i in pending:
                     out.setdefault(i, x)
-                pending = []
+                pending, fwd = [], None
+            elif pos in forward and not time_first and (default is None or default in named):
+                fwd = x
             else:
-                free.append(x)
+                free.append((x, pos in cue))
+                fwd = None
         if pending and time_first:
-            x = free.pop(0)
+            x = free.pop(0)[0]
             for i in pending:
                 out.setdefault(i, x)
         elif pending and not had_time and (default is None or default in pending):
             carried = pending
-        leftover = free[0] if leftover is None and free else leftover
+        leftover = free[0][0] if leftover is None and free else leftover
+        leftover_cue = next((x for x, c in free if c), None) if leftover_cue is None else leftover_cue
     if default is not None and default not in out and leftover is not None:
-        out[default] = leftover
+        out[default] = leftover if leftover_cue is None else leftover_cue
+    return out
+
+
+def parse_done(text: str, ids: Collection[int]) -> set[int]:
+    """Message ids that ``text`` says are done: the ids of the list named last before an un-negated
+    done word in its sentence, since the previous time or done word (``#1 is fixed and verified``,
+    ``#1, #4 are fixed``, ``#8 (flag) and bug #18 (default) are done``; not ``#4 will be fixed in
+    ~5 min`` or ``#2 is not yet fixed``, nor the ``#8`` of ``Working on #8 now that #1 is fixed``).
+    A list's ids are joined only by commas, slashes, ``and``/``or``, ``bug`` and parentheticals."""
+    ids, out = set(ids), set()
+    for sentence in SENTENCE_RE.split(text or ""):
+        events = sorted([(m.start(), "id", int(m[1]), m.end()) for m in ID_RE.finditer(sentence)
+                         if int(m[1]) in ids]
+                        + [(m.start(), "time", None, None) for m in DURATION_RE.finditer(sentence)
+                           if _cued(sentence, m)]
+                        + [(m.start(), "done", None, None) for m in DONE_RE.finditer(sentence)
+                           if not NOT_DONE_RE.search(sentence[:m.start()])], key=lambda e: e[0])
+        pending: list[int] = []  # the list being named
+        end: int | None = None  # where its last id ends
+        for pos, kind, x, stop in events:
+            if kind == "id":
+                joined = end is not None and ID_LIST_RE.fullmatch(PAREN_RE.sub(" ", sentence[end:pos])) is not None
+                pending, end = (pending if joined else []) + [x], stop
+            else:
+                out.update(pending if kind == "done" else ())
+                pending, end = [], None
     return out
 
 
@@ -187,6 +235,19 @@ def _raw_estimates(bugs: list[dict], checks: list[dict], replies: list[dict]) ->
                 out.append({"t": x["t"], "bug": bug, "eta_min": m, "via": "text_status", "to": to,
                             "text": x.get("text")})
     return sorted(out, key=lambda e: (e["t"], e["bug"]))
+
+
+def _arrival_end(m: dict, checks: list[dict], n_bugs: int, every: float | None, t0: float,
+                 deadline: float) -> float:
+    """When bug ``m``'s arrival window ends (epoch seconds; inf: never): the first status check
+    sent after it; in a session without checks (L0), when L1's next check would be sent, as
+    ``hints.schedule`` places it: at (k + 0.5) ``interval_sec`` for the first bug index k >= the
+    bug's with (k + 1) % ``ARRIVAL_EVERY`` == 0, if that bug exists and the time is before the deadline."""
+    if checks or not every or m.get("hint_index") is None:
+        return next((c["t_ready"] for c in checks if c["t_ready"] > m["t_ready"]), math.inf)
+    k = -(-(m["hint_index"] + 1) // ARRIVAL_EVERY) * ARRIVAL_EVERY - 1
+    at = t0 + (k + 0.5) * every
+    return at if k < n_bugs and at < deadline else math.inf
 
 
 def _claims(replies: list[dict]) -> dict[int, float]:
@@ -242,12 +303,13 @@ def estimate_rows(t: Trial, fixes: Any = None) -> list[dict[str, Any]]:
     fixes = _fixes(t, fixes)
     claims = _claims(replies)
     by_id = {m["msg_id"]: m for m in bugs}
+    every = (((t.episode or {}).get("config") or {}).get("interactive") or {}).get("interval_sec")
     seen: set[int] = set()
     rows = []
     for e in _raw_estimates(bugs, checks, replies):
         m, eta = by_id[e["bug"]], e["eta_min"]
         ready = m["t_ready"]
-        nxt = next((c["t_ready"] for c in checks if c["t_ready"] > ready), math.inf)
+        nxt = _arrival_end(m, checks, len(bugs), every, t0, deadline)
         check = next((c for c in reversed(checks) if ready < c["t_ready"] <= e["t"] <= c["t_ready"] + CHECK_SEC), None)
         source = "arrival" if e["bug"] not in seen and e["t"] < nxt else "check" if check else "update"
         seen.add(e["bug"])
@@ -295,6 +357,12 @@ def status_pair_rows(t: Trial, fixes: Any = None) -> list[dict[str, Any]]:
         answers.setdefault(e["bug"], []).append((e["t"], "eta", e["via"]))
     for bug, tc in claims.items():
         answers.setdefault(bug, []).append((tc, "done", "structured"))
+    check_ids = {c["msg_id"] for c in checks}
+    for x in replies:  # a done written in a reply to a status check's id (the user's view: said done)
+        if x.get("to") in check_ids:
+            for bug in parse_done(x.get("text") or "", {m["msg_id"] for m in bugs if m["t_ready"] <= x["t"]}):
+                answers.setdefault(bug, []).append((x["t"], "done", "text_status"))
+                claims[bug] = min(claims.get(bug, math.inf), x["t"])
     rows = []
     for c in checks:
         tc = c["t_ready"]

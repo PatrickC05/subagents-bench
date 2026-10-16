@@ -94,9 +94,24 @@ def test_judge_answer_prompt():
     ('{"verdict": true, "why": "w"}', None),
     ('{"verdict": ["correct"], "why": "w"}', None),
     ('{"correct": "yes", "why": "w"}', None),
-    ('[{"verdict": "correct"}]', None),
     ('{"why": "no verdict"}', None),
+    ('{"verdict": "partly correct", "why": "it quotes \\"verdict\\": \\"correct\\""}', None),
     ("correct", None),
+    ('The "verdict": correct', None),
+    # near-JSON whose verdict is plain to see: read by the fallback
+    ('[{"verdict": "correct"}]', ("correct", '[{"verdict": "correct"}]')),
+    ('{"verdict": "correct", "why": "ok"}\nNote: the reference mentions {x}.', ("correct", "ok")),
+    ('{"verdict": "wrong", "why": "a"}\n{"verdict": "wrong", "why": "b"}', ("wrong", "a")),
+    ('Verdict [correct]\n{"verdict": "correct", "why": "ok"}', ("correct", "ok")),
+    ('{"verdict": "wrong", "why": "It says "Abort" but the reference says Retry"}',
+     ("wrong", 'It says "Abort" but the reference says Retry')),
+    ('{"verdict": "none", "why": "a plan,\nnot an answer"}', ("none", "a plan,\nnot an answer")),
+    ('{"verdict": " Wrong ", "why": "w"} trailing }', ("wrong", "w")),
+    ('{"verdict": "correct", "why": "a"}\n{"verdict": "Correct", "why": "b"}', ("correct", "a")),  # one verdict
+    # near-JSON naming two different verdicts: which one is meant is not plain, so unreadable
+    ('Format: {"verdict": "correct" or "wrong" or "none", "why": "<one sentence>"}\n'
+     '{"verdict": "wrong", "why": "misses the key fact"}', None),
+    ('{"verdict": "correct", "why": "a"}\nOn reflection: {"verdict": "wrong", "why": "b"}', None),
 ])
 def test_judge_answer_verdicts(text, want):
     assert judge_answer(judge(text), "q", "r", "a") == (want if want is not None else (None, text))
@@ -319,7 +334,48 @@ def test_grade_answers_exits_1_on_an_unreadable_verdict(graded_spec, capsys):
     assert "1 of 3 questions answered correctly (0 by the first reply; 1 answered; 2 replies judged; 1 verdicts " \
            "unreadable)" in capsys.readouterr().out
     assert answers(agent)["answers"] == {"2": {"correct": None, "verdict": None, "why": "I cannot tell."}}
-    assert cli.main(["grade-answers", str(path)]) == 0  # graded (version 2): kept, as before version 2
+    # an unread verdict is judged again on the next run (still unreadable here: exit 1 again)
+    assert cli.main(["grade-answers", str(path)]) == 1
+    assert "1 verdicts unreadable" in capsys.readouterr().out
+
+
+def test_grade_answers_judges_an_unread_verdict_again(graded_spec, capsys, monkeypatch):
+    """A version-2 file with an unread verdict is graded again: once the judge reads it, the
+    verdict is filled in and the run exits 0; a file with every verdict read is kept."""
+    path, spec, clients = graded_spec
+    agent = write_trial(spec, "t__r1__solo", INBOX, [rep(90, 2, "[??] it returns 1"), rep(95, 2, "[bad]"),
+                                                     rep(180, 1, "#3 is [??] x")])
+    kept = write_trial(spec, "t__r2__solo", INBOX, REPLIES)
+    assert cli.main(["grade-answers", str(path)]) == 1
+    a = answers(agent)
+    assert [v["verdict"] for v in a["replies"]["2"]] == [None, "wrong"]
+    assert [v["verdict"] for v in a["elsewhere"]["3"]] == [None]
+    kept_doc = answers(kept)
+    capsys.readouterr()
+    monkeypatch.setitem(TAGS, "[??]", '{"verdict": "correct", "why": "read now"}')  # the judge reads it now
+    assert cli.main(["grade-answers", str(path)]) == 0
+    out = capsys.readouterr().out
+    assert out.count("[OK]") == 1 and "t__r1__solo" in out and "unreadable" not in out
+    a = answers(agent)
+    assert a["version"] == 2 and a["answers"]["2"] == {"correct": True, "verdict": "correct", "why": "read now"}
+    assert [v["verdict"] for v in a["replies"]["2"]] == ["correct"]  # up to the first correct one
+    assert [v["verdict"] for v in a["elsewhere"]["3"]] == ["correct"]
+    assert answers(kept) == kept_doc  # every verdict read: not judged again
+    n = sum(len(c.requests) for _, c in clients)
+    assert cli.main(["grade-answers", str(path)]) == 0 and "[OK]" not in capsys.readouterr().out
+    assert sum(len(c.requests) for _, c in clients) == n
+
+
+def test_grade_answers_keeps_a_later_format_with_an_unread_verdict(graded_spec):
+    """Only a version-2 file is checked for unread verdicts: a later format is never downgraded;
+    a version-2 file whose replies are not verdict objects is graded again."""
+    path, spec, _ = graded_spec
+    later = {"version": 3, "replies": {"2": [{"t": T0 + 90, "verdict": None}]}}
+    agent = write_trial(spec, "t__r1__solo", INBOX, REPLIES, answers=later)
+    broken = write_trial(spec, "t__r2__solo", INBOX, REPLIES, answers={"version": 2, "replies": {"2": ["x"]}})
+    assert cli.main(["grade-answers", str(path)]) == 0
+    assert answers(agent) == later
+    assert answers(broken)["version"] == 2 and answers(broken)["replies"]["2"][-1]["verdict"] == "correct"
 
 
 def test_grade_answers_a_failed_trial_writes_nothing_and_is_graded_next_time(graded_spec, capsys, monkeypatch):

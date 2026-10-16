@@ -12,7 +12,9 @@ workspace unchanged (from ``snapshots.jsonl``; without it each state counts once
 Per bug, in state order:
 
 - ``unknown`` carries no information: it never starts, breaks or ends anything, and neither does
-  a ``fail`` whose rerun passed (a flaky test);
+  a ``fail`` whose rerun passed (a flaky test); except in the final state, which reproduces the
+  verifier's unresolved verdict (``timing_ok``): there any status but ``pass`` is a ``fail``, so a
+  passing streak never lasts "to the end" through an unknown or flaky final state;
 - a *failing stretch* runs from a ``fail`` through any ``fail``/unknown states to the next
   ``pass``. It is *confirmed* when its fails were observed at least ``CONFIRM_OBS`` (2) times and
   it lasted at least ``CONFIRM_SEC`` (30 s) until that pass, or when no pass follows (the end cuts
@@ -94,7 +96,8 @@ class State:
     visible_ok: bool | None
     obs: int  # times observed: itself plus the unchanged snapshots after it
     raw: dict[str, str] = field(default_factory=dict)  # sid -> replayed status
-    status: dict[str, str] = field(default_factory=dict)  # sid -> pass | fail | unknown (a flaky fail: unknown)
+    # sid -> pass | fail | unknown (a flaky fail: unknown; in the final state, anything but pass: fail)
+    status: dict[str, str] = field(default_factory=dict)
 
 
 def _status(b: Any) -> tuple[str, str]:
@@ -129,6 +132,8 @@ def states(fs: dict | None, snaps: list[dict]) -> list[State]:
         st = State(float(t), seq, s.get("source") == "final" or seq is None, s.get("visible_ok"), obs)
         for sid, b in (s.get("bugs") or {}).items():
             st.raw[sid], st.status[sid] = _status(b)
+            if st.final and st.status[sid] != "pass":  # the end verdict (timing_ok: the verifier's): unresolved
+                st.status[sid] = "fail"
         out.append(st)
     return sorted(out, key=lambda x: (x.final, math.inf if x.seq is None else x.seq, x.t))
 
@@ -230,6 +235,22 @@ def fix_times(t: Trial) -> dict[str, dict[str, Any]]:
 def bug_fix_rows(t: Trial) -> list[dict[str, Any]]:
     """One ``fixes.csv`` row per bug sent in the session (none for a session without bugs)."""
     return list(fix_times(t).values())
+
+
+def fixed_after(t: Trial, t_session: float) -> dict[str, float | None]:
+    """subtask_id -> seconds into the session of the bug's first fix (``fixed_sec``'s rule) among
+    the states from ``t_session`` on (None: none); {} without usable fix times (``timing_ok`` false)."""
+    fs = load_fix_states(t)
+    if fs is None or not final_matches(fs):
+        return {}
+    bugs = _sent_bugs(t)
+    t0 = _session_t0(t, bugs)
+    sts = [st for st in states(fs, snapshot_records(t)) if st.t >= t0 + t_session]
+    out: dict[str, float | None] = {}
+    for m in bugs:
+        ft = bug_times(sts, m["subtask_id"])["fixed_t"] if sts else None
+        out[m["subtask_id"]] = None if ft is None else ft - t0
+    return out
 
 
 def state_at(t: Trial, t_session: float) -> dict[str, str]:
