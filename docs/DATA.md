@@ -12,6 +12,7 @@ jobs/<sweep>/
   configs/<condition>.yaml            resolved ExperimentConfig the condition's job ran with
   sweep.json                          the sweep's status (below)
   sweep_manifest.jsonl                one line per job event (below)
+  .sweep.lock                         flock'd while a sweep or preflight --oracle runs: `pid N: <command line>`
   <sweep>__r<k>__<condition>/         one harbor job (round k); harbor's config.json, result.json, job.log
     <task>__<suffix>/                 one harbor trial: config.json, result.json, trial.log, verifier/
       agent/                          harbor's logs_dir: this harness's records (below)

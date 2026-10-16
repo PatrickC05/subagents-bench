@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
 import shlex
 import shutil
@@ -614,6 +615,7 @@ def test_interrupt_stops_harbor_and_exits_130(fake, spec):
     assert (spec.jobs_dir / job / "sigint").exists() and manifest(spec)[-1]["event"] == "interrupted"
     assert fake.calls()[0]["pgid"] != os.getpgid(0)  # a terminal's Ctrl-C reaches harbor only via the sweep
     assert json.loads((spec.jobs_dir / "sweep.json").read_text())["status"] == "interrupted"
+    sweep.lock_jobs_dir(spec).close()  # the interrupted sweep released the jobs dir
 
 
 # --- several jobs at once (--jobs-at-once) --------------------------------------------------------
@@ -744,6 +746,129 @@ def test_sigterm_and_sighup_stop_the_sweep_like_ctrl_c(fake, tmp_path):
             signal.signal(s, handler)
 
 
+# --- one sweep per jobs dir (.sweep.lock) ---------------------------------------------------------
+
+
+def test_a_second_sweep_on_the_jobs_dir_exits_2_and_touches_nothing(fake, spec, monkeypatch, capsys):
+    running = spec.jobs_dir / first_job(spec)  # the first sweep's job: a second sweep would move it aside
+    running.mkdir(parents=True)
+    write_job(running, 2, finished=False)
+    held = sweep.lock_jobs_dir(spec)
+    assert go(spec) == 2
+    assert f"another sweep is running on jobs/t (pid {os.getpid()}: {shlex.join(sys.argv)})" in capsys.readouterr().out
+    monkeypatch.setenv("SAIL_API_KEY", "test-key")
+    assert sweep.preflight(spec, oracle=True) == 2  # its oracle job writes there too: refused before any check
+    assert "another sweep is running on jobs/t" in capsys.readouterr().out
+    assert sweep.preflight(spec) == 0  # without the oracle it only reads
+    assert sweep.run(spec, sweep.plan(spec), dry_run=True) == 0  # so does a dry run
+    assert fake.calls() == [] and sorted(p.name for p in spec.jobs_dir.iterdir()) == [".sweep.lock", running.name]
+    held.close()
+    assert go(spec) == 0 and len(fake.calls()) == 2  # released: the next sweep runs
+    assert (spec.jobs_dir / "_partial" / f"{running.name}.1").is_dir()
+    assert (spec.jobs_dir / ".sweep.lock").read_text() == f"pid {os.getpid()}: {shlex.join(sys.argv)}\n"
+    sweep.lock_jobs_dir(spec).close()  # and it released the jobs dir when it returned
+
+
+HOLD = ("import sys; from subagents_bench import sweep; lock = sweep.lock_jobs_dir(sweep.load_spec(sys.argv[1])); "
+        "print('locked', flush=True); sys.stdin.read()")
+
+
+def test_the_lock_holds_across_processes_until_the_holder_dies(fake, tmp_path, capsys):
+    path = str(make_spec(tmp_path))
+    holder = subprocess.Popen([sys.executable, "-c", HOLD, path], cwd=REPO, stdin=subprocess.PIPE,
+                              stdout=subprocess.PIPE, text=True)
+    try:
+        assert holder.stdout.readline() == "locked\n"
+        assert cli.main(["sweep", path]) == 2
+        assert cli.main(["preflight", path, "--oracle"]) == 2
+        out = capsys.readouterr().out
+        assert out.count(f"another sweep is running on jobs/t (pid {holder.pid}: {shlex.join(['-c', path])})") == 2
+        assert fake.calls() == []
+    finally:
+        holder.kill()  # SIGKILL: no cleanup runs in the holder, the OS releases its lock
+        holder.wait()
+    assert cli.main(["sweep", path]) == 0 and len(fake.calls()) == 2
+
+
+def test_preflight_then_sweep_take_the_lock_in_turn(fake, tmp_path, monkeypatch):
+    """run_experiment.sh runs `preflight --oracle`, then the sweep: each holds the jobs dir while it runs."""
+    path = str(make_spec(tmp_path))
+    monkeypatch.setenv("SAIL_API_KEY", "test-key")
+    assert cli.main(["preflight", path, "--oracle"]) == 0 and cli.main(["sweep", path]) == 0
+    assert fake.jobs()[0] == "_oracle" and len(fake.jobs()) == 3
+
+
+# --- job selection (--rounds, --only, --job) ------------------------------------------------------
+
+
+def plan_before_job(spec, only=None, rounds=None) -> list[tuple[int, str]]:
+    """plan() as it was before --job, verbatim."""
+    rng = random.Random(spec.order_seed)
+    jobs = []
+    for r in range(1, spec.rounds + 1):
+        order = list(spec.configs)
+        rng.shuffle(order)
+        jobs += [(r, c) for c in order if (not rounds or r in rounds) and (not only or c in only)]
+    return jobs
+
+
+def test_plans_without_job_are_unchanged():
+    for path in sorted((REPO / "configs/sweeps").glob("*.yaml")):
+        s = sweep.load_spec(path)
+        conds, rounds = list(s.configs), list(range(1, s.rounds + 1))
+        for only, rs in [(None, None), *((None, [r]) for r in rounds), *(([c], None) for c in conds),
+                         (conds[:2], [1]), (conds[-3:], rounds[-2:])]:
+            assert sweep.plan(s, only, rs) == sweep.plan(s, only, rs, []) == plan_before_job(s, only, rs), (path, only, rs)
+
+
+def test_job_selects_single_jobs(tmp_path):
+    s = sweep.load_spec(make_spec(tmp_path, rounds=3))
+    assert sweep.plan(s, jobs=[(3, "par")]) == [(3, "par")]  # alone: only these jobs
+    assert sweep.plan(s, jobs=[(2, "par"), (1, "single"), (2, "par")]) == [(2, "par"), (1, "single")]  # in order, once
+    r1 = sweep.plan(s, rounds=[1])
+    assert sweep.plan(s, rounds=[1], jobs=[(3, "par"), r1[1], (3, "par")]) == r1 + [(3, "par")]  # the union
+    single = sweep.plan(s, only=["single"])
+    assert sweep.plan(s, only=["single"], jobs=[(2, "par"), (2, "single")]) == single + [(2, "par")]
+    par23 = sweep.plan(s, only=["par"], rounds=[2, 3])
+    assert sweep.plan(s, only=["par"], rounds=[2, 3], jobs=[(1, "single")]) == par23 + [(1, "single")]
+    levels = sweep.load_spec(REPO / "configs/sweeps/swe_interactive_levels.yaml")
+    l23 = [c for c in levels.configs if c.endswith(("_questions", "_urgent"))]
+    reruns = [(1, "manager_background_baseline"), (2, "manager_background_questions")]
+    assert sweep.plan(levels, l23, [3, 4], reruns) == sweep.plan(levels, l23, [3, 4]) + reruns
+
+
+def test_bad_job_values(fake, tmp_path, capsys):
+    path = str(make_spec(tmp_path))
+    with pytest.raises(ConfigError, match="not in sweep 't': job 2:single, job 1:nope"):
+        sweep.plan(sweep.load_spec(Path(path)), jobs=[(1, "par"), (2, "single"), (1, "nope")])
+    for bad in ("2:single", "0:par", "1:nope", "1:Par"):
+        assert cli.main(["sweep", path, "--job", bad]) == 2
+        assert f"not in sweep 't': job {bad}" in capsys.readouterr().err
+    assert cli.main(["sweep", path, "--only", "nope", "--job", "1:par"]) == 2  # --only is checked as before
+    assert "not in sweep 't': nope" in capsys.readouterr().err
+    for bad in ("1", ":par", "x:par", "1:", "1,2:par"):
+        with pytest.raises(SystemExit) as e:
+            cli.main(["sweep", path, "--job", bad])
+        assert e.value.code == 2 and f"expected ROUND:CONDITION like 1:single (got {bad!r})" in capsys.readouterr().err
+    assert fake.calls() == [] and not (tmp_path / "proj/jobs").exists()
+
+
+def test_cli_job(fake, tmp_path, capsys):
+    path = str(make_spec(tmp_path, rounds=2))
+    s = sweep.load_spec(Path(path))
+    r1 = [sweep.job_name(s, *j) for j in sweep.plan(s, rounds=[1])]
+    assert cli.main(["sweep", path, "--dry-run", "--rounds", "1", "--job", "2:par", "--job", "1:par"]) == 0
+    out = capsys.readouterr().out
+    assert "Sweep 't': 3 jobs" in out and re.findall(r"\] (t__\S+):", out) == [*r1, "t__r2__par"]
+    assert cli.main(["sweep", path, "--job", "2:par", "--job", "1:single"]) == 0
+    assert fake.jobs() == ["t__r2__par", "t__r1__single"]
+    assert cli.main(["sweep", path, "--only", "single", "--job", "2:par"]) == 0  # 1:single and 2:par: skipped
+    assert fake.jobs() == ["t__r2__par", "t__r1__single", "t__r2__single"]
+    r = subprocess.run([sys.executable, "-m", "subagents_bench.cli", "sweep", "--help"], capture_output=True,
+                       text=True, cwd=REPO)
+    assert "--job ROUND:CONDITION" in r.stdout
+
+
 # --- preflight, probe, CLI ------------------------------------------------------------------------
 
 
@@ -861,6 +986,7 @@ def test_a_job_threads_error_stops_the_other_harbor_and_the_queue(fake, spec4, m
     m = manifest(spec4)
     assert [e["event"] for e in m if e.get("job") in queued] == [] and m[-1]["event"] == "error"
     assert json.loads((spec4.jobs_dir / "sweep.json").read_text())["status"] == "error"
+    sweep.lock_jobs_dir(spec4).close()  # released though run() raised
 
 
 LEVELS = {"baseline": {}, "eta": {"status_every": 2}, "questions": {"status_every": 2, "questions_per_interval": 2},
