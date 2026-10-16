@@ -546,6 +546,52 @@ Every session ran to its deadline.
   are undos in echo, where bug 0 stayed fixed under `manager_background` and
   under `manager_available` with the stop tool.
 
+### Interrupts: a message stops the call in progress
+
+A message reaches the orchestrator only between its LLM calls, and those
+calls often reason for 2-7 minutes. Settings told to keep their steps short
+answered in about 15 s; the others took minutes. With
+`interactive.interrupt: true`, a user message that comes due during the
+orchestrator's call aborts it. The stream is closed and the partial reply
+dropped, and the model is called again with the message. A call that has
+run under 5 s, or has started a tool call, finishes first. At most 3 calls
+in a row are interrupted. Subagent reports never interrupt, and subagents
+are never interrupted (docs/DESIGN.md, *Interrupts*).
+[`swe_interactive_interrupt.yaml`](configs/sweeps/swe_interactive_interrupt.yaml)
+extends the levels sweep with only its own 6 conditions: `single`,
+`manager_background` and `background_hinted`, at L0
+(`*_interrupt_baseline`) and L2 (`*_interrupt_questions`). Each pairs with
+the levels condition of the same name without `_interrupt`.
+
+```bash
+mkdir -p jobs/swe_interactive_interrupt/hints   # the levels sweep's questions, reused
+cp <levels checkout>/jobs/swe_interactive_levels/hints/*.questions.json jobs/swe_interactive_interrupt/hints/
+scripts/run_experiment.sh configs/sweeps/swe_interactive_interrupt.yaml --jobs-at-once 6
+.venv/bin/subagents-bench fix-times configs/sweeps/swe_interactive_interrupt.yaml
+.venv/bin/subagents-bench grade-answers configs/sweeps/swe_interactive_interrupt.yaml
+scripts/analyze.sh jobs/swe_interactive_interrupt
+```
+
+The smoke,
+[`swe_interactive_interrupt_smoke.yaml`](configs/sweeps/swe_interactive_interrupt_smoke.yaml)
+(2026-10-16), ran the 6 conditions in 2-minute sessions on click and echo:
+12 of 12 sessions valid, no provider errors, $0.040 in all.
+- 67 calls were interrupted, 2-11 per session. Each aborted call ended a
+  median 0.25 s after the rule held (at most 0.42 s). Every one was
+  followed by a call that had the message, and none left a reply in the
+  conversation.
+- Median delivery fell from 2-13 s in the levels smoke to 0.2-3.4 s. The
+  slowest was 15.6 s, behind a call protected by the 3-in-a-row cap. With a
+  message every 10 s, 3 interrupts in a row came often. In both
+  `manager_background_interrupt_questions` sessions the protected 4th call
+  then reasoned for its last 40-50 s, until the deadline. That left 9
+  messages undelivered, and that condition never delegated, so the
+  delegation gate failed. Messages that close together
+  are a smoke artefact: the full session's gaps are 40 s or more.
+- The aborted calls were 38% of the cost. Their tokens are estimates. The
+  smoke recorded one token a chunk; the code now uses 16 tokens a chunk,
+  which puts them at about $0.021.
+
 ## Where data and figures land
 
 ```

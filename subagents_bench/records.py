@@ -24,13 +24,19 @@ from typing import Any, Callable
 
 from .config import ExperimentConfig
 from .environment import AgentStopped
-from .llm import BillingError, LLMError, LLMResponse, Message, ProviderError, ToolCall, ToolSpec
+from .llm import (BillingError, CallCancel, CallInterrupted, LLMError, LLMResponse, Message, ProviderError, ToolCall,
+                  ToolSpec)
 from .tools import ToolOutput
 
 ROLES = ("orchestrator", "subagent", "arbiter", "debate")
 KINDS = ("calls", "tools", "steps", "spawns", "dispatches", "arbitrations", "inbox", "replies", "snapshots",
          "transcript")
 POLL_SEC = 0.2
+ABORT_GRACE_SEC = 2.0  # an interrupted call not unwound by then is abandoned (its thread ends on its own)
+CHARS_PER_TOKEN = 4.0  # an aborted call's prompt estimate when no earlier call of the agent reported usage
+# ... and its completion estimate's tokens per streamed chunk: Sail sends about 16 tokens a chunk
+# (DeepSeek-V4.1-Flash, 2026-10-16: median 16, 10th-90th percentile 14-20 over 128 calls)
+TOKENS_PER_CHUNK = 16.0
 ARG_CHARS = 2000  # per string argument of a tool call in its record (the transcript has them whole)
 
 
@@ -69,8 +75,11 @@ class Who:
 
 
 def complete_stoppable(client: Any, system: str, messages: list[Message], tools: list[ToolSpec],
-                       stop: threading.Event) -> LLMResponse:
-    """``client.complete`` that is abandoned (AgentStopped) as soon as ``stop`` is set."""
+                       stop: threading.Event, interrupt: Callable[[CallCancel], bool] | None = None,
+                       cancel: CallCancel | None = None) -> LLMResponse:
+    """``client.complete`` that is abandoned (AgentStopped) as soon as ``stop`` is set. With
+    ``interrupt`` (and its ``cancel``), the call is aborted once ``interrupt(cancel)`` is true:
+    the stream is closed and CallInterrupted raised (a reply that ends meanwhile is kept)."""
     if stop.is_set():
         raise AgentStopped("episode stopped")
     box: dict[str, Any] = {}
@@ -78,19 +87,37 @@ def complete_stoppable(client: Any, system: str, messages: list[Message], tools:
 
     def target() -> None:
         try:
-            box["r"] = client.complete(system, messages, tools)
+            box["r"] = (client.complete(system, messages, tools) if cancel is None
+                        else client.complete(system, messages, tools, cancel=cancel))
         except BaseException as e:  # re-raised in the caller's thread
             box["e"] = e
         finally:
             done.set()
 
     threading.Thread(target=target, daemon=True).start()
+    t_cancel = None
     while not done.wait(POLL_SEC):
         if stop.is_set():
+            if cancel is not None:
+                cancel.cancel()  # close the stream rather than leave it running
             raise AgentStopped("episode stopped during an LLM call")
+        if cancel is not None and t_cancel is None and interrupt is not None and interrupt(cancel):
+            cancel.cancel()
+            t_cancel = time.time()
+        if t_cancel is not None and time.time() - t_cancel > ABORT_GRACE_SEC:
+            raise CallInterrupted("abandoned: the stream did not close in time")
     if "e" in box:
         raise box["e"]
     return box["r"]
+
+
+def prompt_chars(system: str, messages: list[Message], tools: list[ToolSpec]) -> int:
+    """A request's size in characters (system prompt, messages, tool specs), for token estimates."""
+    n = len(system) + sum(len(json.dumps(t.parameters)) + len(t.name) + len(t.description) for t in tools)
+    for m in messages:
+        n += len(m.content or "") + len(m.reasoning or "") + sum(len(r.content) for r in m.tool_results)
+        n += sum(len(c.name) + len(json.dumps(c.arguments, default=str)) for c in m.tool_calls)
+    return n
 
 
 class EpisodeRecorder:
@@ -107,6 +134,8 @@ class EpisodeRecorder:
         self._lock = threading.Lock()
         self._counters: dict[str, int] = {}
         self._tool_listeners: list[Callable[[dict[str, Any]], None]] = []
+        self._last_prompt: dict[str, tuple[int, int]] = {}  # agent_id -> (prompt chars, prompt tokens) of its last call
+        self._chunk_tokens: dict[str, tuple[int, int]] = {}  # agent_id -> (completion tokens, chunks) of its calls
         subagents = config.topology == "subagents"
         self.episode: dict[str, Any] = {
             "episode_id": self.episode_id,
@@ -169,20 +198,29 @@ class EpisodeRecorder:
         })
 
     def llm(self, who: Who, client: Any, system: str, messages: list[Message], tools: list[ToolSpec],
-            step: int) -> tuple[LLMResponse, str]:
+            step: int, interrupt: Callable[[CallCancel], bool] | None = None) -> tuple[LLMResponse, str]:
         """One recorded, stop-aware LLM call -> (response, call_id). A provider or billing
-        failure of any role stops the episode (fail-fast) and is re-raised."""
+        failure of any role stops the episode (fail-fast) and is re-raised. With ``interrupt``
+        (interactive interrupts) the call is aborted once it says so: recorded with error and
+        finish_reason ``interrupted`` and estimated tokens, then CallInterrupted is re-raised."""
         call_id = self.new_id("call")
         base = {"call_id": call_id, **who.fields(), "step": step, "model": client.cfg.model}
+        cancel = CallCancel() if interrupt is not None else None
         t0 = time.time()
         try:
-            r = complete_stoppable(client, system, list(messages), tools, self.stop_event)
+            r = complete_stoppable(client, system, list(messages), tools, self.stop_event, interrupt, cancel)
+        except CallInterrupted as e:
+            self.write("calls", {**base, **self._interrupted(who, cancel, system, messages, tools), "t_start": t0,
+                                 "t_end": time.time()})
+            e.call_id = call_id
+            raise
         except BaseException as e:
             self.write("calls", {
                 **base, "t_start": t0, "t_first_chunk": None, "t_end": time.time(), "prompt_tokens": 0,
                 "cached_tokens": 0, "completion_tokens": 0, "reasoning_tokens": None, "finish_reason": None,
                 "n_tool_calls": 0, "n_attempts": getattr(e, "n_attempts", 0), "backoff_sec": getattr(e, "backoff_sec", 0.0),
                 "stream_repairs": 0, "one_call_retry": False, "error": "cancelled" if isinstance(e, AgentStopped) else f"{type(e).__name__}: {e}"[:2000],
+                "n_chunks": None, "tokens_estimated": False,
             })
             if isinstance(e, (ProviderError, BillingError)):
                 self.fail(e)
@@ -192,9 +230,49 @@ class EpisodeRecorder:
             "prompt_tokens": r.prompt_tokens, "cached_tokens": r.cached_tokens, "completion_tokens": r.completion_tokens,
             "reasoning_tokens": r.reasoning_tokens, "finish_reason": r.finish_reason, "n_tool_calls": len(r.tool_calls),
             "n_attempts": r.n_attempts, "backoff_sec": r.backoff_sec, "stream_repairs": r.stream_repairs,
-            "one_call_retry": r.one_call_retry, "error": None,
+            "one_call_retry": r.one_call_retry, "error": None, "n_chunks": r.n_chunks, "tokens_estimated": False,
         })
+        if r.prompt_tokens and interrupt is not None:
+            with self._lock:
+                self._last_prompt[who.agent_id] = (prompt_chars(system, messages, tools), r.prompt_tokens)
+                if r.completion_tokens and r.n_chunks:
+                    tok, chunks = self._chunk_tokens.get(who.agent_id, (0, 0))
+                    self._chunk_tokens[who.agent_id] = (tok + r.completion_tokens, chunks + r.n_chunks)
         return r, call_id
+
+    def _interrupted(self, who: Who, cancel: CallCancel, system: str, messages: list[Message],
+                     tools: list[ToolSpec]) -> dict[str, Any]:
+        """An aborted call's record fields. The provider reports usage only at a stream's end, so
+        unless it came, the tokens are estimates (``tokens_estimated``): the prompt from its
+        characters at the ratio of the agent's last call that reported usage (else
+        ``CHARS_PER_TOKEN``), cached up to that call's prompt (the prefix the provider has seen),
+        and the streamed chunks (reasoning: the reasoning chunks) at the tokens per chunk of the
+        agent's completed calls (else ``TOKENS_PER_CHUNK``)."""
+        part = cancel.partial()
+        usage = part["usage"]
+        chars = prompt_chars(system, messages, tools)
+        with self._lock:
+            last = self._last_prompt.get(who.agent_id)
+            tok, chunks = self._chunk_tokens.get(who.agent_id, (0, 0))
+        per_chunk = tok / chunks if chunks else TOKENS_PER_CHUNK
+        if usage.get("prompt_tokens"):
+            prompt, cached = usage["prompt_tokens"], (usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0
+            completion = usage.get("completion_tokens") or round(part["chunks"] * per_chunk)
+            reasoning = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
+            estimated = not usage.get("completion_tokens")
+        else:
+            prompt = round(chars * last[1] / last[0]) if last else round(chars / CHARS_PER_TOKEN)
+            cached = min(last[1], prompt) if last else 0
+            completion, estimated = round(part["chunks"] * per_chunk), True
+            reasoning = round(part["reasoning_chunks"] * per_chunk)
+        return {
+            "t_first_chunk": cancel.t_first, "prompt_tokens": prompt, "cached_tokens": cached,
+            "completion_tokens": completion, "reasoning_tokens": reasoning, "finish_reason": "interrupted",
+            "n_tool_calls": 0, "n_attempts": cancel.n_attempts, "backoff_sec": cancel.backoff_sec,
+            "stream_repairs": 0, "one_call_retry": False, "error": "interrupted", "n_chunks": part["chunks"],
+            "tokens_estimated": estimated, "partial_text_chars": part["text_chars"],
+            "partial_reasoning_chars": part["reasoning_chars"], "prompt_chars": chars,
+        }
 
     def tool(self, who: Who, step: int, call_id: str, tc: ToolCall, run: Callable[[], ToolOutput]) -> ToolOutput:
         """One recorded tool call; an exception (e.g. AgentStopped) is recorded, then re-raised.
@@ -249,6 +327,7 @@ class EpisodeRecorder:
                 tokens_by_role=tokens,
                 n_calls=len(calls),
                 n_provider_errors=sum(1 for c in calls if (c["error"] or "").startswith("ProviderError")),
+                n_interrupts=sum(1 for c in calls if c["error"] == "interrupted"),
                 n_stream_repairs=sum(c["stream_repairs"] for c in calls),
                 cancel_kill=None,
                 reward=None,

@@ -115,6 +115,13 @@ class InteractiveConfig:
     # the background after every bash or edit_file call and every snapshot_every_sec, for `fix-times`.
     snapshots: bool = False
     snapshot_every_sec: float = 15.0
+    # Interrupts (docs/DESIGN.md, *Interrupts*): a user message that comes due while the orchestrator's
+    # LLM call runs aborts the call (its partial reply is dropped) and is delivered at once; the call is
+    # made again with it. Never a call younger than interrupt_min_sec or one already streaming a tool
+    # call, and never more than interrupt_max_in_row calls in a row. Subagent reports never interrupt.
+    interrupt: bool = False
+    interrupt_min_sec: float = 5.0
+    interrupt_max_in_row: int = 3
 
 
 @dataclass
@@ -231,9 +238,15 @@ def _check_interactive(cfg: ExperimentConfig) -> None:
     if not i.replies and (i.questions_per_interval or i.status_every or i.urgent_every):
         raise ConfigError("interactive: questions, status checks and urgent bugs come with message ids and `reply`: "
                           "set replies: true")
-    for name in ("end_when_idle", "vary_order_by_round", "replies", "require_eta", "snapshots"):
+    for name in ("end_when_idle", "vary_order_by_round", "replies", "require_eta", "snapshots", "interrupt"):
         if not isinstance(getattr(i, name), bool):
             raise ConfigError(f"interactive.{name}: expected true or false, got {getattr(i, name)!r}")
+    v = i.interrupt_min_sec
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v < math.inf:
+        raise ConfigError(f"interactive.interrupt_min_sec: expected a number >= 0, got {v!r}")
+    v = i.interrupt_max_in_row
+    if isinstance(v, bool) or not isinstance(v, int) or v < 1:
+        raise ConfigError(f"interactive.interrupt_max_in_row: expected an integer >= 1, got {v!r}")
     if i.require_eta and not i.replies:
         raise ConfigError("interactive.require_eta: it is a rule for `reply` to a bug: set replies: true")
     _check_changes(i)

@@ -279,6 +279,63 @@ safety cap (2000 in the sweep: every wait is a step). Afterwards the harbor agen
 commands of stopped subagents keep running in the container, and records
 `end_kill`.
 
+**Interrupts.** With `interactive.interrupt`, a user message no longer waits
+for the orchestrator's LLM call to end. Calls often reason for minutes (2-7
+in the levels sessions, once 415 s up to the 32,768-token output limit),
+and a message that arrives meanwhile waits that long to be read. The
+recorder runs the orchestrator's call with a `CallCancel` (`llm.py`) and
+checks the interrupt rule every 0.2 s (`records.POLL_SEC`). When the rule
+holds, the stream stops at its next SSE line, which closes the HTTP
+response, and `CallInterrupted` is raised. A streaming reply sends a chunk (about 16
+tokens) every 0.2 s or so: in the smoke's 67 interrupts the call ended a
+median 0.25 s after the rule held (at most 0.42 s). A stream that
+sends nothing for 2 s after the cancel (`ABORT_GRACE_SEC`) is abandoned
+and closes on its next line. A cancel during a retry's backoff ends the
+backoff, and nothing is retried after a cancel. The partial reply is
+dropped: no assistant message, nothing in the transcript, no tool runs. The
+step ends with `interrupted: true`. The next step delivers everything due
+(the message, any later ones, ready reports) as usual and calls the model
+again with them.
+
+The rule (`InteractiveOrchestrator._interrupt_due`): a call is interrupted
+when a user message of any kind (bug, question, status check) is due, and
+- the call has run at least `interrupt_min_sec` (5 s). A message that comes
+  due earlier interrupts at the 5 s mark. Every call gets a 5 s start, so
+  dense messages cannot abort calls back to back faster than that;
+- its reply has not started a tool call. The reasoning is over then, and
+  the decided action is let through; the message comes with the result;
+- fewer than `interrupt_max_in_row` (3) calls in a row were interrupted.
+  The 4th call in a row runs to its end, as without interrupts, so a model
+  that always reasons longer than the gap between messages still acts.
+Subagent reports never interrupt. They are delivered with the message that
+does, or at the step's end as before. Subagents, the arbiter and the
+orchestrator's tools (a long `bash`, a blocking spawn) are never
+interrupted. A message that arrives during a tool waits for it as before;
+the `wait` tool already wakes on a message. The prompts are unchanged:
+nothing tells the model about interrupts, so an interrupt condition differs
+from its levels twin only in this mechanism.
+
+The aborted call stays in `calls.jsonl` with `error` and `finish_reason`
+`interrupted`. It is not a provider error (`n_provider_errors`, the retry
+rules and validity ignore it), and `episode.json` counts it in
+`n_interrupts`. Its cost still counts: the provider billed the prompt and
+whatever it generated. Usage comes only in the stream's last chunk, so the
+record usually holds estimates (`tokens_estimated`). Prompt tokens are the
+request's characters (`prompt_chars`) at the ratio of the orchestrator's
+last call that reported usage (4 characters a token before any). Cached
+tokens are that call's prompt tokens (the prefix the provider has seen), at
+most the estimate. Sail's cache covered the previous prompt in 256-token blocks in the
+levels sessions. Completion tokens are the streamed chunks (`n_chunks`)
+at the tokens per chunk of the orchestrator's completed calls, and
+reasoning tokens the reasoning chunks at the same rate. Sail sends about 16
+tokens a chunk: in the smoke's 128 completed calls the median was 16, the
+10th-90th percentile 14-20, and 16 is the rate before any completed call
+(`TOKENS_PER_CHUNK`). Every call records `n_chunks`, so the rate can be
+checked offline. In the interactivity analysis an interrupted call ends at
+its abort: a hint's `busy_at_arrival` is `llm`, `blocked_sec` is what was
+left of the call, about 0 to 5 s. `orch_llm_median_sec` counts only
+completed calls.
+
 **Background subagents.** With `subagent.spawn_mode: background` (parallel
 strategy only), `spawn_subagents` starts each granted instruction on a pool
 of `max_concurrent` threads and returns at once, naming the subagents;

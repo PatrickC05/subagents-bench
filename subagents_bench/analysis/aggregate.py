@@ -54,6 +54,7 @@ def episode_row(t: Trial, prices: dict) -> dict[str, Any]:
                interactive=int(ep["config"].get("interactive") is not None), n_hints=ep.get("n_hints"),
                n_hints_delivered=ep.get("n_hints_delivered"), n_questions=ep.get("n_questions"),
                n_replies=ep.get("n_replies"),
+               n_interrupts=sum(1 for c in recs["calls"] if c.get("error") == "interrupted"),
                n_stream_repairs=sum(c["stream_repairs"] for c in recs["calls"]))
     for role, short in ROLE_SHORT.items():
         mine = [c for c in recs["calls"] if c["role"] == role]
