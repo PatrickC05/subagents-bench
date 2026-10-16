@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -72,6 +73,7 @@ class LLMResponse:
     backoff_sec: float = 0.0
     stream_repairs: int = 0
     one_call_retry: bool = False  # answered by a retry that asked for exactly one tool call (ONE_CALL_NOTE)
+    n_chunks: int = 0  # stream chunks carrying content, reasoning or a tool call (about one token each)
 
 
 class LLMError(Exception):
@@ -94,6 +96,49 @@ class BillingError(LLMError):
 
 class ContextLengthError(LLMError):
     """400/413 saying the prompt exceeds the model's context. Never retried."""
+
+
+class CallInterrupted(Exception):
+    """A call aborted through its :class:`CallCancel` (an interactive interrupt). Not an LLMError:
+    nothing failed, so it never stops the episode."""
+
+
+class CallCancel:
+    """Lets another thread abort one streaming call: :meth:`cancel` makes the call stop reading at
+    its next SSE line, close the HTTP stream and raise :class:`CallInterrupted` (also from a retry's
+    backoff). ``acc`` is the attempt's partial reply, read by the recorder for the aborted call."""
+
+    def __init__(self) -> None:
+        self.t_start = time.time()
+        self.acc: _Accumulator | None = None
+        self.n_attempts = 0
+        self.backoff_sec = 0.0
+        self.t_first: float | None = None
+        self._event = threading.Event()
+
+    def cancel(self) -> None:
+        self._event.set()
+
+    def is_set(self) -> bool:
+        return self._event.is_set()
+
+    def wait(self, sec: float) -> bool:
+        return self._event.wait(sec)
+
+    @property
+    def in_tool_call(self) -> bool:
+        """The reply has started a tool call (its reasoning is over)."""
+        acc = self.acc
+        return acc is not None and any(s.name or s.args for s in list(acc.slots.values()))
+
+    def partial(self) -> dict[str, Any]:
+        """What the aborted attempt streamed: data chunks (about one token each), characters, usage."""
+        acc = self.acc
+        if acc is None:
+            return {"chunks": 0, "reasoning_chunks": 0, "text_chars": 0, "reasoning_chars": 0, "usage": {}}
+        return {"chunks": acc.n_chunks, "reasoning_chunks": acc.n_reasoning_chunks,
+                "text_chars": sum(len(x) for x in list(acc.text)),
+                "reasoning_chars": sum(len(x) for x in list(acc.reasoning)), "usage": dict(acc.usage)}
 
 
 class _Retry(Exception):
@@ -170,12 +215,14 @@ class _Accumulator:
         self.finish_reason: str | None = None
         self.usage: dict[str, Any] = {}
         self.stream_repairs = 0
+        self.n_chunks = 0  # chunks carrying content, reasoning or a tool call
+        self.n_reasoning_chunks = 0
 
     def feed(self, chunk: dict[str, Any]) -> bool:
         """Merge one SSE chunk; True if it carried content, reasoning or tool-call deltas."""
         if isinstance(chunk.get("usage"), dict):
             self.usage = chunk["usage"]
-        carried = False
+        carried = thinking = False
         for choice in chunk.get("choices") or []:
             if choice.get("index", 0) != 0:
                 continue
@@ -183,7 +230,7 @@ class _Accumulator:
             reasoning = delta.get("reasoning_content") or delta.get("reasoning")
             if reasoning:
                 self.reasoning.append(reasoning)
-                carried = True
+                carried = thinking = True
             if delta.get("content"):
                 self.text.append(delta["content"])
                 carried = True
@@ -192,6 +239,9 @@ class _Accumulator:
                 carried = True
             if choice.get("finish_reason"):
                 self.finish_reason = choice["finish_reason"]
+        if carried:
+            self.n_chunks += 1
+            self.n_reasoning_chunks += thinking
         return carried
 
     def _tool_delta(self, tc: dict[str, Any], pos: int) -> None:
@@ -282,19 +332,28 @@ class SailClient:
             ]
         return body
 
-    def _attempt(self, body: dict[str, Any], headers: dict[str, str]) -> tuple[_Accumulator, float | None]:
+    def _attempt(self, body: dict[str, Any], headers: dict[str, str],
+                 cancel: CallCancel | None = None) -> tuple[_Accumulator, float | None]:
         """One HTTP attempt. Fails (retryable) once ``request_timeout_sec`` pass without a
-        chunk carrying data: Sail attempts hung 468-2015 s on keep-alive bytes alone."""
+        chunk carrying data: Sail attempts hung 468-2015 s on keep-alive bytes alone. With
+        ``cancel``, a cancel stops it at the next line (CallInterrupted; leaving the ``with``
+        closes the stream)."""
         acc = _Accumulator()
         t_first: float | None = None
         last = time.time()
         done = False
+        if cancel is not None:
+            cancel.acc = acc
+            if cancel.is_set():
+                raise CallInterrupted("interrupted before the request")
         try:
             with self._http.stream("POST", SAIL_URL, json=body, headers=headers) as resp:
                 if resp.status_code >= 300:
                     text = resp.read().decode("utf-8", "replace")
                     raise _classify(resp.status_code, text) or _Retry(f"HTTP {resp.status_code}: {text[:300]}", resp.status_code)
                 for line in resp.iter_lines():
+                    if cancel is not None and cancel.is_set():
+                        raise CallInterrupted("interrupted while streaming")
                     now = time.time()
                     carried = False
                     if line.startswith("data:"):
@@ -309,9 +368,13 @@ class SailClient:
                         carried = acc.feed(chunk)
                     if carried:
                         t_first, last = t_first or now, now
+                        if cancel is not None:
+                            cancel.t_first = cancel.t_first or now
                     elif now - last > self.cfg.request_timeout_sec:
                         raise _Retry(f"stalled: no data for {now - last:.0f}s (keep-alive bytes only)", 200)
         except httpx.TransportError as e:
+            if cancel is not None and cancel.is_set():
+                raise CallInterrupted("interrupted while streaming") from None
             raise _Retry(f"{type(e).__name__}: {e}") from None
         except json.JSONDecodeError as e:
             raise _Retry(f"unparseable SSE data: {e}", 200) from None
@@ -319,8 +382,10 @@ class SailClient:
             raise _Retry("stream ended without finish_reason or [DONE]", 200)
         return acc, t_first
 
-    def complete(self, system: str, messages: list[Message], tools: list[ToolSpec]) -> LLMResponse:
-        """One call with retries (full-jitter backoff; no retry starts past ``retry_budget_sec``)."""
+    def complete(self, system: str, messages: list[Message], tools: list[ToolSpec],
+                 cancel: CallCancel | None = None) -> LLMResponse:
+        """One call with retries (full-jitter backoff; no retry starts past ``retry_budget_sec``).
+        ``cancel`` (interactive interrupts) aborts it: CallInterrupted, never retried."""
         key = os.environ.get("SAIL_API_KEY")
         if not key:
             raise ProviderError("SAIL_API_KEY is not set", n_attempts=0)
@@ -330,10 +395,14 @@ class SailClient:
         attempts, backoff, one_call = 0, 0.0, False
         while True:
             attempts += 1
+            if cancel is not None:
+                cancel.n_attempts, cancel.backoff_sec = attempts, backoff
             try:
-                acc, t_first = self._attempt(body, headers)
+                acc, t_first = self._attempt(body, headers, cancel)
                 break
             except _Retry as e:
+                if cancel is not None and cancel.is_set():
+                    raise CallInterrupted("interrupted") from None
                 if e.after_tool_call and tools and not one_call:
                     one_call = True
                     body = self._body(system + ONE_CALL_NOTE, messages, tools)
@@ -343,8 +412,13 @@ class SailClient:
                         f"{self.cfg.model}: giving up after {attempts} attempt(s) in {time.time() - t_start:.0f}s: {e}",
                         status=e.status, n_attempts=attempts, backoff_sec=backoff,
                     ) from None
-                self._sleep(delay)
+                if cancel is None:
+                    self._sleep(delay)
+                elif cancel.wait(delay):
+                    raise CallInterrupted("interrupted during a retry's backoff") from None
                 backoff += delay
+                if cancel is not None:
+                    cancel.backoff_sec = backoff
             except LLMError as e:
                 e.n_attempts, e.backoff_sec = attempts, backoff
                 raise
@@ -366,4 +440,5 @@ class SailClient:
             backoff_sec=backoff,
             stream_repairs=acc.stream_repairs,
             one_call_retry=one_call,
+            n_chunks=acc.n_chunks,
         )
