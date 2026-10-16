@@ -36,7 +36,7 @@ from typing import Any, Callable
 from .config import ExperimentConfig
 from .environment import AgentStopped
 from .hints import Hint
-from .llm import BillingError, LLMError, Message, SailClient, ToolCall, ToolResult, ToolSpec
+from .llm import BillingError, CallCancel, LLMError, Message, SailClient, ToolCall, ToolResult, ToolSpec
 from .orchestrator import SPAWN_SPEC, Orchestrator
 from .prompts import (FIRST_HINT, REPORT_EVENT, REPORTED_SCOPE, USER_EVENT, WAIT_RESULT, clock, interactive_note,
                       interactive_prompt, request_text)
@@ -104,6 +104,8 @@ class InteractiveOrchestrator(Orchestrator):
         self.n_elided = 0
         self.report_bodies: list[str] = []  # delivered report texts, for elision
         self.snapshotter: Snapshotter | None = None
+        self.in_row = 0  # interrupted calls in a row
+        self._interrupt = self._interrupt_due if self.icfg.interrupt else None
 
     # -- the session -------------------------------------------------------------------------
 
@@ -143,6 +145,7 @@ class InteractiveOrchestrator(Orchestrator):
                 self._elide()
                 if self._step(step) == "no_tool_call":
                     self._implicit_wait(step)
+                self.in_row = self.in_row + 1 if self.last_interrupted else 0
                 if self.idle and self._nothing_left():
                     exit_reason = "idle"
                     break
@@ -288,6 +291,18 @@ class InteractiveOrchestrator(Orchestrator):
             "urgent": h.urgent, "question_id": q.id if q else None, "question": q.question if q else None,
             "reference": q.answer if q else None,
         })
+
+    def _interrupt_due(self, call: CallCancel) -> bool:
+        """Abort the orchestrator's call in progress: a user message (any kind; subagent reports never
+        interrupt) is due, the call has run ``interrupt_min_sec``, it is not streaming a tool call yet
+        (its reasoning is over: let it act), and fewer than ``interrupt_max_in_row`` calls in a row were
+        interrupted. Checked every ``records.POLL_SEC``; the next step delivers all that is due."""
+        now = time.time()
+        if (now - call.t_start < self.icfg.interrupt_min_sec or self.in_row >= self.icfg.interrupt_max_in_row
+                or call.in_tool_call):
+            return False
+        with self.cv:
+            return bool(self._due(now))
 
     def _wait(self, timeout: float | None) -> str:
         """Block until something arrives (``event``) or ``timeout`` passes; an untimed wait (the end of a
