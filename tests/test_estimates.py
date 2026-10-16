@@ -82,6 +82,13 @@ def test_parse_estimates_rules(text, ids, want):
     ("#4 ~5 min, then it is done", {4}, set()),  # the time took #4
     ("#6 is fixed", {1}, set()),  # not a bug id
     ("", {1}, set()),
+    # only the list named last before the done word: ids joined by commas, "and", "bug", parentheticals
+    ("#8 (envvar flag value) and bug #18 (flag default_map) are fixed.", {8, 18}, {8, 18}),
+    ("#4/#8: fixed", {4, 8}, {4, 8}),
+    ("Working on #8 now that #1 is fixed.", {1, 8}, {1}),
+    ("#4 in progress, #1 fixed.", {1, 4}, {1}),
+    ("#8 is next; #1 and #4 are done.", {1, 4, 8}, {1, 4}),
+    ("#8 (blocked until #1 is fixed) ~10 min.", {1, 8}, {1}),
 ])
 def test_parse_done(text, ids, want):
     assert parse_done(text, ids) == want

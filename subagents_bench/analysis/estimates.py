@@ -79,6 +79,8 @@ CUE_RE = re.compile(r"\b(?:ETAs?|estimated?|estimates|expect(?:ed|s)?)\b", re.IG
 FUTURE_RE = re.compile(r"\b(?:will|should|shall)\b|'ll\b", re.IGNORECASE)
 DONE_RE = re.compile(r"\b(?:fixed|done|resolved)\b", re.IGNORECASE)
 FOR_RE = re.compile(r"\s*(?:for|on)\s+(?:bugs?\s+|requests?\s+)?#", re.IGNORECASE)  # "~5 min for #2"
+ID_LIST_RE = re.compile(r"(?:[\s,/&+]|\b(?:and|or|bugs?|requests?)\b)*", re.IGNORECASE)  # between ids of one list
+PAREN_RE = re.compile(r"\([^()]*\)")  # "#8 (envvar flag) and #18"
 NOT_DONE_RE = re.compile(r"(?:\b(?:be|being|get|getting|not|once|when|until|if|before)|n't)\s+(?:\S+\s+)?$",
                          re.IGNORECASE)
 
@@ -167,22 +169,28 @@ def parse_estimates(text: str, ids: Collection[int], default: int | None = None)
 
 
 def parse_done(text: str, ids: Collection[int]) -> set[int]:
-    """Message ids that ``text`` says are done: the ids named before an un-negated done word in
-    the same sentence, since the previous time or done word (``#1 is fixed and verified``, ``#1,
-    #4 are fixed``; not ``#4 will be fixed in ~5 min`` or ``#2 is not yet fixed``)."""
+    """Message ids that ``text`` says are done: the ids of the list named last before an un-negated
+    done word in its sentence, since the previous time or done word (``#1 is fixed and verified``,
+    ``#1, #4 are fixed``, ``#8 (flag) and bug #18 (default) are done``; not ``#4 will be fixed in
+    ~5 min`` or ``#2 is not yet fixed``, nor the ``#8`` of ``Working on #8 now that #1 is fixed``).
+    A list's ids are joined only by commas, slashes, ``and``/``or``, ``bug`` and parentheticals."""
     ids, out = set(ids), set()
     for sentence in SENTENCE_RE.split(text or ""):
-        events = sorted([(m.start(), "id", int(m[1])) for m in ID_RE.finditer(sentence) if int(m[1]) in ids]
-                        + [(m.start(), "time", None) for m in DURATION_RE.finditer(sentence) if _cued(sentence, m)]
-                        + [(m.start(), "done", None) for m in DONE_RE.finditer(sentence)
+        events = sorted([(m.start(), "id", int(m[1]), m.end()) for m in ID_RE.finditer(sentence)
+                         if int(m[1]) in ids]
+                        + [(m.start(), "time", None, None) for m in DURATION_RE.finditer(sentence)
+                           if _cued(sentence, m)]
+                        + [(m.start(), "done", None, None) for m in DONE_RE.finditer(sentence)
                            if not NOT_DONE_RE.search(sentence[:m.start()])], key=lambda e: e[0])
-        pending: list[int] = []
-        for _, kind, x in events:
+        pending: list[int] = []  # the list being named
+        end: int | None = None  # where its last id ends
+        for pos, kind, x, stop in events:
             if kind == "id":
-                pending.append(x)
+                joined = end is not None and ID_LIST_RE.fullmatch(PAREN_RE.sub(" ", sentence[end:pos])) is not None
+                pending, end = (pending if joined else []) + [x], stop
             else:
                 out.update(pending if kind == "done" else ())
-                pending = []
+                pending, end = [], None
     return out
 
 
