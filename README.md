@@ -498,6 +498,54 @@ and echo, 12 jobs at once, gave 24 of 24 sessions valid.
 Design, definitions and where the analysis departs from the plan in PR
 #13: docs/DESIGN.md, *Requests*; files and columns: docs/DATA.md.
 
+### Change of plan: taking back a bug
+
+Users change their minds.
+[`swe_interactive_change.yaml`](configs/sweeps/swe_interactive_change.yaml)
+extends the Modal baseline (6 bugs every 4 minutes, with the levels sweep's
+snapshots and `require_eta`) with two messages that take back an earlier bug
+(`interactive.change_of_plan`):
+- at 13:30, `Request #5: forget request #4: that behaviour is intended. Leave
+  that code as it was before you started (undo any change you made for it).`
+  (bug 3, sent at 12:00, likely still in progress: `kind: cancel`);
+- at 16:00, `Request #7: please undo your fix for #1: we need the old
+  behaviour after all.` (bug 0, likely fixed by then: `kind: undo`).
+
+A change is honoured when its bug's hidden tests fail at the end with the
+visible suite passing; the grader needs nothing new. `messages.csv` has a row
+per change (`honoured`, `reply_sec`, until the last tool call touching the
+bug's files, and the subagents that kept working on it). Background subagents
+could not be stopped, so `subagent.stop_tool` gives the orchestrator
+`stop_subagents(agent_ids)`: a named subagent stops before its next LLM or
+tool call and its dispatch ends `stopped`. Five settings on click and echo, 1
+round: `single`, `manager_background`, `background_hinted`,
+`manager_available`, and `manager_available` with the stop tool.
+
+```bash
+scripts/run_experiment.sh configs/sweeps/swe_interactive_change.yaml --jobs-at-once 5
+.venv/bin/subagents-bench fix-times configs/sweeps/swe_interactive_change.yaml
+scripts/analyze.sh jobs/swe_interactive_change
+```
+
+The smoke,
+[`swe_interactive_change_smoke.yaml`](configs/sweeps/swe_interactive_change_smoke.yaml)
+(2026-10-16), ran the five settings for 2 minutes with a bug every 30 s, bug
+2 cancelled at 1:15 and bug 0 undone at 1:35, on click and echo: 10 sessions.
+Every session ran to its deadline.
+- 14 of the 20 change messages were delivered. The other 6 went to the
+  sessions of `single` (echo) and `background_hinted` (both tasks), whose
+  agents were inside one long step at the time.
+- The managers acknowledged 9 of the 12 changes delivered to them, in 7 to
+  25 s.
+- With the stop tool, both managers stopped the subagent working on the bug
+  within 6 to 19 s of each change. The subagents ended 1 to 15 s later, with
+  status `stopped`. Without the tool, those subagents ran on until the
+  deadline.
+- 18 of 20 changes were honoured. Most are trivial: in 2-minute sessions
+  the targeted bug was rarely fixed in the first place. The 2 that were not
+  are undos in echo, where bug 0 stayed fixed under `manager_background` and
+  under `manager_available` with the stop tool.
+
 ## Where data and figures land
 
 ```
