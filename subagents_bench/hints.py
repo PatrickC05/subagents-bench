@@ -15,7 +15,9 @@ into the hint sent at ``k * interval_sec``:
 With ``interactive.replies`` the schedule also holds questions about the code (``questions_per_interval``
 between consecutive bugs, from ``<hints_dir>/<task>.questions.json``, written by ``subagents-bench
 questions`` from the task's source tree) and status checks (``status_every``); every message gets an
-id (``msg_id``, 1, 2, ... in sending order) and ``urgent_every`` marks some bugs urgent.
+id (``msg_id``, 1, 2, ... in sending order) and ``urgent_every`` marks some bugs urgent. A
+``change_of_plan`` entry adds a ``cancel`` or ``undo`` message about an earlier bug: its ``subtask``
+is that bug's and ``target`` its msg_id.
 """
 
 from __future__ import annotations
@@ -62,7 +64,8 @@ class Question:
 
 @dataclass(frozen=True)
 class Hint:
-    """One scheduled user message: a bug (``subtask``), a ``question`` or a ``status`` check."""
+    """One scheduled user message: a bug (``subtask``), a ``question``, a ``status`` check, or a
+    ``cancel`` or ``undo`` of the bug ``target`` (its msg_id; ``subtask`` is that bug's)."""
 
     index: int  # 0-based position among the messages of its kind
     t_offset: float  # seconds after the episode start
@@ -72,6 +75,7 @@ class Hint:
     msg_id: int | None = None  # the id the agent replies to (with interactive.replies)
     urgent: bool = False
     question: Question | None = None
+    target: int | None = None
 
 
 def load_subtasks(task_dir: str | Path) -> list[Subtask]:
@@ -144,8 +148,9 @@ def schedule(cfg: InteractiveConfig, task_dir: str | Path, task_name: str, hints
              round_: int | None = None) -> list[Hint]:
     """The episode's messages in sending order: the ordered subtasks, as many as fit (and
     ``max_hints``), sent every ``interval_sec``; with ``replies``, the questions and status checks
-    between them and an id per message. A status check's text is the ids of the bugs sent before it
-    (``#1, #2, #4``), which ``prompts.request_text`` puts in its message."""
+    between them, the changes of plan and an id per message. A status check's text is the ids of the
+    bugs sent before it (``#1, #2, #4``), a change's the id of its bug (``#4``), which
+    ``prompts.request_text`` puts in its message."""
     seed = order_seed(cfg, round_)
     subtasks = ordered(load_subtasks(task_dir), task_name, seed)
     n = min(len(subtasks), n_slots(cfg), cfg.max_hints or len(subtasks))
@@ -168,12 +173,19 @@ def schedule(cfg: InteractiveConfig, task_dir: str | Path, task_name: str, hints
     if cfg.status_every:
         checks = [(k + 0.5) * cfg.interval_sec for k in range(n) if (k + 1) % cfg.status_every == 0]
         extra += [Hint(j, t, None, "", kind="status") for j, t in enumerate(c for c in checks if c < cfg.wall_clock_sec)]
-    kinds = {"bug": 0, "status": 1, "question": 2}  # at the same time: the bug first
+    for j, c in enumerate(cfg.change_of_plan):
+        if c["bug"] >= n:
+            raise HintError(f"{task_name}: change_of_plan[{j}] takes back bug {c['bug']}, but only {n} bugs are sent")
+        extra.append(Hint(j, float(c["at_sec"]), out[c["bug"]].subtask, "", kind=c["kind"]))
+    kinds = {"bug": 0, "status": 1, "question": 2, "cancel": 3, "undo": 3}  # at the same time: the bug first
     out = sorted(out + extra, key=lambda h: (h.t_offset, kinds[h.kind], h.index))
     out = [dataclasses.replace(h, msg_id=i + 1) for i, h in enumerate(out)]
+    bug_ids = {h.subtask.id: h.msg_id for h in out if h.kind == "bug"}
     # a status check's text: the ids of the bugs sent before it ("#1, #2, #4"), whatever happened to them
     return [dataclasses.replace(h, text=", ".join(f"#{b.msg_id}" for b in out if b.kind == "bug"
-                                                  and b.t_offset < h.t_offset)) if h.kind == "status" else h
+                                                  and b.t_offset < h.t_offset)) if h.kind == "status" else
+            dataclasses.replace(h, target=bug_ids[h.subtask.id], text=f"#{bug_ids[h.subtask.id]}")
+            if h.kind in ("cancel", "undo") else h
             for h in out]
 
 

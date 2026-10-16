@@ -262,7 +262,13 @@ and with `done: true` once it is fixed and checked.
 - A status check: reply to each open bug with an updated `eta_min`.
 - An urgent bug matters more than the earlier ones: fix it before them.
 """
+# interactive.change_of_plan: a bullet for the messages that take back a bug (only with them, so the
+# prompt of every other condition stays as it was)
+CHANGE_REPLY = ("- A request to forget or undo an earlier bug: do what it asks, and reply to its id with `done: "
+                "true` once that code is as the user wants it.\n")
 WAIT_LINE = "- `wait`: pause until {until} (or timeout_sec passes); replying without a tool call also waits."
+STOP_LINE = ("- `stop_subagents`: stop running background subagents by id (sub-3); each stops at its next step "
+             "and its report so far arrives as a message.")
 BACKGROUND_SPAWN_LINE = ("- `spawn_subagents`: start subagents in the background (see Subagents below); "
                          "it returns at once and each report arrives as a message.")
 SUBAGENTS_BACKGROUND = """
@@ -324,6 +330,10 @@ FIRST_REQUEST = "Request #{id}: a bug.\n\nHint: {hint}"
 NEXT_REQUEST = "Request #{id}: another bug, while you keep working on the earlier ones.\n\nHint: {hint}"
 URGENT_REQUEST = "Request #{id}: another bug, and this one is urgent: fix it before the earlier ones.\n\nHint: {hint}"
 QUESTION_REQUEST = "Question #{id}: {question}"
+# interactive.change_of_plan; {target}: the id of the bug taken back
+CANCEL_REQUEST = ("Request #{id}: forget request #{target}: that behaviour is intended. Leave that code as it was "
+                  "before you started (undo any change you made for it).")
+UNDO_REQUEST = "Request #{id}: please undo your fix for #{target}: we need the old behaviour after all."
 # {ids}: every bug sent before the check (``hints.schedule`` puts them in the check's text), so the
 # message is the same in every condition whatever the agent fixed or said done
 STATUS_REQUEST = ("Status check #{id}: how long until each of your bug requests so far ({ids}) is fixed? Reply to "
@@ -347,6 +357,8 @@ def interactive_prompt(cfg: ExperimentConfig, workdir: str) -> str:
     lines = [TOOL_LINES[t].format(t=b.command_timeout_sec, tmax=b.max_command_timeout_sec) for t in names]
     if subagents:
         lines.append(BACKGROUND_SPAWN_LINE if background else SPAWN_LINE)
+    if background and s.stop_tool:
+        lines.append(STOP_LINE)
     lines.append(WAIT_LINE.format(until=until))
     if i.replies:
         lines.append(REPLY_LINE)
@@ -356,7 +368,7 @@ def interactive_prompt(cfg: ExperimentConfig, workdir: str) -> str:
                               running=" and the subagents running" if background else "", until=until,
                               tools="\n".join(lines), workdir=workdir)
     if i.replies:
-        text += REPLIES
+        text += REPLIES + (CHANGE_REPLY if i.change_of_plan else "")
     if not subagents:
         return text
     if background:
@@ -392,11 +404,14 @@ def interactive_note(elapsed: float, total: float, running: list[tuple[str, floa
 
 def request_text(kind: str, msg_id: int | None, text: str, urgent: bool = False, first: bool = False) -> str:
     """A scheduled user message as the agent reads it (after the elapsed-time header); a status
-    check's ``text`` is the ids of the bugs sent before it (``#1, #2, #4``)."""
+    check's ``text`` is the ids of the bugs sent before it (``#1, #2, #4``), a cancel's or undo's the
+    id of the bug it takes back (``#4``)."""
     if msg_id is None:  # without interactive.replies: a bug, as before
         return f"Hint: {text}" if first else NEXT_HINT.format(hint=text)
     if kind == "question":
         return QUESTION_REQUEST.format(id=msg_id, question=text)
     if kind == "status":
         return STATUS_REQUEST.format(id=msg_id, ids=text)
+    if kind in ("cancel", "undo"):
+        return (CANCEL_REQUEST if kind == "cancel" else UNDO_REQUEST).format(id=msg_id, target=text.lstrip("#"))
     return (FIRST_REQUEST if first else URGENT_REQUEST if urgent else NEXT_REQUEST).format(id=msg_id, hint=text)
