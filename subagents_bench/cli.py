@@ -46,9 +46,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="also run this one job, e.g. 1:single (repeatable; alone: only these jobs)")
     p.add_argument("--jobs-at-once", type=int, default=1, metavar="N",
                    help="harbor jobs to run side by side (default 1; each runs its own sessions)")
-    p = sub.add_parser("hints", help="write the bug reports of an interactive sweep (hint_detail: report)")
+    p = sub.add_parser("hints", help="write the bug reports of an interactive sweep (hint_detail: report or symptom)")
     p.add_argument("spec", help="sweep spec (configs/sweeps/*.yaml)")
     p.add_argument("--force", action="store_true", help="rewrite reports that already exist")
+    p.add_argument("--detail", choices=("report", "symptom"), action="append",
+                   help="the kind to write (repeatable; default: those the sweep's conditions use, else report)")
     p = sub.add_parser("questions", help="write the code questions of an interactive sweep (questions_per_interval)")
     p.add_argument("spec", help="sweep spec (configs/sweeps/*.yaml)")
     p.add_argument("--per-task", type=int, help="questions per task (default: the most one session asks)")
@@ -96,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.cmd == "preflight":
             return sweep.preflight(spec, oracle=args.oracle)
         if args.cmd == "hints":
-            return sweep.make_hints(spec, force=args.force)
+            return sweep.make_hints(spec, force=args.force, details=args.detail)
         if args.cmd == "questions":
             return sweep.make_questions(spec, per_task=args.per_task, force=args.force)
         if args.cmd == "grade-answers":

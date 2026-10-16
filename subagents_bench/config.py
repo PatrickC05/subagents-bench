@@ -15,7 +15,7 @@ TOPOLOGIES = ("single", "subagents")
 STRATEGIES = ("parallel", "sequential", "arbiter")
 SCOPES = ("easy", "medium", "hard")
 SPAWN_MODES = ("blocking", "background")
-HINT_DETAILS = ("files", "tests", "report")
+HINT_DETAILS = ("files", "tests", "report", "symptom")
 SESSION_SCOPES = ("reported", "all")
 TOOL_NAMES = ("bash", "edit_file", "read_file", "list_dir", "search")
 
@@ -90,7 +90,10 @@ class InteractiveConfig:
     wall_clock_sec: float = 3600.0  # the episode ends here, wherever it is
     interval_sec: float = 300.0  # hint k (0-based) is sent at k * interval_sec
     max_hints: int | None = None  # None: as many as fit in the wall clock (and the task has)
-    hint_detail: str = "tests"  # files | tests (+ the hidden tests' ids) | report (a generated bug report)
+    # files | tests (+ the hidden tests' ids) | report (a generated bug report) | symptom (a generated report
+    # of the observable behaviour only: no file, module or test names)
+    hint_detail: str = "tests"
+    bundle: int = 1  # bugs per user message: n > 1 sends them as one numbered list, every interval_sec
     order_seed: int = 0  # the subtasks' order, shuffled per task with this seed (same for every condition)
     vary_order_by_round: bool = True  # round k of a sweep uses order_seed + k - 1 (each round its own order)
     scope: str = "reported"  # reported: fix the bugs the user sends (the task's "fix all bugs" is set aside); all
@@ -216,6 +219,11 @@ def _check_interactive(cfg: ExperimentConfig) -> None:
         v = getattr(i, name)
         if isinstance(v, bool) or not isinstance(v, int) or v < 0:
             raise ConfigError(f"interactive.{name}: expected an integer >= 0, got {v!r}")
+    if isinstance(i.bundle, bool) or not isinstance(i.bundle, int) or i.bundle < 1:
+        raise ConfigError(f"interactive.bundle: expected an integer >= 1, got {i.bundle!r}")
+    if i.bundle > 1 and not i.replies:
+        raise ConfigError("interactive.bundle: a message listing several bugs is answered per item with `reply`: "
+                          "set replies: true")
     if not i.replies and (i.questions_per_interval or i.status_every or i.urgent_every):
         raise ConfigError("interactive: questions, status checks and urgent bugs come with message ids and `reply`: "
                           "set replies: true")
