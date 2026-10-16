@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import shlex
+import threading
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .config import ExperimentConfig
@@ -64,6 +65,10 @@ class Dispatch:
     candidate_index: int | None = None
     private_copy: bool = False  # cwd is an arbiter candidate's copy of the workdir
     parent: str | None = None  # the agent_id of the subagent that started this helper
+    # set by the orchestrator's stop_subagents (subagent.stop_tool): the subagent ends at its next step;
+    # its helpers share the parent's event
+    stop: threading.Event = field(default_factory=threading.Event)
+    t_stop: float | None = None  # when stop_subagents asked this dispatch to stop
 
     @property
     def who(self) -> Who:
@@ -72,9 +77,13 @@ class Dispatch:
 
 @dataclass
 class DispatchResult:
-    status: str  # submitted | no_tool_call | max_steps | error | cancelled
+    status: str  # submitted | no_tool_call | max_steps | error | cancelled | stopped (stop_subagents)
     report: str
     steps_used: int
+
+
+class Stopped(Exception):
+    """The orchestrator stopped this subagent (``stop_subagents``)."""
 
 
 def new_dispatch(rt: Runtime, instruction: str, index: int, group_id: str, step: int, *, cwd: str | None = None,
@@ -107,6 +116,8 @@ def run_dispatch(rt: Runtime, d: Dispatch) -> DispatchResult:
         rec.transcript(who, Message("system", system))
         add(Message("user", d.instruction))
         for step in range(1, s.max_steps + 1):
+            if d.stop.is_set():
+                raise Stopped
             steps = step
             r, call_id = rec.llm(who, rt.sub_client, system, messages, specs, step)
             cut_off = not r.tool_calls and r.finish_reason == "length"
@@ -123,6 +134,8 @@ def run_dispatch(rt: Runtime, d: Dispatch) -> DispatchResult:
                 continue
             results: list[ToolResult] = []
             for tc in r.tool_calls:
+                if d.stop.is_set():  # asked to stop during the LLM call or a tool: the rest do not run
+                    raise Stopped
                 if status == "submitted":
                     results.append(ToolResult(tc.id, "[not run: submit was called earlier in this step]", True))
                     continue
@@ -148,6 +161,8 @@ def run_dispatch(rt: Runtime, d: Dispatch) -> DispatchResult:
                 break
     except AgentStopped:
         status = "cancelled"
+    except Stopped:
+        status = "stopped"
     except LLMError as e:
         status, error = "error", f"{type(e).__name__}: {e}"
     except Exception:  # a harness bug fails this dispatch, not the episode
@@ -166,6 +181,7 @@ def run_dispatch(rt: Runtime, d: Dispatch) -> DispatchResult:
         "parent_agent_id": d.parent,
         "status": status, "steps_used": steps, "t_start": t_start,
         "t_end": time.time(), "report_chars": len(report), "files_modified": files, "error": error,
+        "t_stop_requested": d.t_stop,
     })
     return DispatchResult(status, report, steps)
 
@@ -182,7 +198,7 @@ def _helpers(rt: Runtime, d: Dispatch, tc: Any, step: int, call_id: str, left: i
         return out, left
     granted = min(len(instructions), left)
     group_id = rt.rec.new_id("group")
-    kids = [new_dispatch(rt, text, i, group_id, step, cwd=d.cwd, parent=d.agent_id)
+    kids = [new_dispatch(rt, text, i, group_id, step, cwd=d.cwd, parent=d.agent_id, stop=d.stop)
             for i, text in enumerate(instructions[:granted])]
 
     def run() -> ToolOutput:

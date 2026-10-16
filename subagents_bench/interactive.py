@@ -20,6 +20,11 @@ the text, an ETA in minutes, done). The user sees nothing else, so a reply's tim
 got an answer, an estimate or a done. With ``require_eta``, a reply to a bug without a usable
 ``eta_min`` and without ``done: true`` is refused (an error result; nothing is sent or recorded).
 
+With ``subagent.stop_tool``, ``stop_subagents(agent_ids)`` asks running background subagents to
+stop: each ends at its next step (before its next LLM call or tool call) with status ``stopped``,
+and its report is delivered as usual. With ``interactive.change_of_plan``, ``cancel`` and ``undo``
+messages take back an earlier bug (their inbox records name it: ``target_msg_id``, ``subtask_id``).
+
 With ``interactive.snapshots``, a :class:`~subagents_bench.snapshots.Snapshotter` records the
 workspace's diff against ``baseline`` in the background from the session's start until it ends.
 """
@@ -70,6 +75,14 @@ REPLY_SPEC = ToolSpec(
         "done": {"type": "boolean", "description": "For a bug: true once it is fixed and checked."}},
      "required": ["to", "text"]},
 )
+STOP_SPEC = ToolSpec(
+    "stop_subagents",
+    "Stop background subagents that are still running. Each stops at its next step (a command or model call "
+    "in progress finishes first); its report so far arrives as a message.",
+    {"type": "object", "properties": {"agent_ids": {"type": "array", "items": {"type": "string"},
+                                                    "description": "Ids of running subagents (sub-3)."}},
+     "required": ["agent_ids"]},
+)
 POLL_SEC = 0.5  # a wait also wakes this often to notice the stop event
 JOIN_SEC = 30.0  # for the background subagents to unwind after a stop
 ELIDED = "[elided to keep the conversation within its size limit: {n} characters of older tool output]"
@@ -89,7 +102,8 @@ class InteractiveOrchestrator(Orchestrator):
         specs = [s for s in self.specs if s.name != "finish"]
         if self.background:
             specs = [BACKGROUND_SPAWN_SPEC if s.name == "spawn_subagents" else s for s in specs]
-        self.specs = specs + [WAIT_SPEC] + ([REPLY_SPEC] if self.icfg.replies else [])
+        self.specs = specs + ([STOP_SPEC] if self.background and config.subagent.stop_tool else []) + [WAIT_SPEC] + \
+            ([REPLY_SPEC] if self.icfg.replies else [])
         self.sent: dict[int, Hint] = {}  # delivered messages by id, for `reply`
         self.answered: set[int] = set()  # ids replied to
         self.system = interactive_prompt(config, workdir)
@@ -286,7 +300,7 @@ class InteractiveOrchestrator(Orchestrator):
             "target_files": list(s.target_files) if s else None, "f2p": list(s.f2p) if s else None,
             "dispatch_id": None, "agent_id": None, "status": None, "chars": len(h.text), "msg_id": h.msg_id,
             "urgent": h.urgent, "question_id": q.id if q else None, "question": q.question if q else None,
-            "reference": q.answer if q else None,
+            "reference": q.answer if q else None, "target_msg_id": h.target,
         })
 
     def _wait(self, timeout: float | None) -> str:
@@ -326,6 +340,8 @@ class InteractiveOrchestrator(Orchestrator):
     def _tool(self, tc: ToolCall, step: int, call_id: str, groups: list[str]) -> ToolOutput:
         if tc.name == "reply" and self.icfg.replies:
             return self.rec.tool(self.who, step, call_id, tc, lambda: self._reply(tc.arguments, step))
+        if tc.name == "stop_subagents" and self.background and self.cfg.subagent.stop_tool:
+            return self.rec.tool(self.who, step, call_id, tc, lambda: self._stop_subagents(tc.arguments))
         if tc.name != "wait":
             return super()._tool(tc, step, call_id, groups)
 
@@ -363,6 +379,31 @@ class InteractiveOrchestrator(Orchestrator):
                 ([] if eta_ok else ["eta_min ignored: expected a number of minutes >= 0"]) + \
                 ([] if done_ok else ["done ignored: expected true or false"])
         return ToolOutput(f"[sent to the user, re #{to}" + "".join(f"; {n}" for n in notes) + "]")
+
+    def _stop_subagents(self, args: dict) -> ToolOutput:
+        ids = args.get("agent_ids")
+        if isinstance(ids, str):
+            ids = [ids]
+        if not isinstance(ids, list) or not ids or not all(isinstance(x, str) for x in ids):
+            return ToolOutput("[error] `agent_ids` must be a non-empty list of subagent ids (sub-3)", True)
+        now = time.time()
+        with self.cv:
+            live = {d.agent_id: d for d, _ in self.live.values()}
+        stopping, unknown = [], []
+        for a in dict.fromkeys(x.strip() for x in ids):
+            d = live.get(a)
+            if d is None:
+                unknown.append(a)
+                continue
+            if not d.stop.is_set():
+                d.t_stop = now
+                d.stop.set()
+            stopping.append(a)
+        parts = [f"[stop_subagents: {', '.join(stopping)} will stop at its next step; each report arrives as a "
+                 "message]"] if stopping else []
+        if unknown:
+            parts.append(f"[not running: {', '.join(unknown)}]")
+        return ToolOutput("\n".join(parts), not stopping)
 
     def _spawn(self, instructions: list[str], step: int, group_id: str) -> ToolOutput:
         if not self.background:
