@@ -38,6 +38,8 @@ TOOL_LINES = {
 }
 SPAWN_LINE = "- `spawn_subagents`: delegate work to subagents (see Subagents below); your step waits for all of them."
 FINISH_LINE = "- `finish`: declare the task complete; ends the episode at once (later tools in that response do not run)."
+NO_READ_NOTE = ("You cannot read or search the files either: subagents read the code for you, so ask them for "
+                "what you need to know.")
 MANAGER_NOTE = ("\nYou cannot run commands or change files yourself: everything that runs a command or modifies "
                 "the container (building, testing, verifying included) must be delegated with `spawn_subagents`.")
 
@@ -349,7 +351,7 @@ def interactive_prompt(cfg: ExperimentConfig, workdir: str) -> str:
     if i.replies:
         lines.append(REPLY_LINE)
     if subagents and not {"bash", "edit_file"} & set(names):
-        lines.append(MANAGER_NOTE)
+        lines.append(MANAGER_NOTE + (" " + NO_READ_NOTE if not names else ""))
     text = INTERACTIVE.format(minutes=f"{i.wall_clock_sec / 60:g}", and_reports=" and subagent reports" if background else "",
                               running=" and the subagents running" if background else "", until=until,
                               tools="\n".join(lines), workdir=workdir)
