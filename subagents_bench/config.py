@@ -17,6 +17,7 @@ SCOPES = ("easy", "medium", "hard")
 SPAWN_MODES = ("blocking", "background")
 HINT_DETAILS = ("files", "tests", "report")
 SESSION_SCOPES = ("reported", "all")
+CHANGE_KINDS = ("cancel", "undo")  # interactive.change_of_plan
 TOOL_NAMES = ("bash", "edit_file", "read_file", "list_dir", "search")
 
 
@@ -67,6 +68,8 @@ class SubagentConfig:
     # Interactive episodes only: `background` returns from spawn_subagents at once and delivers each
     # report as a message when its subagent ends; `blocking` waits for all of them, as in batch episodes.
     spawn_mode: str = "blocking"
+    # Interactive, background only: a `stop_subagents(agent_ids)` tool; a stopped subagent ends at its next step
+    stop_tool: bool = False
     arbiter: ArbiterConfig = field(default_factory=ArbiterConfig)
 
 
@@ -105,6 +108,9 @@ class InteractiveConfig:
     urgent_every: int = 0  # 0: none; n: bugs n, 2n, ... (0-based) are urgent: "fix this one before the others"
     # `reply` to a bug must carry eta_min or done: true, or it is refused (an error, nothing sent; needs replies)
     require_eta: bool = False
+    # Change of plan (needs replies): user messages that take back an earlier bug, each {kind, bug, at_sec}:
+    # `cancel` (forget bug index `bug`, leave its code as it was) or `undo` (undo its fix), sent at at_sec
+    change_of_plan: list[dict[str, Any]] = field(default_factory=list)
     # Workspace snapshots (subagents_bench.snapshots): the collect hook's diff against `baseline`, taken in
     # the background after every bash or edit_file call and every snapshot_every_sec, for `fix-times`.
     snapshots: bool = False
@@ -181,6 +187,8 @@ def from_dict(raw: Any) -> ExperimentConfig:
         raise ConfigError(f"subagent.max_children: expected an integer >= 0, got {mc!r}")
     if mc and cfg.subagent.strategy == "arbiter":
         raise ConfigError("subagent.max_children: helper subagents are not supported with strategy arbiter")
+    if not isinstance(cfg.subagent.stop_tool, bool):
+        raise ConfigError(f"subagent.stop_tool: expected true or false, got {cfg.subagent.stop_tool!r}")
     if not isinstance(cfg.subagent.availability_hint, bool):
         raise ConfigError(f"subagent.availability_hint: expected true or false, got {cfg.subagent.availability_hint!r}")
     bad = sorted(set(cfg.tools.orchestrator_tools or []) - set(TOOL_NAMES))
@@ -192,6 +200,10 @@ def from_dict(raw: Any) -> ExperimentConfig:
         _check_interactive(cfg)
     elif cfg.subagent.spawn_mode != "blocking":
         raise ConfigError("subagent.spawn_mode: background needs an `interactive` episode")
+    if cfg.subagent.stop_tool and not (cfg.interactive and cfg.topology == "subagents"
+                                       and cfg.subagent.spawn_mode == "background"):
+        raise ConfigError("subagent.stop_tool: it stops background subagents, so it needs interactive, topology "
+                          "subagents and spawn_mode background")
     return cfg
 
 
@@ -224,6 +236,7 @@ def _check_interactive(cfg: ExperimentConfig) -> None:
             raise ConfigError(f"interactive.{name}: expected true or false, got {getattr(i, name)!r}")
     if i.require_eta and not i.replies:
         raise ConfigError("interactive.require_eta: it is a rule for `reply` to a bug: set replies: true")
+    _check_changes(i)
     if cfg.topology == "subagents" and cfg.subagent.spawn_mode == "background" and cfg.subagent.strategy != "parallel":
         raise ConfigError("subagent.spawn_mode: background runs each instruction as its own subagent; "
                           "it needs strategy parallel")
@@ -238,6 +251,31 @@ def _check_interactive(cfg: ExperimentConfig) -> None:
                                                and cfg.subagent.spawn_mode == "background"):
         raise ConfigError("subagent.availability_hint: it tells an interactive orchestrator to hand bugs to "
                           "background subagents, so it needs interactive, topology subagents and spawn_mode background")
+
+
+def _check_changes(i: InteractiveConfig) -> None:
+    """``change_of_plan``: each entry takes back a bug sent before it, at most one per bug, within the
+    session; whether the bug is sent at all depends on the task (``hints.schedule`` checks that)."""
+    if not isinstance(i.change_of_plan, list):
+        raise ConfigError(f"interactive.change_of_plan: expected a list, got {i.change_of_plan!r}")
+    if i.change_of_plan and not i.replies:
+        raise ConfigError("interactive.change_of_plan: a change refers to a bug by its message id: set replies: true")
+    bugs = set()
+    for k, c in enumerate(i.change_of_plan):
+        where = f"interactive.change_of_plan[{k}]"
+        if not isinstance(c, dict) or set(c) != {"kind", "bug", "at_sec"}:
+            raise ConfigError(f"{where}: expected a mapping with exactly kind, bug and at_sec, got {c!r}")
+        kind, bug, at = c["kind"], c["bug"], c["at_sec"]
+        if kind not in CHANGE_KINDS:
+            raise ConfigError(f"{where}.kind: {kind!r} is not one of {', '.join(CHANGE_KINDS)}")
+        if isinstance(bug, bool) or not isinstance(bug, int) or bug < 0 or (i.max_hints is not None and bug >= i.max_hints):
+            raise ConfigError(f"{where}.bug: expected the 0-based index of a bug sent (below max_hints), got {bug!r}")
+        if bug in bugs:
+            raise ConfigError(f"{where}.bug: bug {bug} already has a change of plan")
+        bugs.add(bug)
+        if isinstance(at, bool) or not isinstance(at, (int, float)) or not bug * i.interval_sec < at < i.wall_clock_sec:
+            raise ConfigError(f"{where}.at_sec: expected seconds after bug {bug} is sent ({bug * i.interval_sec:g}) "
+                              f"and before the session ends ({i.wall_clock_sec:g}), got {at!r}")
 
 
 def load_config(path: str | os.PathLike) -> ExperimentConfig:
