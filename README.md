@@ -498,6 +498,32 @@ and echo, 12 jobs at once, gave 24 of 24 sessions valid.
 Design, definitions and where the analysis departs from the plan in PR
 #13: docs/DESIGN.md, *Requests*; files and columns: docs/DATA.md.
 
+### Interrupts: a message stops the call in progress
+
+A message reaches the orchestrator only between its LLM calls, and those
+calls often reason for 2-7 minutes. Settings told to keep their steps short
+answered in about 15 s; the others took minutes. With
+`interactive.interrupt: true`, a user message that comes due during the
+orchestrator's call aborts it. The stream is closed and the partial reply
+dropped, and the model is called again with the message. A call that has
+run under 5 s, or has started a tool call, finishes first. At most 3 calls
+in a row are interrupted. Subagent reports never interrupt, and subagents
+are never interrupted (docs/DESIGN.md, *Interrupts*).
+[`swe_interactive_interrupt.yaml`](configs/sweeps/swe_interactive_interrupt.yaml)
+extends the levels sweep with only its own 6 conditions: `single`,
+`manager_background` and `background_hinted`, at L0
+(`*_interrupt_baseline`) and L2 (`*_interrupt_questions`). Each pairs with
+the levels condition of the same name without `_interrupt`.
+
+```bash
+mkdir -p jobs/swe_interactive_interrupt/hints   # the levels sweep's questions, reused
+cp <levels checkout>/jobs/swe_interactive_levels/hints/*.questions.json jobs/swe_interactive_interrupt/hints/
+scripts/run_experiment.sh configs/sweeps/swe_interactive_interrupt.yaml --jobs-at-once 6
+.venv/bin/subagents-bench fix-times configs/sweeps/swe_interactive_interrupt.yaml
+.venv/bin/subagents-bench grade-answers configs/sweeps/swe_interactive_interrupt.yaml
+scripts/analyze.sh jobs/swe_interactive_interrupt
+```
+
 ## Where data and figures land
 
 ```

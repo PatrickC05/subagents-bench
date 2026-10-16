@@ -75,19 +75,22 @@ still unwinding after harbor's cancel) are dropped.
 | `step` | the agent's own step (1-based); judge and debate calls: the round (1, or 2 after a debate) |
 | `model` | model name sent to Sail |
 | `t_start` | before the first attempt |
-| `t_first_chunk` | first stream chunk carrying content, reasoning or a tool call, in the successful attempt; null for a failed call |
+| `t_first_chunk` | first stream chunk carrying content, reasoning or a tool call, in the successful attempt; null for a failed call (an interrupted call: in the aborted attempt, if any came) |
 | `t_end` | reply complete, or the call failed |
 | `prompt_tokens` | prompt tokens, cached ones included (0 for a failed call) |
 | `cached_tokens` | prompt tokens served from the provider's prefix cache |
 | `completion_tokens` | output tokens, reasoning included |
 | `reasoning_tokens` | reasoning tokens, null when the provider did not report them |
-| `finish_reason` | `stop`, `tool_calls`, `length` (cut off at `max_output_tokens`), `unknown` (no finish reason in the stream); null for a failed call |
+| `finish_reason` | `stop`, `tool_calls`, `length` (cut off at `max_output_tokens`), `unknown` (no finish reason in the stream), `interrupted` (aborted by an interrupt); null for a failed call |
 | `n_tool_calls` | tool calls in the reply after stream repair |
 | `n_attempts` | HTTP attempts (1 = no retry); 0 when the call was abandoned on a stop |
 | `backoff_sec` | seconds slept between attempts |
 | `stream_repairs` | re-sent or clashing tool calls repaired in the stream (docs/DESIGN.md) |
 | `one_call_retry` | the reply came from a retry that asked for exactly one tool call, after a stream error once a tool call had started (Sail's Gemma-4 parsing of several tool calls in one reply; docs/DESIGN.md) |
-| `error` | null; `cancelled` (the episode stopped during the call); else `<ErrorClass>: <message>` (`ProviderError`, `BillingError`, `ContextLengthError`, ...) |
+| `error` | null; `cancelled` (the episode stopped during the call); `interrupted` (`interactive.interrupt`: a user message aborted the orchestrator's call; not a failure); else `<ErrorClass>: <message>` (`ProviderError`, `BillingError`, `ContextLengthError`, ...) |
+| `n_chunks` | stream chunks carrying content, reasoning or a tool call (about one token each); null for a failed call |
+| `tokens_estimated` | the token counts are estimates: an interrupted call whose stream ended before the provider's usage chunk (docs/DESIGN.md, *Interrupts*); false otherwise |
+| `partial_text_chars`, `partial_reasoning_chars`, `prompt_chars` | interrupted calls only: the characters of text and reasoning streamed before the abort (dropped from the conversation), and of the request (the prompt estimate's basis) |
 
 ### `tools.jsonl`: one tool call
 
@@ -116,6 +119,7 @@ still unwinding after harbor's cancel) are dropped.
 | `tool_names` | tools the reply asked for, in order |
 | `group_ids` | spawn groups started in this step |
 | `finished` | `finish` was called |
+| `interrupted` | the step's LLM call was interrupted (`interactive.interrupt`): no reply, no tools; the next step delivers the message and calls again |
 
 ### `spawns.jsonl`: one `spawn_subagents` call
 
@@ -327,6 +331,7 @@ computed from the records, so they equal the JSONL sums.
 | `n_calls` | LLM calls, failed ones included |
 | `n_provider_errors` | calls whose error is a `ProviderError` |
 | `n_stream_repairs` | sum of the calls' `stream_repairs` |
+| `n_interrupts` | calls with error `interrupted` (`interactive.interrupt`; 0 otherwise) |
 | `cancel_kill` | after harbor's cancel: `{ok, n_killed, error}` of killing the agent's leftover commands; else null |
 | `reward`, `resolved` | null (the verifier's reward is in harbor's `result.json`) |
 
@@ -402,6 +407,7 @@ and the earlier baseline run) is two rows, never pooled.
 | `orch_bash_n`, `orch_bash_median_sec`, `orch_bash_max_sec`, `orch_llm_median_sec` | the orchestrator's own bash commands (count, median and longest duration) and the median duration of its successful LLM calls: what a message waits behind between its steps |
 | `n_fairplay_flags`, `fairplay_kinds` | tool calls of any agent matching a fairplay pattern, and their categories joined with `;` (`git_history`, `network`, `installed_copy`; analysis/fairplay.py): to review, not verdicts |
 | `n_provider_errors`, `n_stream_repairs` | from the episode and its calls |
+| `n_interrupts` | the orchestrator's interrupted calls (`interactive.interrupt`) |
 | `{orch,sub,arb,deb}_{prompt,cached,completion,reasoning}_tokens` | token sums per role (`arb` = judge, `deb` = debate) |
 | `cost_{orch,sub,arb,deb}`, `cost_total` | USD per role and in all |
 | `total_tokens` | prompt + completion tokens over all roles |
