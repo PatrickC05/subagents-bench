@@ -73,7 +73,7 @@ class LLMResponse:
     backoff_sec: float = 0.0
     stream_repairs: int = 0
     one_call_retry: bool = False  # answered by a retry that asked for exactly one tool call (ONE_CALL_NOTE)
-    n_chunks: int = 0  # stream chunks carrying content, reasoning or a tool call (about one token each)
+    n_chunks: int = 0  # stream chunks carrying content, reasoning or a tool call (Sail: about 16 tokens each)
 
 
 class LLMError(Exception):
@@ -132,7 +132,7 @@ class CallCancel:
         return acc is not None and any(s.name or s.args for s in list(acc.slots.values()))
 
     def partial(self) -> dict[str, Any]:
-        """What the aborted attempt streamed: data chunks (about one token each), characters, usage."""
+        """What the aborted attempt streamed: data chunks (Sail: about 16 tokens each), characters, usage."""
         acc = self.acc
         if acc is None:
             return {"chunks": 0, "reasoning_chunks": 0, "text_chars": 0, "reasoning_chars": 0, "usage": {}}

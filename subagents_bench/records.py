@@ -34,6 +34,9 @@ KINDS = ("calls", "tools", "steps", "spawns", "dispatches", "arbitrations", "inb
 POLL_SEC = 0.2
 ABORT_GRACE_SEC = 2.0  # an interrupted call not unwound by then is abandoned (its thread ends on its own)
 CHARS_PER_TOKEN = 4.0  # an aborted call's prompt estimate when no earlier call of the agent reported usage
+# ... and its completion estimate's tokens per streamed chunk: Sail sends about 16 tokens a chunk
+# (DeepSeek-V4.1-Flash, 2026-10-16: median 16, 10th-90th percentile 14-20 over 128 calls)
+TOKENS_PER_CHUNK = 16.0
 ARG_CHARS = 2000  # per string argument of a tool call in its record (the transcript has them whole)
 
 
@@ -132,6 +135,7 @@ class EpisodeRecorder:
         self._counters: dict[str, int] = {}
         self._tool_listeners: list[Callable[[dict[str, Any]], None]] = []
         self._last_prompt: dict[str, tuple[int, int]] = {}  # agent_id -> (prompt chars, prompt tokens) of its last call
+        self._chunk_tokens: dict[str, tuple[int, int]] = {}  # agent_id -> (completion tokens, chunks) of its calls
         subagents = config.topology == "subagents"
         self.episode: dict[str, Any] = {
             "episode_id": self.episode_id,
@@ -231,6 +235,9 @@ class EpisodeRecorder:
         if r.prompt_tokens and interrupt is not None:
             with self._lock:
                 self._last_prompt[who.agent_id] = (prompt_chars(system, messages, tools), r.prompt_tokens)
+                if r.completion_tokens and r.n_chunks:
+                    tok, chunks = self._chunk_tokens.get(who.agent_id, (0, 0))
+                    self._chunk_tokens[who.agent_id] = (tok + r.completion_tokens, chunks + r.n_chunks)
         return r, call_id
 
     def _interrupted(self, who: Who, cancel: CallCancel, system: str, messages: list[Message],
@@ -239,21 +246,25 @@ class EpisodeRecorder:
         unless it came, the tokens are estimates (``tokens_estimated``): the prompt from its
         characters at the ratio of the agent's last call that reported usage (else
         ``CHARS_PER_TOKEN``), cached up to that call's prompt (the prefix the provider has seen),
-        and one completion token per streamed chunk (reasoning: per reasoning chunk)."""
+        and the streamed chunks (reasoning: the reasoning chunks) at the tokens per chunk of the
+        agent's completed calls (else ``TOKENS_PER_CHUNK``)."""
         part = cancel.partial()
         usage = part["usage"]
         chars = prompt_chars(system, messages, tools)
         with self._lock:
             last = self._last_prompt.get(who.agent_id)
+            tok, chunks = self._chunk_tokens.get(who.agent_id, (0, 0))
+        per_chunk = tok / chunks if chunks else TOKENS_PER_CHUNK
         if usage.get("prompt_tokens"):
             prompt, cached = usage["prompt_tokens"], (usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0
-            completion = usage.get("completion_tokens") or part["chunks"]
+            completion = usage.get("completion_tokens") or round(part["chunks"] * per_chunk)
             reasoning = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
             estimated = not usage.get("completion_tokens")
         else:
             prompt = round(chars * last[1] / last[0]) if last else round(chars / CHARS_PER_TOKEN)
             cached = min(last[1], prompt) if last else 0
-            completion, reasoning, estimated = part["chunks"], part["reasoning_chunks"], True
+            completion, estimated = round(part["chunks"] * per_chunk), True
+            reasoning = round(part["reasoning_chunks"] * per_chunk)
         return {
             "t_first_chunk": cancel.t_first, "prompt_tokens": prompt, "cached_tokens": cached,
             "completion_tokens": completion, "reasoning_tokens": reasoning, "finish_reason": "interrupted",
