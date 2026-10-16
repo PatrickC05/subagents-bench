@@ -1,4 +1,4 @@
-<title>Requests Sweep Monitor</title>
+<title>{title}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
@@ -145,16 +145,22 @@ table.grid td.g.none {{ color: var(--muted); }}
 table.grid td.g.this, table.grid th.this {{ background: color-mix(in srgb, var(--live-bg) 45%, transparent); }}
 table.grid tr.diffrow td {{ font-weight: 700; background: var(--warn-bg); }}
 table.grid tr.diffrow td:first-child {{ box-shadow: inset 3px 0 0 var(--warn-fg); padding-left: 6px; }}
+nav.tabs {{ display: flex; gap: 22px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; box-shadow: inset 0 -1px 0 var(--rule); margin-bottom: -10px; min-width: 0; }}
+nav.tabs a {{ flex: none; padding: 4px 0 9px; font-family: var(--display); font-size: 15px; font-weight: 500; color: var(--ink2); text-decoration: none; white-space: nowrap; }}
+nav.tabs a:hover {{ color: var(--ink); }}
+nav.tabs a[aria-current="page"] {{ color: var(--ink); font-weight: 600; box-shadow: inset 0 -2px 0 var(--ink); }}
+nav.tabs a:focus-visible {{ outline: 2px solid var(--think); outline-offset: -2px; border-radius: 2px; }}
+@media (max-width: 520px) {{ nav.tabs {{ gap: 16px; }} nav.tabs a {{ font-size: 14px; }} }}
 footer {{ color: var(--muted); font-size: 12px; max-width: 84ch; display: grid; gap: 6px; }}
 footer p {{ margin: 0; }}
 @media (max-width: 520px) {{ h1 {{ font-size: 23px; }} .wrap {{ padding-inline: 16px; }} .conds {{ grid-template-columns: 1fr; }} }}
 </style>
 <div class="wrap">
-<header>
-  <div class="eyebrow">subagents-bench · requests sweep</div>
-  <h1>Is the agent there when you ask?</h1>
-  <p>A simulated user works with the agent on one repository for {minutes} minutes. A bug arrives every {interval} minutes ({n_bugs} in all), two questions about the code come between bugs, a status check asks how long the open bugs will take, and bug 3 is urgent. The user sees only what the agent sends with <code>reply</code>, so this measures how fast and how well questions are answered, whether bugs get fixed, and whether the agent's estimates of its own work hold. Two bugs-only controls get the same bugs at the same times and nothing else, so the gap to them is what the requests cost. Orchestrator: DeepSeek-V4.1-Flash. Subagents: Gemma-4-31B, 20 steps each, up to 3 at once.</p>
-  <div class="strip"><span>Snapshot <b>{snap}</b></span><span><b>{live}</b> live</span><span><b>{grading}</b> grading</span><span><b>{graded}</b> of {total} graded</span><span><b>${cost:.2f}</b> spent so far</span><span>Questions ready: {questions}</span></div>
+{nav}<header>
+  <div class="eyebrow">{eyebrow}</div>
+  <h1>{h1}</h1>
+  <p>{lede}</p>
+  <div class="strip"><span>Snapshot <b>{snap}</b></span><span><b>{live}</b> live</span><span><b>{grading}</b> grading</span><span><b>{graded}</b> of {total} graded</span><span><b>${cost:.2f}</b> spent so far</span>{questions}</div>
 </header>
 <div class="conds">{conds}</div>
 {differences}
@@ -173,9 +179,9 @@ footer p {{ margin: 0; }}
 </div>
 {body}
 <footer>
-  <p>Replied after: from the message being sent to the agent's first <code>reply</code> to it; for a status check, to its first reply of any kind. Waited to be read: until the message entered the agent's conversation (it arrives between steps). Medians count a message never answered as infinitely late. Controls (dashed cards) have no ids or replies: their bugs are numbered by position and show only pickup (waited to be read, first edit after) and fixes.</p>
-  <p>Correct: an LLM judge compares the first reply to each question with a reference answer, after the session (<code>subagents-bench grade-answers</code>); "–" until a session has <code>answers.json</code>. Shown over answered questions, and over every question asked. Fixed: SWE-sweep's hidden tests, after the session; live sessions count for latency and estimates, not fixes. Bugs only vs with requests: per-bug pickup from <code>interactivity.csv</code>, over the bugs after the first.</p>
-  <p>|log2 ETA error|: log2 of the actual over the estimated time from a bug's first estimate (sent before it was said done) to its done claim (1 means off by a factor of 2); a bug estimated and never said done counts as infinitely late ("never done") unless the session's deadline came before its due time. Done by the ETA: said done before the time the first estimate promised. Done claims true: the share of done claims the grader confirms. Urgent bug first: of the earlier bugs still open when the urgent one arrived, the share it was said done before.</p>
+  <p>Replied after: from the message being sent to the agent's first <code>reply</code> to it; for a status check, to its first reply of any kind. Waited to be read: until the message entered the agent's conversation (it arrives between steps). Medians count a message never answered as infinitely late.{controls_note}</p>
+  <p>Correct: an LLM judge compares the first reply to each question with a reference answer, after the session (<code>subagents-bench grade-answers</code>); "–" until a session has <code>answers.json</code>. Shown over answered questions, and over every question asked. Fixed: SWE-sweep's hidden tests, after the session; live sessions count for latency and estimates, not fixes.{pickup_note}</p>
+  <p>|log2 ETA error|: log2 of the actual over the estimated time from a bug's first estimate (sent before it was said done) to its done claim (1 means off by a factor of 2); a bug estimated and never said done counts as infinitely late ("never done") unless the session's deadline came before its due time. Done by the ETA: said done before the time the first estimate promised. Done claims true: the share of done claims the grader confirms. Urgent bug first: of the earlier bugs still open when the urgent one arrived, the share it was said done before.</p>{footer_extra}
 </footer>
 </div>
 {viewer}
