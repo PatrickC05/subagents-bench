@@ -281,6 +281,38 @@ def test_swe_interactive_rate_spec():
         assert dicts[0] == dicts[1] == dicts[2]
 
 
+def test_swe_interactive_baseline_spec():
+    """Baseline: the requests sweep's three request conditions (single, background manager, hinted
+    background) with only the bugs (reply tool on; no questions, status checks or urgent bug), on
+    click and echo, with one fixed bug order for every round and condition: the requests sweep's
+    round 1 order."""
+    from subagents_bench.hints import schedule
+    s, req = (sweep.load_spec(REPO / f"configs/sweeps/{n}.yaml") for n in ("swe_interactive_baseline", "swe_interactive_requests"))
+    assert (s.tasks, s.rounds, len(sweep.plan(s))) == (["swe-sweep__click", "swe-sweep__echo"], 2, 6)
+    assert (s.dataset_path, s.platform, s.extra_args, s.n_concurrent, s.timeout_multiplier) == (
+        req.dataset_path, req.platform, req.extra_args, req.n_concurrent, req.timeout_multiplier)
+    twins = {"single_baseline": "single_requests", "manager_background_baseline": "manager_background_requests",
+             "background_hinted_baseline": "background_hinted_requests"}
+    assert set(s.configs) == set(twins)
+    for cond, twin in twins.items():
+        d, t = s.configs[cond].to_dict(), req.configs[twin].to_dict()
+        assert (d["interactive"].pop("vary_order_by_round"), t["interactive"].pop("vary_order_by_round")) == (False, True)
+        for k, v in {"questions_per_interval": (0, 2), "status_every": (0, 2), "urgent_every": (0, 3)}.items():
+            assert (d["interactive"].pop(k), t["interactive"].pop(k)) == v, k
+        assert {**d, "name": twin} == t, cond
+        i = s.configs[cond].interactive
+        assert (i.wall_clock_sec, i.interval_sec, i.max_hints, i.replies) == (1800, 240, 6, True)
+    if s.dataset_path.is_dir():
+        for t in s.tasks:
+            orders = {tuple(h.subtask.id for h in schedule(cfg.interactive, s.dataset_path / t, t, round_=r))
+                      for cfg in s.configs.values() for r in (1, 2)}
+            assert len(orders) == 1 and len(next(iter(orders))) == 6, t
+        click = [h.subtask.id for h in schedule(s.configs["single_baseline"].interactive, s.dataset_path / "swe-sweep__click",
+                                                "swe-sweep__click", round_=2)]
+        assert click == [h.subtask.id for h in schedule(req.configs["single_bugsonly"].interactive,
+                                                        req.dataset_path / "swe-sweep__click", "swe-sweep__click", round_=1)]
+
+
 def test_swe_interactive_requests_spec(tmp_path):
     """Requests: swe_interactive.yaml's settings but for the tasks, rounds, a 30-minute session with 6
     bugs every 4 minutes, the request stream (replies, 2 questions per interval, status every 2 bugs,
