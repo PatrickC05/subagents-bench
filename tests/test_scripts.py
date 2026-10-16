@@ -52,4 +52,8 @@ def test_run_experiment_runs_preflight_then_sweep(tmp_path):
     assert run_experiment(tmp_path, "--dry-run") == (0, ["subagents-bench sweep ROOT/configs/sweeps/pilot.yaml --dry-run"])
     assert run_experiment(tmp_path, "/abs/spec.yaml", "--rounds", "2", SKIP_PREFLIGHT="1") == (0, [
         "caffeinate -i", "subagents-bench sweep /abs/spec.yaml --rounds 2"])
+    assert run_experiment(tmp_path, "--rounds", "3,4", "--only", "a", "b", "--job", "1:c", "--job", "2:a",
+                          SB_NO_CAFFEINATE="1") == (0, [
+        "subagents-bench preflight ROOT/configs/sweeps/pilot.yaml --oracle",
+        "subagents-bench sweep ROOT/configs/sweeps/pilot.yaml --rounds 3,4 --only a b --job 1:c --job 2:a"])
     assert run_experiment(tmp_path, PREFLIGHT_RC="1") == (1, ["subagents-bench preflight ROOT/configs/sweeps/pilot.yaml --oracle"])

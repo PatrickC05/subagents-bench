@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import signal
 import sys
 
@@ -20,6 +21,13 @@ def _rounds(text: str) -> list[int]:
         raise argparse.ArgumentTypeError(f"expected rounds like 1,2 (got {text!r})") from None
 
 
+def _job(text: str) -> tuple[int, str]:
+    m = re.fullmatch(r"(\d+):(.+)", text)
+    if not m:
+        raise argparse.ArgumentTypeError(f"expected ROUND:CONDITION like 1:single (got {text!r})")
+    return int(m[1]), m[2]
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="subagents-bench",
                                      description="Orchestrator + subagents on Terminal-Bench 2.0 and SWE-sweep.")
@@ -34,6 +42,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true", help="print the jobs and their harbor commands; run nothing")
     p.add_argument("--only", nargs="+", metavar="COND", help="run only these conditions")
     p.add_argument("--rounds", type=_rounds, help="comma-separated rounds to run, e.g. 1,2")
+    p.add_argument("--job", action="append", type=_job, metavar="ROUND:CONDITION",
+                   help="also run this one job, e.g. 1:single (repeatable; alone: only these jobs)")
     p.add_argument("--jobs-at-once", type=int, default=1, metavar="N",
                    help="harbor jobs to run side by side (default 1; each runs its own sessions)")
     p = sub.add_parser("hints", help="write the bug reports of an interactive sweep (hint_detail: report)")
@@ -74,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
         return _validate(args.configs)
     try:
         spec = sweep.load_spec(args.spec)
-        jobs = sweep.plan(spec, args.only, args.rounds) if args.cmd == "sweep" else []
+        jobs = sweep.plan(spec, args.only, args.rounds, args.job) if args.cmd == "sweep" else []
     except (ConfigError, OSError, yaml.YAMLError) as e:
         print(f"[FAIL] {e}", file=sys.stderr)
         return 2

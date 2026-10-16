@@ -8,12 +8,13 @@ run), sweep-wide ``overrides`` (deep-merged onto the base before the conditions,
 budget) and the conditions (overrides deep-merged onto that); ``extends: <spec>`` merges it over
 another spec. Relative paths resolve against the repository root (the spec's nearest ancestor
 holding a pyproject.toml). Exit codes: 0 done, 1 jobs failed or need a retry, 2 spec or config
-error, 3 billing error, 4 provider outage, 130 interrupted.
+error (or another sweep running on the jobs dir), 3 billing error, 4 provider outage, 130 interrupted.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import fcntl
 import hashlib
 import json
 import os
@@ -30,7 +31,7 @@ import tomllib
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import IO, Any, Callable
 
 import yaml
 
@@ -48,6 +49,7 @@ HARBOR_KEYS = {"n_concurrent", "agent_timeout_multiplier", "extra_args", "enviro
 ENVIRONMENTS = ("docker", "modal")  # where harbor runs the task containers (`harbor.environment`)
 FROM_RE = re.compile(r"^FROM (?!--platform)", re.M)  # a Dockerfile FROM without a platform (instructions in upper case)
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")  # job names are <sweep>__r<k>__<condition>
+LOCK_FILE = ".sweep.lock"  # in the jobs dir: one sweep (or preflight's oracle job) writes there at a time
 POLL_SEC = 10.0  # live trial lines
 STOP_GRACE_SEC = 120.0  # on SIGINT harbor cancels its trials and removes their containers
 SESSION_GRACE_SEC = 120.0  # an interactive session's shutdown and kill, before harbor's agent timeout
@@ -322,18 +324,23 @@ def make_hints(spec: Spec, force: bool = False) -> int:
     return 1 if failed else 0
 
 
-def plan(spec: Spec, only: list[str] | None = None, rounds: list[int] | None = None) -> list[tuple[int, str]]:
-    """(round, condition) jobs in run order; each round shuffles the conditions with order_seed."""
-    bad = [*sorted(set(only or ()) - set(spec.configs)), *(f"round {r}" for r in rounds or () if not 1 <= r <= spec.rounds)]
+def plan(spec: Spec, only: list[str] | None = None, rounds: list[int] | None = None,
+         jobs: list[tuple[int, str]] | None = None) -> list[tuple[int, str]]:
+    """(round, condition) jobs in run order; each round shuffles the conditions with order_seed.
+    ``only`` and ``rounds`` filter that order; ``jobs`` (``--job``) adds single jobs after it in
+    their own order, or with neither filter are the whole selection. A job is listed once."""
+    bad = [*sorted(set(only or ()) - set(spec.configs)), *(f"round {r}" for r in rounds or () if not 1 <= r <= spec.rounds),
+           *(f"job {r}:{c}" for r, c in jobs or () if c not in spec.configs or not 1 <= r <= spec.rounds)]
     if bad:
         raise ConfigError(f"not in sweep {spec.name!r}: {', '.join(bad)}")
     rng = random.Random(spec.order_seed)
-    jobs = []
+    out = []
     for r in range(1, spec.rounds + 1):
         order = list(spec.configs)
-        rng.shuffle(order)  # every round draws, so an order never depends on --rounds/--only
-        jobs += [(r, c) for c in order if (not rounds or r in rounds) and (not only or c in only)]
-    return jobs
+        rng.shuffle(order)  # every round draws, so an order never depends on --rounds/--only/--job
+        if only or rounds or not jobs:
+            out += [(r, c) for c in order if (not rounds or r in rounds) and (not only or c in only)]
+    return out + [j for j in dict.fromkeys(jobs or ()) if j not in out]
 
 
 def job_name(spec: Spec, round_: int, cond: str) -> str:
@@ -580,11 +587,36 @@ def _write_status(spec: Spec, status: str, t_start: float) -> None:
     (spec.jobs_dir / "sweep.json").write_text(json.dumps(doc, indent=2) + "\n")
 
 
+class Locked(Exception):
+    """Another process holds the jobs dir (:func:`lock_jobs_dir`)."""
+
+
+def lock_jobs_dir(spec: Spec) -> IO[str]:
+    """Hold ``<jobs_dir>/.sweep.lock`` (an exclusive flock) until the returned file is closed or this
+    process ends, however it ends: two sweeps on one jobs dir would move each other's unfinished
+    jobs aside and rewrite the task copies under each other's harbor runs. The file names the
+    holder's pid and command line; :class:`Locked` (with them) when another process holds it."""
+    spec.jobs_dir.mkdir(parents=True, exist_ok=True)
+    f = (spec.jobs_dir / LOCK_FILE).open("a+")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        f.seek(0)
+        holder = f.read().strip() or "pid unknown"  # it has not written it yet
+        f.close()
+        raise Locked(f"another sweep is running on {_rel(spec.jobs_dir, spec.root)} ({holder})") from None
+    f.truncate(0)
+    f.write(f"pid {os.getpid()}: {shlex.join(sys.argv)}\n")
+    f.flush()
+    return f
+
+
 def run(spec: Spec, jobs: list[tuple[int, str]], dry_run: bool = False, jobs_at_once: int = 1) -> int:
     """Run the planned jobs in order, ``jobs_at_once`` harbor jobs at a time (``dry_run``: print
     them); returns the exit code. An abort or Ctrl-C stops every running job (each is rerun on
     resume); the manifest records ``jobs_at_once`` per job, since sessions running side by side
-    share the machine and the provider."""
+    share the machine and the provider. Exits 2 at once, writing nothing, while another process
+    holds the jobs dir (:func:`lock_jobs_dir`); this one holds it until it returns."""
     configs_dir = spec.jobs_dir / "configs"
     say(f"Sweep {spec.name!r}: {len(jobs)} jobs x {len(spec.tasks)} tasks, jobs dir {_rel(spec.jobs_dir, spec.root)}")
     if dry_run:
@@ -599,6 +631,18 @@ def run(spec: Spec, jobs: list[tuple[int, str]], dry_run: bool = False, jobs_at_
     if harbor_bin() is None:
         say("harbor not found: run scripts/setup.sh")
         return 2
+    try:
+        lock = lock_jobs_dir(spec)
+    except Locked as e:
+        say(str(e))
+        return 2
+    with lock:  # released when the sweep ends, however it ends (the OS releases it if the process dies)
+        return _run(spec, jobs, jobs_at_once)
+
+
+def _run(spec: Spec, jobs: list[tuple[int, str]], jobs_at_once: int) -> int:
+    """:func:`run` with the jobs dir locked."""
+    configs_dir = spec.jobs_dir / "configs"
     configs_dir.mkdir(parents=True, exist_ok=True)
     for cond, cfg in spec.configs.items():
         (configs_dir / f"{cond}.yaml").write_text(yaml.safe_dump(cfg.to_dict(), sort_keys=False))
@@ -728,7 +772,22 @@ def modal_ready() -> tuple[bool, str]:
 
 def preflight(spec: Spec, oracle: bool = False) -> int:
     """Docker, harbor, SAIL_API_KEY, one request per model and (``oracle``) harbor's oracle agent
-    on every task, reusing an earlier oracle job that solved them all. 0 if all passed, else 1."""
+    on every task, reusing an earlier oracle job that solved them all. 0 if all passed, else 1.
+    The oracle job writes into the jobs dir: with ``oracle``, preflight holds it like a sweep
+    (:func:`lock_jobs_dir`) and exits 2 at once while another process does."""
+    if not oracle:
+        return _preflight(spec, oracle)
+    try:
+        lock = lock_jobs_dir(spec)
+    except Locked as e:
+        say(str(e))
+        return 2
+    with lock:
+        return _preflight(spec, oracle)
+
+
+def _preflight(spec: Spec, oracle: bool) -> int:
+    """:func:`preflight`, with the jobs dir locked when ``oracle``."""
     results: list[bool] = []
 
     def check(name: str, ok: bool, detail: str) -> None:

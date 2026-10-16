@@ -637,7 +637,29 @@ settings (`n_concurrent` 4, `agent_timeout_multiplier` 2.0) and conditions;
 --agent-timeout-multiplier 2.0 -y -q` with `SUBAGENTS_BENCH_CONFIG` set.
 Each round shuffles the condition order with its own draw from the seed, so
 drift over time (provider load, caches) does not line up with a condition,
-and `--rounds`/`--only` never change an order.
+and `--rounds`/`--only` never change an order. `--job ROUND:COND`
+(repeatable) adds single jobs after the `--rounds`/`--only` selection, in the
+order given and each once; alone it selects only those jobs. Its rounds and
+conditions are checked like `--rounds`/`--only` (exit 2), and the shuffle
+draws the same with or without it.
+
+**One sweep per jobs dir.** A sweep holds an exclusive `flock` on
+`<jobs_dir>/.sweep.lock` from before it writes anything (configs, the task
+copies, `sweep.json`, moved-aside jobs) until it returns; the file names its
+pid and command line. A second sweep on the same jobs dir exits 2 at once
+with `another sweep is running on <jobs_dir> (pid N: ...)`: it would see
+the first's running jobs as unfinished and move them aside, and rewrite
+the task copies under its harbor runs. `preflight --oracle` holds the same
+lock (its oracle job is moved aside and the tasks staged there too), so
+`run_experiment.sh`'s preflight and sweep, two processes one after the
+other, take it in turn. The kernel drops the lock when the process ends,
+however it ends, so a crash or `kill -9` leaves no stale lock to clean up.
+harbor does not inherit it: after a `kill -9` of the sweep (no chance to stop
+harbor), its harbor runs go on unguarded until they end. A sweep started by
+code from before the lock holds none, so it cannot be detected: a new sweep
+starts as if the jobs dir were idle and moves its running jobs aside. A dry
+run only reads: it neither takes nor checks the lock, so while a sweep runs,
+its running jobs show as unfinished (`move aside, rerun`).
 
 **Resume.** A job whose dir has harbor's finished `result.json` and no trial
 needing a rerun is skipped. An unfinished job, or one with a trial needing a

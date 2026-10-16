@@ -83,14 +83,18 @@ scripts/run_experiment.sh                             # the pilot (configs/sweep
 scripts/analyze.sh jobs/pilot                         # tables, figures, delegation gate
 ```
 
-`run_experiment.sh [SPEC] [--dry-run] [--only COND...] [--rounds 1,2]` runs
-`subagents-bench preflight SPEC --oracle` (Docker, harbor, the key, one request
-per model, harbor's oracle agent on every task), then `subagents-bench sweep
-SPEC`: one `harbor run` per (round, condition). It prints one line per trial
-as harbor finishes it. `--dry-run` prints the jobs and their harbor commands
-and runs nothing. On macOS the sweep runs under `caffeinate -i` (turn off with
-`SB_NO_CAFFEINATE=1`). Exit codes: 0 done, 1 jobs failed or need a retry,
-2 spec or config error, 3 billing error, 4 provider outage, 130 interrupted.
+`run_experiment.sh [SPEC] [--dry-run] [--only COND...] [--rounds 1,2]
+[--job ROUND:COND]...` runs `subagents-bench preflight SPEC --oracle` (Docker,
+harbor, the key, one request per model, harbor's oracle agent on every task),
+then `subagents-bench sweep SPEC`: one `harbor run` per (round, condition).
+`--rounds` and `--only` narrow that to some rounds and conditions; `--job 1:single`
+(repeatable) adds that one job after them, and without `--rounds` or `--only`
+runs only the jobs it names, so new rounds and the reruns of earlier jobs are
+one sweep. It prints one line per trial as harbor finishes it. `--dry-run`
+prints the jobs and their harbor commands and runs nothing. On macOS the sweep
+runs under `caffeinate -i` (turn off with `SB_NO_CAFFEINATE=1`). Exit codes:
+0 done, 1 jobs failed or need a retry, 2 spec or config error or another sweep
+running on the jobs dir, 3 billing error, 4 provider outage, 130 interrupted.
 
 The sweep is resumable: run the same command again after any stop. Complete
 jobs are skipped; an unfinished job, or one with a trial that did not measure
@@ -100,6 +104,18 @@ the verifier, or on SWE-sweep a verifier that could not grade), is moved to
 retry. On a provider failure the sweep sends one tiny request to every
 model and stops with exit 4 if one still fails.
 Ctrl-C gives harbor up to two minutes to remove its containers.
+
+One sweep runs on a jobs dir at a time. A second one would take the first's
+running jobs for unfinished ones and move them aside, so while a sweep (or
+preflight's oracle job) holds `jobs/<sweep>/.sweep.lock`, another exits 2 at
+once, before it writes anything: `another sweep is running on jobs/<sweep>
+(pid N: <its command>)`. To add jobs, let the running sweep end (or stop it)
+and start one sweep with every job, using `--job` for the odd ones. A sweep
+started by code from before `.sweep.lock` holds no lock, so nothing can tell
+it is running: a new sweep is not refused and moves its running jobs aside.
+Let such a sweep end first (`pgrep -fl 'subagents-bench sweep'` lists the
+sweeps on this machine). `--dry-run` neither takes nor checks the lock: while
+a sweep runs, its running jobs show as `move aside, rerun`.
 
 `analyze.sh [JOBS_DIR...]` aggregates the jobs (several dirs are one data
 set), draws the figures, and exits 3 if a subagent condition never delegated
@@ -417,6 +433,7 @@ scripts/run_experiment.sh configs/sweeps/swe_interactive_baseline_modal.yaml --j
 jobs/<sweep>/                       the sweep (git-ignored, like analysis/ and figures/)
   configs/<condition>.yaml          resolved config of each condition
   sweep.json, sweep_manifest.jsonl  status and one line per job event
+  .sweep.lock                       locked while a sweep runs: its pid and command line
   <sweep>__r<k>__<condition>/       one harbor job
     <task>__<id>/result.json        harbor's trial result (reward, exceptions, timings)
     <task>__<id>/agent/             this harness's records: episode.json, calls.jsonl,
