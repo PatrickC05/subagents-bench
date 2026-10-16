@@ -289,12 +289,12 @@ def test_swe_interactive_baseline_spec():
     limit on how many run at once or how many steps each takes."""
     from subagents_bench.hints import schedule
     s, req = (sweep.load_spec(REPO / f"configs/sweeps/{n}.yaml") for n in ("swe_interactive_baseline", "swe_interactive_requests"))
-    assert (s.tasks, s.rounds, len(sweep.plan(s))) == (["swe-sweep__click", "swe-sweep__echo"], 2, 6)
+    assert (s.tasks, s.rounds, len(sweep.plan(s))) == (["swe-sweep__click", "swe-sweep__echo"], 1, 5)
     assert (s.dataset_path, s.platform, s.extra_args, s.n_concurrent, s.timeout_multiplier) == (
         req.dataset_path, req.platform, req.extra_args, req.n_concurrent, req.timeout_multiplier)
     twins = {"single_baseline": "single_requests", "manager_background_baseline": "manager_background_requests",
              "background_hinted_baseline": "background_hinted_requests"}
-    assert set(s.configs) == set(twins)
+    assert set(s.configs) == set(twins) | {"manager_available_baseline", "manager_owner_baseline"}
     for cond, twin in twins.items():
         d, t = s.configs[cond].to_dict(), req.configs[twin].to_dict()
         assert (d["interactive"].pop("vary_order_by_round"), t["interactive"].pop("vary_order_by_round")) == (False, True)
