@@ -281,6 +281,43 @@ def test_swe_interactive_rate_spec():
         assert dicts[0] == dicts[1] == dicts[2]
 
 
+def test_swe_interactive_baseline_spec():
+    """Baseline: the requests sweep's three request conditions (single, background manager, hinted
+    background) with only the bugs (reply tool on; no questions, status checks or urgent bug), on
+    click and echo, with one fixed bug order for every round and condition: the requests sweep's
+    round 1 order. Every model is the orchestrator's (subagent.model: null), and subagents have no practical
+    limit on how many run at once or how many steps each takes."""
+    from subagents_bench.hints import schedule
+    s, req = (sweep.load_spec(REPO / f"configs/sweeps/{n}.yaml") for n in ("swe_interactive_baseline", "swe_interactive_requests"))
+    assert (s.tasks, s.rounds, len(sweep.plan(s))) == (["swe-sweep__click", "swe-sweep__echo"], 1, 6)
+    assert (s.dataset_path, s.platform, s.extra_args, s.n_concurrent, s.timeout_multiplier) == (
+        req.dataset_path, req.platform, req.extra_args, req.n_concurrent, req.timeout_multiplier)
+    twins = {"single_baseline": "single_requests", "manager_background_baseline": "manager_background_requests",
+             "background_hinted_baseline": "background_hinted_requests"}
+    assert set(s.configs) == set(twins) | {"manager_available_baseline", "manager_owner_baseline", "dispatcher_hinted_baseline"}
+    for cond, twin in twins.items():
+        d, t = s.configs[cond].to_dict(), req.configs[twin].to_dict()
+        assert (d["interactive"].pop("vary_order_by_round"), t["interactive"].pop("vary_order_by_round")) == (False, True)
+        for k, v in {"questions_per_interval": (0, 2), "status_every": (0, 2), "urgent_every": (0, 3)}.items():
+            assert (d["interactive"].pop(k), t["interactive"].pop(k)) == v, k
+        assert d["subagent"].pop("model") is None and t["subagent"].pop("model")["model"] == "nvidia/Gemma-4-31B-IT-NVFP4"
+        assert (d["subagent"].pop("max_concurrent"), t["subagent"].pop("max_concurrent")) == (60, 3)
+        assert (d["subagent"].pop("max_steps"), t["subagent"].pop("max_steps")) == (2000, 20)
+        assert s.configs[cond].subagent_model == s.configs[cond].orchestrator  # all DeepSeek-V4.1-Flash
+        assert {**d, "name": twin} == t, cond
+        i = s.configs[cond].interactive
+        assert (i.wall_clock_sec, i.interval_sec, i.max_hints, i.replies) == (1800, 240, 6, True)
+    if s.dataset_path.is_dir():
+        for t in s.tasks:
+            orders = {tuple(h.subtask.id for h in schedule(cfg.interactive, s.dataset_path / t, t, round_=r))
+                      for cfg in s.configs.values() for r in (1, 2)}
+            assert len(orders) == 1 and len(next(iter(orders))) == 6, t
+        click = [h.subtask.id for h in schedule(s.configs["single_baseline"].interactive, s.dataset_path / "swe-sweep__click",
+                                                "swe-sweep__click", round_=2)]
+        assert click == [h.subtask.id for h in schedule(req.configs["single_bugsonly"].interactive,
+                                                        req.dataset_path / "swe-sweep__click", "swe-sweep__click", round_=1)]
+
+
 def test_swe_interactive_requests_spec(tmp_path):
     """Requests: swe_interactive.yaml's settings but for the tasks, rounds, a 30-minute session with 6
     bugs every 4 minutes, the request stream (replies, 2 questions per interval, status every 2 bugs,
@@ -824,3 +861,35 @@ def test_a_job_threads_error_stops_the_other_harbor_and_the_queue(fake, spec4, m
     m = manifest(spec4)
     assert [e["event"] for e in m if e.get("job") in queued] == [] and m[-1]["event"] == "error"
     assert json.loads((spec4.jobs_dir / "sweep.json").read_text())["status"] == "error"
+
+
+def test_harbor_environment_modal(monkeypatch):
+    """`harbor.environment` picks harbor's -e (docker by default); on Modal the sweep sets Modal's
+    image builder (an explicit setting wins) and preflight checks for a Modal token, not Docker."""
+    base = sweep.load_spec(REPO / "configs/sweeps/swe_interactive_baseline.yaml")
+    m = sweep.load_spec(REPO / "configs/sweeps/swe_interactive_baseline_modal.yaml")
+    smoke = sweep.load_spec(REPO / "configs/sweeps/swe_interactive_baseline_modal_smoke.yaml")
+    assert (base.environment, m.environment, smoke.environment) == ("docker", "modal", "modal")
+    cmd = sweep.harbor_cmd(m, "j")
+    assert cmd[cmd.index("-e") + 1] == "modal" and sweep.harbor_cmd(base, "j")[cmd.index("-e") + 1] == "docker"
+    for c, cfg in m.configs.items():  # the same conditions as the Docker baseline
+        assert cfg.to_dict() == base.configs[c].to_dict()
+    monkeypatch.delenv("MODAL_IMAGE_BUILDER_VERSION", raising=False)
+    assert sweep.harbor_env(m, X="1")["MODAL_IMAGE_BUILDER_VERSION"] == sweep.MODAL_IMAGE_BUILDER
+    assert "MODAL_IMAGE_BUILDER_VERSION" not in sweep.harbor_env(base)
+    monkeypatch.setenv("MODAL_IMAGE_BUILDER_VERSION", "2024.10")
+    assert sweep.harbor_env(m)["MODAL_IMAGE_BUILDER_VERSION"] == "2024.10"
+    i = smoke.configs["single_baseline"].interactive
+    assert (smoke.rounds, i.wall_clock_sec, i.interval_sec) == (1, 120, 30)
+    assert 120 + sweep.SESSION_GRACE_SEC <= 43200 * smoke.timeout_multiplier
+    if smoke.dataset_path.is_dir():
+        assert sweep.check_interactive(smoke) == []
+
+
+def test_harbor_environment_is_checked(tmp_path, monkeypatch):
+    spec = (REPO / "configs/sweeps/swe_interactive_baseline.yaml").read_text().replace(
+        "  n_concurrent: 3\n", "  n_concurrent: 3\n  environment: kubernetes\n")
+    (tmp_path / "bad.yaml").write_text(spec)
+    monkeypatch.chdir(REPO)
+    with pytest.raises(ConfigError, match="harbor.environment"):
+        sweep.load_spec(tmp_path / "bad.yaml")

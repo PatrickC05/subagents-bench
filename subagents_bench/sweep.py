@@ -43,7 +43,8 @@ from .records import git_commit
 AGENT = "subagents_bench.harness.harbor_agent:OrchestratorAgent"
 SPEC_KEYS = {"extends", "name", "base", "dataset", "dataset_path", "platform", "tasks", "rounds", "order_seed",
              "harbor", "overrides", "conditions", "jobs_dir"}
-HARBOR_KEYS = {"n_concurrent", "agent_timeout_multiplier", "extra_args"}
+HARBOR_KEYS = {"n_concurrent", "agent_timeout_multiplier", "extra_args", "environment"}
+ENVIRONMENTS = ("docker", "modal")  # where harbor runs the task containers (`harbor.environment`)
 FROM_RE = re.compile(r"^FROM (?!--platform)", re.M)  # a Dockerfile FROM without a platform (instructions in upper case)
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")  # job names are <sweep>__r<k>__<condition>
 POLL_SEC = 10.0  # live trial lines
@@ -74,6 +75,7 @@ class Spec:
     jobs_dir: Path
     configs: dict[str, ExperimentConfig]  # condition -> resolved config
     raw: dict[str, Any]  # the spec after `extends`
+    environment: str = "docker"  # harbor's -e: the local Docker, or Modal sandboxes
 
 
 def deep_merge(base: Any, over: Any) -> Any:
@@ -124,6 +126,9 @@ def load_spec(path: str | os.PathLike) -> Spec:
         raise ConfigError(f"{path}: platform must be a string like linux/amd64 and needs dataset_path (images built here)")
     if not (isinstance(extra_args, list) and all(isinstance(a, str) for a in extra_args)):
         raise ConfigError(f"{path}: harbor.extra_args must be a list of strings")
+    spec.environment = harbor.get("environment", "docker")
+    if spec.environment not in ENVIRONMENTS:
+        raise ConfigError(f"{path}: harbor.environment must be one of {', '.join(ENVIRONMENTS)}")
     bad = [n for n in (name, *conditions) if not NAME_RE.fullmatch(str(n)) or "__" in str(n)]
     if bad:
         raise ConfigError(f"{path}: invalid name(s) {bad}: use letters, digits, '_', '.', '-' but not '__'")
@@ -331,7 +336,7 @@ def harbor_cmd(spec: Spec, job: str, agent: str = AGENT) -> list[str]:
     cmd = [harbor_bin() or "harbor", "run", *source]
     for t in spec.tasks:
         cmd += ["-i", t]
-    cmd += ["-a", agent, "-e", "docker", "-n", str(spec.n_concurrent), "-k", "1",
+    cmd += ["-a", agent, "-e", spec.environment, "-n", str(spec.n_concurrent), "-k", "1",
             "-o", _rel(spec.jobs_dir, spec.root), "--job-name", job]
     if agent == AGENT:
         cmd += ["--agent-timeout-multiplier", str(spec.timeout_multiplier)]
@@ -605,8 +610,7 @@ def run(spec: Spec, jobs: list[tuple[int, str]], dry_run: bool = False, jobs_at_
             _log(spec, "moved", **ids, state=state, why=why, to=moved)
         say(f"{prefix}: running {len(spec.tasks)} trials")
         watcher, t0 = Watcher(job_dir, models), time.time()
-        env = {**os.environ, "SUBAGENTS_BENCH_CONFIG": str(configs_dir / f"{cond}.yaml"),
-               HINTS_DIR_ENV: str(hints_dir(spec))}
+        env = harbor_env(spec, SUBAGENTS_BENCH_CONFIG=str(configs_dir / f"{cond}.yaml"), **{HINTS_DIR_ENV: str(hints_dir(spec))})
         try:
             rc = run_job(harbor_cmd(spec, job), env, spec.root, lambda: watcher.poll() or stop.is_set())
         except KeyboardInterrupt:  # one job at a time: the Ctrl-C reached this thread
@@ -673,6 +677,32 @@ def run(spec: Spec, jobs: list[tuple[int, str]], dry_run: bool = False, jobs_at_
     return code
 
 
+# Modal's legacy image builder pip-installs its client into every task image, which fails on images
+# without pip (echo's Go image); 2025.06 needs nothing in the image. An explicit setting wins.
+MODAL_IMAGE_BUILDER = "2025.06"
+
+
+def harbor_env(spec: Spec, **extra: str) -> dict[str, str]:
+    """The environment of a harbor run: ours, plus Modal's image builder version on Modal."""
+    env = {**os.environ, **extra}
+    if spec.environment == "modal":
+        env.setdefault("MODAL_IMAGE_BUILDER_VERSION", MODAL_IMAGE_BUILDER)
+    return env
+
+
+def modal_ready() -> tuple[bool, str]:
+    """The modal package (the `modal` extra) and a Modal token: MODAL_TOKEN_ID/SECRET or ~/.modal.toml."""
+    try:
+        import modal  # noqa: F401
+    except ImportError:
+        return False, "the modal package is missing: uv sync --all-extras (or pip install 'harbor[modal]')"
+    if os.environ.get("MODAL_TOKEN_ID") and os.environ.get("MODAL_TOKEN_SECRET"):
+        return True, "token from MODAL_TOKEN_ID/MODAL_TOKEN_SECRET"
+    if (Path.home() / ".modal.toml").is_file():
+        return True, "token from ~/.modal.toml"
+    return False, "no Modal token: run `modal token new` (or set MODAL_TOKEN_ID and MODAL_TOKEN_SECRET)"
+
+
 def preflight(spec: Spec, oracle: bool = False) -> int:
     """Docker, harbor, SAIL_API_KEY, one request per model and (``oracle``) harbor's oracle agent
     on every task, reusing an earlier oracle job that solved them all. 0 if all passed, else 1."""
@@ -683,8 +713,12 @@ def preflight(spec: Spec, oracle: bool = False) -> int:
         say(f"  [{'PASS' if ok else 'FAIL'}] {name}: {detail}")
 
     say(f"Preflight for sweep {spec.name!r}:")
-    docker = _output(["docker", "info", "--format", "{{.ServerVersion}}"])
-    check("docker", docker is not None, f"server {docker}" if docker else "not running: start Docker")
+    if spec.environment == "docker":
+        docker = _output(["docker", "info", "--format", "{{.ServerVersion}}"])
+        check("docker", docker is not None, f"server {docker}" if docker else "not running: start Docker")
+    elif spec.environment == "modal":
+        ok, why = modal_ready()
+        check("modal", ok, why)
     harbor = harbor_bin()
     check("harbor", harbor is not None, f"{harbor} {_output([harbor, '--version'])}" if harbor
           else "not found: run scripts/setup.sh")
@@ -713,7 +747,7 @@ def preflight(spec: Spec, oracle: bool = False) -> int:
             stage_tasks(spec)
             cmd = harbor_cmd(spec, "_oracle", agent="oracle")
             say(f"  oracle: $ {shlex.join(cmd)}")
-            run_job(cmd, dict(os.environ), spec.root)
+            run_job(cmd, harbor_env(spec), spec.root)
         unsolved = _unsolved(spec, job_dir)
         check("oracle solves every task", not unsolved, f"unsolved: {unsolved}" if unsolved else f"{len(spec.tasks)} tasks")
     say(f"  -> {'ALL PASSED' if all(results) else 'FAILED'}")

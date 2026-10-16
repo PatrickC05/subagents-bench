@@ -1,0 +1,11 @@
+# swe_interactive_baseline.yaml on Modal: every task container (the agent's sandbox and the separate
+# verifier) runs in a Modal sandbox instead of the local Docker, built from the tasks' Dockerfiles on
+# Modal's x86-64 machines (no emulation). The agent loop still runs here and calls Sail; only the
+# commands run remotely. Sessions don't share a machine, so more run at once.
+# Needs the `modal` extra (scripts/setup.sh installs it) and a Modal token (`modal token new`).
+#   scripts/run_experiment.sh configs/sweeps/swe_interactive_baseline_modal.yaml --jobs-at-once 3
+extends: configs/sweeps/swe_interactive_baseline.yaml
+name: swe_interactive_baseline_modal
+
+harbor:
+  environment: modal

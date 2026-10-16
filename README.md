@@ -386,6 +386,32 @@ manifest):
   looked for an installed copy and one also tried `pip download` (no network,
   it failed). No command obtained a fix (`fairplay` in tools.csv).
 
+### Baseline, and running on Modal
+
+[`swe_interactive_baseline.yaml`](configs/sweeps/swe_interactive_baseline.yaml)
+is the bugs-only baseline: 30-minute sessions, 6 bugs every 4 minutes in one
+fixed order for every condition, the reply tool on, every model
+DeepSeek-V4.1-Flash, for the orchestrator alone, the orchestrator with
+background subagents (hinted), and a read-only orchestrator whose work all
+goes to subagents, on click and echo, 1 round (6 sessions). With the order
+fixed, a second round would only repeat the same sessions.
+
+`harbor.environment: modal` in a spec runs the task containers (the agent's
+sandbox and the separate verifier) in Modal sandboxes, built from the tasks'
+Dockerfiles on x86-64 machines, instead of the local Docker: no emulation, and
+sessions don't share one machine, so more run at once. The agent loop stays
+here and calls Sail. It needs the `modal` extra (`scripts/setup.sh` installs
+it) and a Modal token (`modal token new`); the sweep sets Modal's 2025.06 image
+builder, since the legacy one fails on images without pip (echo's).
+[`swe_interactive_baseline_modal.yaml`](configs/sweeps/swe_interactive_baseline_modal.yaml)
+is the baseline on Modal, and `swe_interactive_baseline_modal_smoke.yaml` a
+2-minute version of it for a quick check:
+
+```bash
+scripts/run_experiment.sh configs/sweeps/swe_interactive_baseline_modal_smoke.yaml --jobs-at-once 3
+scripts/run_experiment.sh configs/sweeps/swe_interactive_baseline_modal.yaml --jobs-at-once 3
+```
+
 ## Where data and figures land
 
 ```
