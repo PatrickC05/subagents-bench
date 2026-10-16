@@ -993,6 +993,7 @@ def test_sweep_questions_and_grade_answers(tmp_path, monkeypatch, capsys):
     graded = json.loads((trial / "agent" / "answers.json").read_text())
     assert graded["answers"] == {"2": {"correct": True, "verdict": "correct", "why": "w"},
                                  "6": {"correct": None, "verdict": None, "why": "unsure"}}
-    assert cli.main(["grade-answers", str(path)]) == 0 and "questions answered" not in capsys.readouterr().out  # kept
+    assert cli.main(["grade-answers", str(path)]) == 1  # #6's unread verdict is judged again (still unreadable)
+    assert "1 verdicts unreadable" in capsys.readouterr().out
     (trial / "result.json").unlink()
     assert cli.main(["grade-answers", str(path), "--force"]) == 0  # an unfinished trial is skipped
