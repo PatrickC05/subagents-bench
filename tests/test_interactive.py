@@ -27,6 +27,7 @@ from subagents_bench.interactive import InteractiveOrchestrator
 from subagents_bench.plots.__main__ import main as plot
 from subagents_bench.prompts import clock, interactive_note, interactive_prompt
 from subagents_bench.records import EpisodeRecorder
+from test_snapshots import collect_on_copy, init_repo, isolate_git
 
 FAST = {"interactive": {"wall_clock_sec": 4.0, "interval_sec": 0.5}, "budget": {"orchestrator_steps": 80}}
 
@@ -177,6 +178,54 @@ def test_deadline_records_hints_never_delivered(tmp_path):
     assert exit_reason == "deadline" and sec < 10
     assert [h["t_delivered"] is None for h in hints_in(r)] == [False, True, True]
     assert (r["episode"]["n_hints"], r["episode"]["n_hints_delivered"]) == (3, 1)
+    assert r["snapshots"] == [] and not (tmp_path / "ep" / "snapshots").exists()  # snapshots are off by default
+
+
+def test_session_with_snapshots_records_the_workspace(tmp_path, monkeypatch):
+    """interactive.snapshots: snapshot 0 at the start, one after the bash and edit_file calls (not
+    after wait), heartbeats during a long command; the last changed state's patch is the collect
+    hook's patch of the final workspace; nothing after the session ends."""
+    isolate_git(monkeypatch)
+    work = init_repo(tmp_path / "work", {"src/m0.py": b"a = 0\n", "README": b"r\n"})
+    script = [Reply("", [tc("bash", command="printf 'a = 1\\n' > src/m0.py")], latency=0.5),  # after snapshot 0
+              Reply("", [tc("edit_file", path="src/m1.py", old="", new="b = 1\n")]),
+              Reply("", [tc("bash", command="sleep 0.8")])]
+
+    def orch(system, messages, tools):
+        return script.pop(0) if script else Reply("", [tc("wait")])
+
+    exit_reason, r, _, _, _ = session(tmp_path, {ORCH: orch}, n_hints=2, topology="single",
+                                      interactive={"snapshots": True, "snapshot_every_sec": 0.25})
+    assert exit_reason == "idle"
+    s, ep = r["snapshots"], r["episode"]
+    assert [x["seq"] for x in s] == list(range(len(s))) and all(x["error"] is None for x in s), s
+    assert (s[0]["trigger"], s[0]["changed"], s[0]["bytes"]) == ("start", True, 0)
+    triggers = [x["trigger"] for x in s]
+    assert 2 <= triggers.count("tool") <= 4 and "heartbeat" in triggers  # 3 bash/edit calls, maybe coalesced
+    assert all(ep["session_t0"] <= x["t_request"] <= x["t_start"] <= x["t_end"] <= ep["t_end"] for x in s)
+    changed = [x for x in s if x["changed"]]
+    assert all(x["patch"] == f"snapshots/{x['seq']:04d}.patch" for x in changed)
+    assert all(x["patch"] is None for x in s if not x["changed"])
+    assert sorted(p.name for p in (tmp_path / "ep" / "snapshots").iterdir()) == [
+        f"{x['seq']:04d}.patch" for x in changed]
+    patch, tree = collect_on_copy(work, tmp_path / "copy")
+    assert (tmp_path / "ep" / changed[-1]["patch"]).read_bytes() == patch and changed[-1]["tree"] == tree
+    assert b"+a = 1" in patch and b"b/src/m1.py" in patch
+    assert s[-1]["tree"] == tree and not s[-1]["changed"]  # after the edit: the sleep changed nothing
+
+
+def test_snapshots_stop_with_the_deadline(tmp_path, monkeypatch):
+    isolate_git(monkeypatch)
+    init_repo(tmp_path / "work", {"src/m0.py": b"a = 0\n"})
+    scripts = {ORCH: [Reply("", [tc("bash", command="printf 'a = 1\\n' > src/m0.py; sleep 30")], latency=0.4)]}
+    exit_reason, r, _, _, sec = session(tmp_path, scripts, n_hints=2, topology="single",
+                                        interactive={"wall_clock_sec": 1.2, "snapshots": True,
+                                                     "snapshot_every_sec": 0.2})
+    assert exit_reason == "deadline" and sec < 10
+    s = r["snapshots"]
+    assert s[0]["trigger"] == "start" and {x["trigger"] for x in s[1:]} <= {"heartbeat", "tool"}
+    assert any(x["changed"] and x["seq"] > 0 for x in s)  # the heartbeats saw the running command's edit
+    assert all(x["t_end"] <= r["episode"]["t_end"] for x in s)
 
 
 def test_reply_without_tool_call_waits_and_finish_is_not_a_tool(tmp_path):

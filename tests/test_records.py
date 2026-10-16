@@ -95,3 +95,41 @@ def test_tool_exceptions_are_recorded_then_raised(tmp_path):
     first, second = records(rec.dir)["tools"]
     assert out.text == "ok" and (first["output_chars"], first["is_error"]) == (5000, False)
     assert second["is_error"] and second["name"] == "bash" and second["t_end"] >= second["t_start"]
+
+
+def test_tool_listeners_see_each_written_record_and_never_change_the_call(tmp_path):
+    """A listener runs in the tool's thread after its record is written, also when the tool raised;
+    a listener that raises is ignored (the result and the exception are the tool's own); a removed
+    listener sees nothing more."""
+    rec = recorder(tmp_path)
+    seen: list[tuple[str, int, str]] = []
+
+    def listener(record):  # the record is already written when the listener runs
+        seen.append((record["name"], len(rec.records["tools"]), threading.current_thread().name))
+
+    def broken(record):
+        raise RuntimeError("listener bug")
+
+    rec.add_tool_listener(broken)
+    rec.add_tool_listener(listener)
+    out = rec.tool(WHO, 1, "call-1", tc("bash", command="ls"), lambda: ToolOutput("ok", exit_code=0))
+    assert out.text == "ok" and not out.is_error
+
+    def stopped():
+        raise AgentStopped("stop")
+
+    with pytest.raises(AgentStopped):
+        rec.tool(WHO, 1, "call-1", tc("edit_file"), stopped)
+    me = threading.current_thread().name
+    assert seen == [("bash", 1, me), ("edit_file", 2, me)]
+    rec.remove_tool_listener(listener)
+    rec.remove_tool_listener(listener)  # twice: no harm
+    rec.tool(WHO, 2, "call-2", tc("read_file"), lambda: ToolOutput("x"))
+    assert len(seen) == 2 and [t["name"] for t in records(rec.dir)["tools"]] == ["bash", "edit_file", "read_file"]
+
+
+def test_snapshots_is_a_record_kind(tmp_path):
+    rec = recorder(tmp_path)
+    assert (rec.dir / "snapshots.jsonl").read_text() == "" and rec.records["snapshots"] == []
+    rec.write("snapshots", {"seq": 0, "changed": True})
+    assert records(rec.dir)["snapshots"][0]["seq"] == 0 and rec.records["snapshots"][0]["changed"] is True

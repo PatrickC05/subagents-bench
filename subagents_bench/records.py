@@ -3,6 +3,11 @@
 The recorder is thread-safe. ``finalize`` computes every episode total from the records
 written (so totals equal the JSONL sums) and closes the episode: later records (a thread
 still unwinding after harbor's cancel) are dropped and counted in ``dropped``.
+
+Tool listeners (``add_tool_listener``) see every ``tools`` record written by :meth:`EpisodeRecorder.tool`
+right after it is written, in the agent's thread: the workspace snapshots
+(:mod:`subagents_bench.snapshots`) are triggered this way. A listener must return at once; what it
+raises is swallowed, so it never changes the tool call.
 """
 
 from __future__ import annotations
@@ -23,7 +28,8 @@ from .llm import BillingError, LLMError, LLMResponse, Message, ProviderError, To
 from .tools import ToolOutput
 
 ROLES = ("orchestrator", "subagent", "arbiter", "debate")
-KINDS = ("calls", "tools", "steps", "spawns", "dispatches", "arbitrations", "inbox", "replies", "transcript")
+KINDS = ("calls", "tools", "steps", "spawns", "dispatches", "arbitrations", "inbox", "replies", "snapshots",
+         "transcript")
 POLL_SEC = 0.2
 ARG_CHARS = 2000  # per string argument of a tool call in its record (the transcript has them whole)
 
@@ -100,6 +106,7 @@ class EpisodeRecorder:
         self.finalized = False
         self._lock = threading.Lock()
         self._counters: dict[str, int] = {}
+        self._tool_listeners: list[Callable[[dict[str, Any]], None]] = []
         subagents = config.topology == "subagents"
         self.episode: dict[str, Any] = {
             "episode_id": self.episode_id,
@@ -135,6 +142,16 @@ class EpisodeRecorder:
                 f.write(line + "\n")
             if kind != "transcript":
                 self.records[kind].append(json.loads(line))
+
+    def add_tool_listener(self, fn: Callable[[dict[str, Any]], None]) -> None:
+        """Call ``fn(record)`` after each ``tools`` record :meth:`tool` writes (in the agent's thread)."""
+        with self._lock:
+            self._tool_listeners.append(fn)
+
+    def remove_tool_listener(self, fn: Callable[[dict[str, Any]], None]) -> None:
+        with self._lock:
+            if fn in self._tool_listeners:
+                self._tool_listeners.remove(fn)
 
     def fail(self, e: LLMError) -> None:
         """Provider fail-fast: remember the first failure and stop the episode."""
@@ -180,7 +197,8 @@ class EpisodeRecorder:
         return r, call_id
 
     def tool(self, who: Who, step: int, call_id: str, tc: ToolCall, run: Callable[[], ToolOutput]) -> ToolOutput:
-        """One recorded tool call; an exception (e.g. AgentStopped) is recorded, then re-raised."""
+        """One recorded tool call; an exception (e.g. AgentStopped) is recorded, then re-raised.
+        The tool listeners see the record either way."""
         t0 = time.time()
         try:
             out = run()
@@ -188,12 +206,20 @@ class EpisodeRecorder:
             out = ToolOutput(f"[{type(e).__name__}: {e}]", is_error=True)
             raise
         finally:
-            self.write("tools", {
+            record = {
                 **who.fields(), "step": step, "call_id": call_id, "name": tc.name, "t_start": t0, "t_end": time.time(),
                 "exit_code": out.exit_code, "timed_out": out.timed_out, "is_error": out.is_error,
                 "output_chars": out.output_chars or len(out.text), "tool_call_id": tc.id,
                 "arguments": clip_arguments(tc.arguments),
-            })
+            }
+            self.write("tools", record)
+            with self._lock:
+                listeners = list(self._tool_listeners)
+            for fn in listeners:
+                try:
+                    fn(record)
+                except Exception:  # a listener never changes the tool call
+                    pass
         return out
 
     def finalize(self, exit_reason: str, error: str | None = None) -> dict[str, Any]:

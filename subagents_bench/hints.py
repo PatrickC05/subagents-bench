@@ -144,7 +144,8 @@ def schedule(cfg: InteractiveConfig, task_dir: str | Path, task_name: str, hints
              round_: int | None = None) -> list[Hint]:
     """The episode's messages in sending order: the ordered subtasks, as many as fit (and
     ``max_hints``), sent every ``interval_sec``; with ``replies``, the questions and status checks
-    between them and an id per message."""
+    between them and an id per message. A status check's text is the ids of the bugs sent before it
+    (``#1, #2, #4``), which ``prompts.request_text`` puts in its message."""
     seed = order_seed(cfg, round_)
     subtasks = ordered(load_subtasks(task_dir), task_name, seed)
     n = min(len(subtasks), n_slots(cfg), cfg.max_hints or len(subtasks))
@@ -169,7 +170,11 @@ def schedule(cfg: InteractiveConfig, task_dir: str | Path, task_name: str, hints
         extra += [Hint(j, t, None, "", kind="status") for j, t in enumerate(c for c in checks if c < cfg.wall_clock_sec)]
     kinds = {"bug": 0, "status": 1, "question": 2}  # at the same time: the bug first
     out = sorted(out + extra, key=lambda h: (h.t_offset, kinds[h.kind], h.index))
-    return [dataclasses.replace(h, msg_id=i + 1) for i, h in enumerate(out)]
+    out = [dataclasses.replace(h, msg_id=i + 1) for i, h in enumerate(out)]
+    # a status check's text: the ids of the bugs sent before it ("#1, #2, #4"), whatever happened to them
+    return [dataclasses.replace(h, text=", ".join(f"#{b.msg_id}" for b in out if b.kind == "bug"
+                                                  and b.t_offset < h.t_offset)) if h.kind == "status" else h
+            for h in out]
 
 
 def reports_path(hints_dir: str | Path, task_name: str) -> Path:
