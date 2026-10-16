@@ -141,12 +141,13 @@ the subagents still running, dispatch budget left).
 | `arbitration_id`, `candidate_index` | the arbitration and the 0-based candidate (arbiter only) |
 | `instruction_index` | 0-based position of its instruction in the spawn call |
 | `instruction` | its instruction, cut to 4000 characters |
-| `status` | `submitted` (called `submit`), `no_tool_call` (answered without a tool; the text is the report), `max_steps`, `error` (a provider or harness failure), `cancelled` (the episode stopped) |
+| `status` | `submitted` (called `submit`), `no_tool_call` (answered without a tool; the text is the report), `max_steps`, `error` (a provider or harness failure), `cancelled` (the episode stopped), `stopped` (the orchestrator's `stop_subagents`, `subagent.stop_tool`; a helper stops with its parent) |
 | `steps_used` | LLM steps taken |
 | `t_start`, `t_end` | the run |
 | `report_chars` | length of the report returned (`submit` argument, else its last text, else a status note) |
 | `files_modified` | files under its start dir newer than a marker made when it started (harness state excluded), sorted, at most 200; empty for easy scope and when the episode stopped. Parallel subagents share the workdir, so each list includes its siblings' changes; arbiter candidates list paths in their private copy |
 | `error` | the failure (`<ErrorClass>: ...` or a traceback tail) for status `error`, else null |
+| `t_stop_requested` | when `stop_subagents` asked this subagent to stop (it stops before its next LLM or tool call); null otherwise (absent in records written before it existed) |
 
 ### `arbitrations.jsonl`: one arbitrated instruction
 
@@ -188,17 +189,18 @@ never delivered (the session ended first), written when the episode ends.
 
 | Field | Meaning |
 |---|---|
-| `kind` | `hint` (a bug), `question`, `status` (a status check) or `report` |
+| `kind` | `hint` (a bug), `question`, `status` (a status check), `cancel` or `undo` (a change of plan about an earlier bug, `interactive.change_of_plan`) or `report` |
 | `t_ready` | a message: when it was sent (a bug: session start + `hint_index` x `interval_sec`; questions and status checks: docs/DESIGN.md, *Requests*); a report: when its subagent ended |
 | `t_delivered` | when it entered the orchestrator's conversation (before a step's LLM call, never after the last step); null if never delivered |
 | `step` | the orchestrator step whose LLM call saw it first (1 for hint 0, in the first message); null if never delivered |
 | `hint_index` | a message's 0-based position among the messages of its kind (bugs, questions, status checks); null for a report |
-| `subtask_id`, `target_files`, `f2p` | a bug's SWE-sweep subtask: id, the files the reference fix changes, the hidden tests that fail before it (null otherwise) |
+| `subtask_id`, `target_files`, `f2p` | a bug's SWE-sweep subtask: id, the files the reference fix changes, the hidden tests that fail before it (a cancel or undo: its bug's; null otherwise) |
 | `dispatch_id`, `agent_id`, `status` | a report's subagent and its dispatch status (null for a hint) |
 | `chars` | length of the hint or question text (0 for a status check) or of the full report |
 | `msg_id` | with `interactive.replies`: the message's id (1, 2, ... in sending order; what `reply` names); else null, and null for a report |
 | `urgent` | a bug marked urgent (`urgent_every`); false otherwise (absent in records written before it existed) |
 | `question_id`, `question`, `reference` | a question's id in `questions.json`, its text and the reference answer; null otherwise |
+| `target_msg_id` | a cancel or undo: the `msg_id` of the bug it takes back; null otherwise (absent in records written before it existed) |
 
 ### `replies.jsonl`: one `reply` call (interactive episodes with `interactive.replies`)
 
@@ -210,7 +212,7 @@ written; a rejected call is an errored tool record. Empty otherwise.
 | `t` | when it was sent: the time the user got it |
 | `step` | the orchestrator step |
 | `to` | the `msg_id` it answers (the call may name it `3`, `3.0`, `"3"` or `"#3"`; a string of 10 or more digits is rejected) |
-| `kind`, `hint_index` | that message's kind (`bug`, `question`, `status`: note `bug`, where the inbox says `hint`) and position |
+| `kind`, `hint_index` | that message's kind (`bug`, `question`, `status`, `cancel`, `undo`: note `bug`, where the inbox says `hint`) and position |
 | `subtask_id`, `question_id` | that message's subtask (a bug) or question, else null |
 | `text` | the message to the user |
 | `eta_min` | minutes from now until the bug is fixed, as a float (a numeric string is read); null when not given or not a number in [0, 10^6), in which case the tool result told the agent it was ignored |
@@ -504,18 +506,23 @@ message's kind are filled only for that kind.
 | Columns | Meaning |
 |---|---|
 | keys, `valid` | the trial |
-| `msg_id`, `kind`, `index` | the message's id, `bug`, `question` or `status`, and its position among its kind |
+| `msg_id`, `kind`, `index` | the message's id, `bug`, `question`, `status`, `cancel` or `undo`, and its position among its kind |
 | `urgent` | a bug marked urgent |
 | `t_ready_sec`, `delivery_sec` | when it was sent after the session start; until it entered the conversation |
 | `n_replies` | replies naming its id |
-| `reply_sec` | a bug: until the agent first acknowledged it, the first orchestrator turn after its delivery whose text, reasoning or tool calls name it (`#N`, request/bug N, or one of its tests), or a reply to it if earlier; a question: until the first reply naming it (the answer); a status check: until the first reply of any kind sent at or after its delivery (empty if never delivered) |
-| `user_reply_sec` | a bug: until the first reply to it the user saw |
+| `reply_sec` | a bug: until the agent first acknowledged it, the first orchestrator turn after its delivery whose text, reasoning or tool calls name it (`#N`, request/bug N, or one of its tests), or a reply to it if earlier; a cancel or undo: the same, named by its own id only; a question: until the first reply naming it (the answer); a status check: until the first reply of any kind sent at or after its delivery (empty if never delivered) |
+| `user_reply_sec` | a bug, cancel or undo: until the first reply to it the user saw |
+| `target_msg_id`, `honoured` | a cancel or undo: the bug it takes back (its `subtask_id` is that bug's), and whether the grader's verdict shows it taken back: the bug's hidden tests fail at the end with the visible suite passing (empty without a verdict) |
+| `target_done_before` | a cancel or undo: the bug was said done (a `done` reply) before the change was sent |
+| `last_touch_sec`, `last_edit_sec` | a cancel or undo: until the last tool call of any agent that touched (edited) the bug's target files (hints.csv's matching), reverting included; empty if none after it was sent |
+| `n_working`, `working_end_sec`, `working_stopped`, `stop_sec` | a cancel or undo: the subagents working on the bug when the change was delivered (started after the bug was sent, their instruction naming its files or tests, still running), until the last of them ended, whether one ended `stopped`, and until `stop_subagents` first asked one of them to stop (empty without such subagents) |
+| `changed_by` | a bug: the `msg_id` of the cancel or undo that took it back, else empty (its `fixed` then counts against the change) |
 | `question_id`, `question`, `reference`, `answer` | a question, its reference answer, and the text of its first reply |
 | `correct` | the judge's verdict on that first reply (`answers.json`); empty when never answered, and when answered but not graded (or the verdict was unreadable) |
 | `subtask_id`, `fixed` | a bug's subtask and whether the grader counts it fixed (resolved, no visible regression; false without a verdict in a valid trial, empty in an invalid one) |
 | `eta_sec`, `eta_min` | the first estimate: the first reply with `eta_min` sent before the done reply (not the done reply itself), and the estimate in minutes; it predicts done at `eta_sec + 60 x eta_min` |
 | `n_estimates` | such replies (with `eta_min`, before the done reply), the first included |
-| `done_sec` | the first reply with `done` |
+| `done_sec` | the first reply with `done` (a bug, cancel or undo) |
 | `eta_log2_err` | log2(actual / predicted time from the estimate to done), each floored at 30 s; > 0 late. A bug estimated and never said done: `inf` when the session ran past the predicted time or ended for another reason than its deadline (`exit_reason` not `deadline` or `cancelled`: the agent stopped, so it gave the bug up); empty when the deadline came first (censored). Empty without an estimate |
 | `eta_total_log2_err` | the same prediction scored from when the bug was sent: log2(`done_sec` / (`eta_sec` + 60 x `eta_min`)), each floored at 30 s; a late estimate's short horizon makes `eta_log2_err` a ratio of a small part of the wait, this one is of the whole wait. `inf` and empty where `eta_log2_err` is |
 | `on_time` | done by the predicted time; false where `eta_log2_err` is `inf`; empty where it is empty |
@@ -548,6 +555,7 @@ message's kind are filled only for that kind.
 | `on_time_frac` | the share on time of the bugs with a known `on_time` (never-done ones counting as late) |
 | `n_status`, `status_reply_median_sec` | status checks sent, and the censored median of their `reply_sec` |
 | `n_urgent`, `urgent_first_frac` | urgent bugs, and the mean `urgent_first` over those with an open earlier bug |
+| `n_changes`, `change_honoured_frac`, `change_reply_median_sec` | cancels and undos sent, the share `honoured`, and the censored median of their `reply_sec` |
 
 ### Levels tables
 

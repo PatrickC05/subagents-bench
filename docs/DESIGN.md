@@ -359,6 +359,25 @@ with message ids and `reply`); without `replies` nothing changes (no ids, the
 earlier texts). With `end_when_idle` the session can end only after the last
 message of any kind was sent.
 
+**Change of plan.** `change_of_plan` (a list of `{kind, bug, at_sec}`, needs
+`replies`) adds messages that take back an earlier bug (0-based `bug`, sent
+before `at_sec`): `cancel`, `Request #5: forget request #4: that behaviour is
+intended. Leave that code as it was before you started (undo any change you
+made for it).`, for a bug likely still in progress, and `undo`, `Request #7:
+please undo your fix for #1: we need the old behaviour after all.`, for one
+likely fixed. They get ids like the others (at the same time as a bug, after
+it), and the "Replying to the user" section gains one bullet, only in
+conditions that send them: do what it asks and reply with `done: true` once
+the code is as the user wants it. The grader needs nothing new: a change is
+honoured when its bug's hidden tests fail at the end and the visible suite
+passes. How fast the work on the bug stopped is read off the records (the
+last tool call touching its files, how long the subagents working on it kept
+running). `subagent.stop_tool` gives a background orchestrator
+`stop_subagents(agent_ids)`: each named subagent that is still running stops
+before its next LLM or tool call (a command or call in progress finishes
+first), its helpers with it, its dispatch ends `stopped`, and its report is
+delivered as usual; without it, background subagents cannot be stopped.
+
 **The sweep.** `swe_interactive_requests.yaml` runs 30-minute sessions (6
 bugs every 4 minutes, the last at 20:00, then 10 minutes; harbor's timeout
 0.05 x 43200 s = 2160 s: the 1800 s session, preflight's 120 s grace, and
