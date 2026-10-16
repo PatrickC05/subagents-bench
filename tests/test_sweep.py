@@ -285,7 +285,8 @@ def test_swe_interactive_baseline_spec():
     """Baseline: the requests sweep's three request conditions (single, background manager, hinted
     background) with only the bugs (reply tool on; no questions, status checks or urgent bug), on
     click and echo, with one fixed bug order for every round and condition: the requests sweep's
-    round 1 order. Every model is the orchestrator's (subagent.model: null)."""
+    round 1 order. Every model is the orchestrator's (subagent.model: null), and subagents have no practical
+    limit on how many run at once or how many steps each takes."""
     from subagents_bench.hints import schedule
     s, req = (sweep.load_spec(REPO / f"configs/sweeps/{n}.yaml") for n in ("swe_interactive_baseline", "swe_interactive_requests"))
     assert (s.tasks, s.rounds, len(sweep.plan(s))) == (["swe-sweep__click", "swe-sweep__echo"], 2, 6)
@@ -300,6 +301,8 @@ def test_swe_interactive_baseline_spec():
         for k, v in {"questions_per_interval": (0, 2), "status_every": (0, 2), "urgent_every": (0, 3)}.items():
             assert (d["interactive"].pop(k), t["interactive"].pop(k)) == v, k
         assert d["subagent"].pop("model") is None and t["subagent"].pop("model")["model"] == "nvidia/Gemma-4-31B-IT-NVFP4"
+        assert (d["subagent"].pop("max_concurrent"), t["subagent"].pop("max_concurrent")) == (60, 3)
+        assert (d["subagent"].pop("max_steps"), t["subagent"].pop("max_steps")) == (2000, 20)
         assert s.configs[cond].subagent_model == s.configs[cond].orchestrator  # all DeepSeek-V4.1-Flash
         assert {**d, "name": twin} == t, cond
         i = s.configs[cond].interactive

@@ -45,9 +45,11 @@ overrides:
     command_timeout_sec: 600
     max_command_timeout_sec: 1800
   subagent:
+    # No practical limit on subagents: as many at once as the dispatch budget, and a step cap that
+    # only guards against a runaway (the session's deadline ends every subagent).
     max_dispatches: 60
-    max_concurrent: 3
-    max_steps: 20
+    max_concurrent: 60
+    max_steps: 2000
     model: null                      # every model is DeepSeek-V4.1-Flash: subagents run the orchestrator's
 
 harbor:
