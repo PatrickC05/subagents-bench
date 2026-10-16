@@ -2,6 +2,8 @@
 # A 30-minute session: a bug every 4 minutes (6, the last at 20:00), then 10 minutes to finish. No
 # questions, status checks or urgent bug; the reply tool is on, so the user sees only `reply` calls
 # and every bug gets an answer time. swe_interactive_requests.yaml's session with the requests off.
+# Every model is DeepSeek-V4.1-Flash (subagent.model: null): the subagents run the orchestrator's
+# model, so the conditions differ only in who does the work.
 # Metrics kept, per condition: answer time (the first reply to each bug, messages.csv reply_sec),
 # requested bugs fixed, and cost per session.
 # The bug order is fixed (order_seed 0, vary_order_by_round false), so every condition and every
@@ -46,9 +48,7 @@ overrides:
     max_dispatches: 60
     max_concurrent: 3
     max_steps: 20
-    model:
-      max_retries: 8
-      retry_budget_sec: 300
+    model: null                      # every model is DeepSeek-V4.1-Flash: subagents run the orchestrator's
 
 harbor:
   n_concurrent: 3
