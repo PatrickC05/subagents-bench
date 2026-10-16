@@ -495,6 +495,33 @@ and echo, 12 jobs at once, gave 24 of 24 sessions valid.
   0.084 s while a snapshot ran and 0.100 s otherwise.
 - `require_eta` refused 11 of 63 `reply` calls.
 
+**More tasks.** With click and echo alone, each condition gets one session
+per repository.
+[`swe_interactive_levels_more.yaml`](configs/sweeps/swe_interactive_levels_more.yaml)
+runs the same 24 conditions on four more tasks (24 jobs, 96 sessions; its
+jobs pool with this sweep's for 6 sessions per condition): dateutil
+(Python, 10 bugs), gin (Go, 11), dayjs (JavaScript, 11) and luxon
+(JavaScript, 14). They were picked from 13 candidates (2026-10-16). Harbor's
+oracle on Modal solved every bug of all 13 with no regression; images built
+in 0.5-2 min. The picks grade fastest among those whose first 6 bugs (the
+ones sent) name files that exist in the image: the oracle's verifier took
+11, 24, 30 and 40 s with warm images. pendulum, pint and svgo name missing
+files; mpmath, gorm, networkx, goawk and isort grade in 57-111 s. The
+2-minute smoke
+([`swe_interactive_levels_more_smoke.yaml`](configs/sweeps/swe_interactive_levels_more_smoke.yaml),
+`single_questions` and `manager_available_questions`) gave 8 of 8 sessions
+valid. `fix-times` replayed them in 38 s, and every final state matched the
+verifier. One replayed state with 4 bugs sent took 4-6 s (dateutil), 5-9 s
+(gin), 8-15 s (dayjs) and 11-16 s (luxon).
+
+```bash
+.venv/bin/subagents-bench questions configs/sweeps/swe_interactive_levels_more.yaml
+scripts/run_experiment.sh configs/sweeps/swe_interactive_levels_more.yaml --jobs-at-once 24
+.venv/bin/subagents-bench fix-times configs/sweeps/swe_interactive_levels_more.yaml
+.venv/bin/subagents-bench grade-answers configs/sweeps/swe_interactive_levels_more.yaml
+scripts/analyze.sh jobs/swe_interactive_levels jobs/swe_interactive_levels_more
+```
+
 Design, definitions and where the analysis departs from the plan in PR
 #13: docs/DESIGN.md, *Requests*; files and columns: docs/DATA.md.
 
