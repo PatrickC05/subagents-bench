@@ -5,7 +5,10 @@ bug, how the agent's estimates compare with when it said the bug was done.
 All times are seconds after the message was sent (``t_ready``). The user reads only ``reply``
 calls, so:
 
-- ``reply_sec``: until the first reply to the message (a question's answer; a bug's first reply);
+- ``reply_sec``: a question: until its first reply (the answer). A bug: until the agent first
+  acknowledged it, the first orchestrator turn after the bug reached it whose text, reasoning or
+  tool calls name it (``#N``, request/bug N, or one of its tests), or a reply to it if that came
+  first; ``user_reply_sec`` is until the first reply the user saw;
 - a question's ``correct``: the judge's verdict on that first reply against the reference answer
   (``subagents-bench grade-answers`` writes ``agent/answers.json``; None until it ran and for a
   question never answered: the table reports accuracy over answered and over asked questions);
@@ -28,6 +31,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from typing import Any
 
 import numpy as np
@@ -42,6 +46,25 @@ def _answers(t: Trial) -> dict[str, dict]:
         return json.loads((t.dir / "agent" / "answers.json").read_text()).get("answers") or {}
     except (OSError, ValueError, AttributeError):
         return {}
+
+
+def _acks(t: Trial, bugs: list[dict]) -> dict[int, float]:
+    """msg_id -> time of the first orchestrator turn after the bug's delivery that names it."""
+    path = t.dir / "agent" / "transcript.jsonl"
+    if not bugs or not path.is_file():
+        return {}
+    turns = []
+    for line in path.read_text().splitlines():
+        x = json.loads(line)
+        if x.get("agent_id") == "orchestrator" and x.get("msg_role") == "assistant":
+            turns.append((x["t"], json.dumps([x.get("content"), x.get("reasoning"), x.get("tool_calls")])))
+    out = {}
+    for m in bugs:
+        n, tests = m["msg_id"], [f.split("::")[-1] for f in m.get("f2p") or []]
+        pat = re.compile(rf"#\s?{n}\b|\b(?:request|bug)\s+#?{n}\b", re.I)
+        out[n] = next((tt for tt, blob in turns if m["t_delivered"] is not None and tt > m["t_delivered"]
+                       and (pat.search(blob) or any(x in blob for x in tests))), None)
+    return out
 
 
 def request_rows(t: Trial, keys: dict[str, Any], valid: bool) -> list[dict[str, Any]]:
@@ -64,6 +87,7 @@ def request_rows(t: Trial, keys: dict[str, Any], valid: bool) -> list[dict[str, 
         by_msg.setdefault(x["to"], []).append(x)
     done_at = {m["msg_id"]: next((x["t"] for x in by_msg.get(m["msg_id"], []) if x["done"]), None)
                for m in inbox if m["kind"] == "hint"}
+    acks = _acks(t, [m for m in inbox if m["kind"] == "hint"])
     rows = []
     for m in inbox:
         t0, mine = m["t_ready"], by_msg.get(m["msg_id"], [])
@@ -88,6 +112,9 @@ def request_rows(t: Trial, keys: dict[str, Any], valid: bool) -> list[dict[str, 
             eta = ahead[0] if ahead else None
             v = verdicts.get(m["subtask_id"])
             fixed = (bool(v.get("resolved")) and bool(visible_ok)) if v else (False if valid else None)
+            seen = [x for x in (acks.get(m["msg_id"]), mine[0]["t"] if mine else None) if x is not None]
+            row["user_reply_sec"] = row["reply_sec"]
+            row["reply_sec"] = min(seen) - t0 if seen else None
             row.update(subtask_id=m["subtask_id"], eta_sec=eta["t"] - t0 if eta else None,
                        eta_min=eta["eta_min"] if eta else None, done_sec=done - t0 if done else None,
                        n_estimates=len(ahead), fixed=fixed,
@@ -157,6 +184,7 @@ def request_table(rows: pd.DataFrame) -> pd.DataFrame:
                "correct_of_asked": _correct_of_asked(q),
                "n_bugs": len(b), "fixed_frac": _frac(b["fixed"]) if "fixed" in b else math.nan,
                "first_reply_median_sec": _median_censored(later["reply_sec"]),
+               "user_reply_median_sec": _median_censored(later["user_reply_sec"]) if "user_reply_sec" in b else math.nan,
                "eta_given_frac": _frac(b["eta_sec"].notna()) if "eta_sec" in b else math.nan,
                "eta_median_sec": _median_censored(later["eta_sec"]) if "eta_sec" in b else math.nan,
                "eta_min_median": float(b["eta_min"].median()) if "eta_min" in b and b["eta_min"].notna().any() else math.nan,
