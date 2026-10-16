@@ -1,0 +1,21 @@
+# A 2-minute smoke of swe_interactive_interrupt.yaml on Modal, in swe_interactive_levels_smoke.yaml's
+# pattern: a bug every 30 s (4 bugs), at L2 a status check at 0:45 and 1:45 and 2 questions after each
+# bug (+10 s, +20 s; 8 per session). Its 6 conditions on click and echo, 1 round = 6 jobs, 12 sessions.
+# It checks that calls are interrupted and made again with the message, that the records and the
+# analysis take them, and that the sessions stay valid:
+#   mkdir -p jobs/swe_interactive_interrupt_smoke/hints
+#   cp ../sb-levels/jobs/swe_interactive_levels_smoke/hints/*.questions.json jobs/swe_interactive_interrupt_smoke/hints/
+#   scripts/run_experiment.sh configs/sweeps/swe_interactive_interrupt_smoke.yaml --jobs-at-once 6
+#   scripts/analyze.sh jobs/swe_interactive_interrupt_smoke
+extends: configs/sweeps/swe_interactive_interrupt.yaml
+name: swe_interactive_interrupt_smoke
+rounds: 1
+
+overrides:
+  interactive:
+    wall_clock_sec: 120
+    interval_sec: 30
+
+harbor:
+  # x the tasks' 43200 s agent timeout = 432 s, as in swe_interactive_levels_smoke.yaml.
+  agent_timeout_multiplier: 0.01
