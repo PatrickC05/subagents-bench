@@ -57,6 +57,17 @@ def req_cfg(**interactive):
     ({"urgent_every": 3, "replies": False}, r"questions, status checks and urgent bugs come with message ids"),
     ({"replies": "yes"}, r"replies: expected true or false, got 'yes'"),
     ({"replies": 1}, r"replies: expected true or false"),
+    ({"require_eta": True}, r"require_eta: it is a rule for `reply` to a bug: set replies: true"),
+    ({"require_eta": True, "replies": False}, r"require_eta: .*set replies: true"),
+    ({"require_eta": 1, "replies": True}, r"require_eta: expected true or false, got 1"),
+    ({"snapshots": "yes"}, r"snapshots: expected true or false, got 'yes'"),
+    ({"snapshots": None}, r"snapshots: expected true or false"),
+    ({"snapshots": True, "snapshot_every_sec": 0}, r"snapshot_every_sec: expected a positive number, got 0"),
+    ({"snapshot_every_sec": -1.5}, r"snapshot_every_sec: expected a positive number"),
+    ({"snapshot_every_sec": True}, r"snapshot_every_sec: expected a positive number, got True"),
+    ({"snapshot_every_sec": "15"}, r"snapshot_every_sec: expected a positive number, got '15'"),
+    ({"snapshot_every_sec": float("nan")}, r"snapshot_every_sec: expected a positive number, got nan"),
+    ({"snapshot_every_sec": float("inf")}, r"snapshot_every_sec: expected a positive number, got inf"),
 ])
 def test_bad_request_configs(over, msg):
     with pytest.raises(ConfigError, match=msg):
@@ -69,6 +80,10 @@ def test_request_config_defaults_and_round_trip():
     cfg = make_config(interactive=REQ)
     assert {k: cfg.to_dict()["interactive"][k] for k in REQ} == REQ
     assert make_config(interactive={"replies": True}).interactive.replies is True  # replies alone: bugs with ids
+    assert (i.require_eta, i.snapshots, i.snapshot_every_sec) == (False, False, 15.0)
+    levels = {"replies": True, "require_eta": True, "snapshots": True, "snapshot_every_sec": 5}
+    assert {k: make_config(interactive=levels).to_dict()["interactive"][k] for k in levels} == levels
+    assert make_config(interactive={"snapshots": True}).interactive.snapshots is True  # no replies needed
 
 
 def test_urgent_without_replies_is_rejected():
@@ -101,7 +116,10 @@ def test_schedule_interleaves_questions_and_status_checks(tmp_path):
     assert [h.index for h in by["status"]] == [0, 1, 2]
     assert [h.urgent for h in by["bug"]] == [False, False, False, True, False, False]
     assert not any(h.urgent for h in by["question"] + by["status"])
-    assert all(h.subtask is None and h.question is None and h.text == "" for h in by["status"])
+    assert all(h.subtask is None and h.question is None for h in by["status"])
+    # each check names the bugs sent before it (by id), whatever was fixed or said done
+    assert [(h.msg_id, h.text) for h in by["status"]] == [(6, "#1, #4"), (13, "#1, #4, #8, #11"),
+                                                          (20, "#1, #4, #8, #11, #15, #18")]
     qs = [h.question for h in by["question"]]
     assert len({q.id for q in qs}) == 12 and all(h.subtask is None and h.text == h.question.question for h in by["question"])
     assert all(h.subtask is not None and h.question is None for h in by["bug"])
@@ -137,6 +155,28 @@ def test_schedule_ties_wall_clock_and_question_pool(tmp_path):
     assert [(h.kind, h.msg_id) for h in plain] == [("bug", k + 1) for k in range(4)]
     status = schedule(req_cfg(questions_per_interval=0, status_every=3), task, "task-1", None)
     assert [h.kind for h in status] == ["bug", "bug", "bug", "status", "bug"] and status[3].t_offset == 600
+    assert status[3].text == "#1, #2, #3" and [h.text for h in sched if h.kind == "status"] == ["#1", "#1, #4"]
+
+
+def test_status_checks_name_the_bugs_sent_so_far(tmp_path):
+    """The levels sweep's L1 stream (status_every 2, no questions): ids 1 b@0, 2 b@240, 3 s@360,
+    4 b@480, 5 b@720, 6 s@840, 7 b@960, 8 b@1200, 9 s@1320; each check lists every bug before it,
+    and the message names them."""
+    sched = schedule(req_cfg(questions_per_interval=0, urgent_every=0), make_task(tmp_path, 8), "task-1", None)
+    assert [(h.msg_id, h.kind[0], h.t_offset) for h in sched] == [
+        (1, "b", 0), (2, "b", 240), (3, "s", 360), (4, "b", 480), (5, "b", 720), (6, "s", 840), (7, "b", 960),
+        (8, "b", 1200), (9, "s", 1320)]
+    assert [h.text for h in sched if h.kind == "status"] == ["#1, #2", "#1, #2, #4, #5", "#1, #2, #4, #5, #7, #8"]
+    s = sched[5]
+    assert request_text(s.kind, s.msg_id, s.text, s.urgent) == (
+        "Status check #6: how long until each of your bug requests so far (#1, #2, #4, #5) is fixed? Reply to each "
+        "one's own id with eta_min, or with done: true if it is fixed.")
+    # the same stream with the questions (L2): the ids shift, the bugs named stay the same
+    write_questions(tmp_path / "hints", "task-1", ORCH, questions(12))
+    l2 = schedule(req_cfg(urgent_every=0), make_task(tmp_path / "b", 8), "task-1", tmp_path / "hints")
+    bug_ids = {h.msg_id: h.index for h in l2 if h.kind == "bug"}
+    assert [[bug_ids[int(x)] for x in h.text.replace("#", "").split(", ")] for h in l2 if h.kind == "status"] == [
+        [0, 1], [0, 1, 2, 3], [0, 1, 2, 3, 4, 5]]
 
 
 def test_schedule_without_replies_is_unchanged(tmp_path):
@@ -155,7 +195,9 @@ def test_request_texts():
     assert request_text("bug", 4, "B.") == "Request #4: another bug, while you keep working on the earlier ones.\n\nHint: B."
     assert request_text("bug", 7, "B.", urgent=True).startswith("Request #7: another bug, and this one is urgent")
     assert request_text("question", 2, "What is x?") == "Question #2: What is x?"
-    assert request_text("status", 5, "").startswith("Status check #5: how long until each of your open bug requests")
+    assert request_text("status", 6, "#1, #2, #4, #5") == (
+        "Status check #6: how long until each of your bug requests so far (#1, #2, #4, #5) is fixed? Reply to each "
+        "one's own id with eta_min, or with done: true if it is fixed.")
     with_replies = interactive_prompt(make_config(interactive=REQ), "/w")
     assert "## Replying to the user" in with_replies and "- `reply`: send a message to the user" in with_replies
     assert "Your first reply to a question is taken as your answer" in with_replies
@@ -320,6 +362,60 @@ def test_reply_notes_only_a_questions_first_reply_as_its_answer(tmp_path):
                        "[sent to the user, re #2]", "[sent to the user, re #1]", "[sent to the user, re #2]"]
     assert [(x["to"], x["text"]) for x in r["replies"]] == [(2, "Answer."), (2, "More."), (1, "On it."),
                                                             (2, "Even more.")]
+
+
+NEEDS_ETA = ("[error] a reply to a bug (#{n}) needs eta_min (your estimate, in minutes from now, of when it will be "
+             "fixed) or done: true; nothing was sent")
+
+
+def test_require_eta_refuses_bug_replies_without_an_estimate_or_done(tmp_path):
+    """With require_eta: a reply to a bug without a usable eta_min and without done: true is an
+    error and is not sent (no record, no answer); replies to status checks and questions are not
+    affected; the system prompt and the tools are the same. Stream: bugs #1 and #4, status checks #2
+    (naming #1) and #5 (naming #1, #4), questions #3 and #6."""
+    state = {"first": True}
+
+    def orch(system, messages, tools):
+        if state["first"]:
+            state["first"] = False
+            return Reply("", [tc("reply", to=1, text="On it."), tc("reply", to=1, text="Soon.", eta_min="soon"),
+                              tc("reply", to=1, text="No.", done=False), tc("reply", to=1, text="?", done="maybe"),
+                              tc("reply", to=1, text="Neg.", eta_min=-3), tc("reply", to=1, text="Five.", eta_min=5),
+                              tc("reply", to=1, text="Done.", done=True, eta_min="soon"),
+                              tc("reply", to="#1", text="Zero.", eta_min=0)])
+        last, calls = messages[-1], []
+        if last.role == "user":
+            for i in re.findall(r"(?:Status check|Question) #(\d+):", last.content):
+                calls.append(tc("reply", to=int(i), text=f"Re #{i}."))
+            for i in re.findall(r"Request #(\d+):", last.content):
+                calls += [tc("reply", to=int(i), text="Looking."), tc("reply", to=int(i), text="Fixed.", done="yes")]
+        return Reply("", calls or [tc("wait")])
+
+    exit_reason, r, f, hints = req_session(tmp_path, {ORCH: orch}, interactive={"require_eta": True, "status_every": 1})
+    assert exit_reason == "idle"
+    assert [(h.msg_id, h.kind, h.text) for h in hints if h.kind == "status"] == [(2, "status", "#1"),
+                                                                                (5, "status", "#1, #4")]
+    users = "\n".join(m["content"] for m in r["transcript"] if m["role"] == "orchestrator" and m["msg_role"] == "user")
+    assert "Status check #2: how long until each of your bug requests so far (#1) is fixed?" in users
+    assert "Status check #5: how long until each of your bug requests so far (#1, #4) is fixed?" in users
+    assert [(x["to"], x["kind"], x["eta_min"], x["done"], x["text"]) for x in r["replies"]] == [
+        (1, "bug", 5.0, False, "Five."), (1, "bug", None, True, "Done."), (1, "bug", 0.0, False, "Zero."),
+        (2, "status", None, False, "Re #2."), (3, "question", None, False, "Re #3."), (4, "bug", None, True, "Fixed."),
+        (5, "status", None, False, "Re #5."), (6, "question", None, False, "Re #6.")]
+    results = [x for m in f[ORCH].requests[-1]["messages"] if m.role == "tool" for x in m.tool_results]
+    lines = [x.content.split("\n")[0] for x in results]  # the step's last result also has the step note
+    assert [x for x in lines if "needs eta_min" in x] == [NEEDS_ETA.format(n=1)] * 5 + [NEEDS_ETA.format(n=4)]
+    assert all(x.is_error for x in results if "needs eta_min" in x.content)
+    assert "[sent to the user, re #1; eta_min ignored: expected a number of minutes >= 0]" in lines  # done carries it
+    assert "[sent to the user, re #3; taken as your answer to this question]" in lines
+    tools = [x for x in r["tools"] if x["name"] == "reply"]
+    assert len(tools) == 14 and sum(x["is_error"] for x in tools) == 6
+    assert r["episode"]["n_replies"] == 8
+    # the rule is only in the tool's results: the system prompt and the tool specs do not change
+    cfg = make_config(**merge(FAST, {"interactive": {"status_every": 1}}))
+    assert f[ORCH].requests[0]["system"] == interactive_prompt(cfg, str(Path(tmp_path / "work").resolve()))
+    assert interactive_prompt(make_config(interactive={**REQ, "require_eta": True}), "/w") == interactive_prompt(
+        make_config(interactive=REQ), "/w")
 
 
 def test_reply_is_not_a_tool_without_replies(tmp_path):

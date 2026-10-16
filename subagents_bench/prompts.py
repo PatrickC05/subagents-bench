@@ -301,8 +301,10 @@ FIRST_REQUEST = "Request #{id}: a bug.\n\nHint: {hint}"
 NEXT_REQUEST = "Request #{id}: another bug, while you keep working on the earlier ones.\n\nHint: {hint}"
 URGENT_REQUEST = "Request #{id}: another bug, and this one is urgent: fix it before the earlier ones.\n\nHint: {hint}"
 QUESTION_REQUEST = "Question #{id}: {question}"
-STATUS_REQUEST = ("Status check #{id}: how long until each of your open bug requests is fixed? Reply to each "
-                  "with an updated eta_min.")
+# {ids}: every bug sent before the check (``hints.schedule`` puts them in the check's text), so the
+# message is the same in every condition whatever the agent fixed or said done
+STATUS_REQUEST = ("Status check #{id}: how long until each of your bug requests so far ({ids}) is fixed? Reply to "
+                  "each one's own id with eta_min, or with done: true if it is fixed.")
 USER_EVENT = "[{at} elapsed] Message from the user:\n{text}"
 REPORT_EVENT = "[{at} elapsed] Report from subagent {agent} ({status}, {steps} steps) on: {instruction}\n{report}"
 WAIT_RESULT = "[waited {sec:.0f}s]"
@@ -364,11 +366,12 @@ def interactive_note(elapsed: float, total: float, running: list[tuple[str, floa
 
 
 def request_text(kind: str, msg_id: int | None, text: str, urgent: bool = False, first: bool = False) -> str:
-    """A scheduled user message as the agent reads it (after the elapsed-time header)."""
+    """A scheduled user message as the agent reads it (after the elapsed-time header); a status
+    check's ``text`` is the ids of the bugs sent before it (``#1, #2, #4``)."""
     if msg_id is None:  # without interactive.replies: a bug, as before
         return f"Hint: {text}" if first else NEXT_HINT.format(hint=text)
     if kind == "question":
         return QUESTION_REQUEST.format(id=msg_id, question=text)
     if kind == "status":
-        return STATUS_REQUEST.format(id=msg_id)
+        return STATUS_REQUEST.format(id=msg_id, ids=text)
     return (FIRST_REQUEST if first else URGENT_REQUEST if urgent else NEXT_REQUEST).format(id=msg_id, hint=text)

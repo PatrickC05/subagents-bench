@@ -17,7 +17,11 @@ it); the deadline stops every agent through the recorder's stop event, like harb
 With ``interactive.replies`` the schedule also holds questions and status checks, every message
 has an id, and the orchestrator answers with ``reply`` (``replies.jsonl``: when, to which message,
 the text, an ETA in minutes, done). The user sees nothing else, so a reply's time is when the user
-got an answer, an estimate or a done.
+got an answer, an estimate or a done. With ``require_eta``, a reply to a bug without a usable
+``eta_min`` and without ``done: true`` is refused (an error result; nothing is sent or recorded).
+
+With ``interactive.snapshots``, a :class:`~subagents_bench.snapshots.Snapshotter` records the
+workspace's diff against ``baseline`` in the background from the session's start until it ends.
 """
 
 from __future__ import annotations
@@ -37,6 +41,7 @@ from .orchestrator import SPAWN_SPEC, Orchestrator
 from .prompts import (FIRST_HINT, REPORT_EVENT, REPORTED_SCOPE, USER_EVENT, WAIT_RESULT, clock, interactive_note,
                       interactive_prompt, request_text)
 from .records import EpisodeRecorder
+from .snapshots import Snapshotter
 from .subagent import Dispatch, DispatchResult, Runtime, new_dispatch, run_dispatch
 from .tools import ToolOutput, truncate
 
@@ -98,6 +103,7 @@ class InteractiveOrchestrator(Orchestrator):
         self.deadline_hit = self.idle = False
         self.n_elided = 0
         self.report_bodies: list[str] = []  # delivered report texts, for elision
+        self.snapshotter: Snapshotter | None = None
 
     # -- the session -------------------------------------------------------------------------
 
@@ -115,6 +121,9 @@ class InteractiveOrchestrator(Orchestrator):
             if self.background:
                 self.pool = ThreadPoolExecutor(self.cfg.subagent.max_concurrent, thread_name_prefix="bg-subagent")
             self.rec.update(session_t0=self.t0)
+            if self.icfg.snapshots:
+                self.snapshotter = Snapshotter(self.env, self.rec, self.workdir, self.icfg.snapshot_every_sec)
+                self.snapshotter.start()
             timer.start()
             self.rec.transcript(self.who, Message("system", self.system))
             template = REPORTED_SCOPE if self.icfg.scope == "reported" else FIRST_HINT
@@ -153,12 +162,14 @@ class InteractiveOrchestrator(Orchestrator):
         except BaseException:
             timer.cancel()
             self._shutdown()
+            self._stop_snapshots()
             self._close(clients)
             self._finish_records()
             self.rec.finalize("error", traceback.format_exc()[-4000:])
             raise
         timer.cancel()
         self._shutdown()
+        self._stop_snapshots()
         self._close(clients)
         self._finish_records()
         self.rec.finalize(exit_reason, error)
@@ -183,6 +194,12 @@ class InteractiveOrchestrator(Orchestrator):
             self.rec.stop_event.set()
         self.pool.shutdown(wait=False, cancel_futures=True)
         concurrent.futures.wait(self.futures, timeout=JOIN_SEC)
+
+    def _stop_snapshots(self) -> None:
+        """After the agents stopped: no more snapshots, and none is written once the records finish
+        (the final state is the trial's ``model.patch``)."""
+        if self.snapshotter is not None:
+            self.snapshotter.stop()
 
     def _finish_records(self) -> None:
         """Hints and reports never delivered (the session ended first) get their inbox record too."""
@@ -332,6 +349,9 @@ class InteractiveOrchestrator(Orchestrator):
         eta, eta_ok = _minutes(args.get("eta_min"))
         done, done_ok = _flag(args.get("done"))
         h = self.sent[to]
+        if self.icfg.require_eta and h.kind == "bug" and eta is None and not done:
+            return ToolOutput(f"[error] a reply to a bug (#{to}) needs eta_min (your estimate, in minutes from now, of "
+                              "when it will be fixed) or done: true; nothing was sent", True)
         first_answer = h.kind == "question" and to not in self.answered
         self.answered.add(to)
         self.rec.write("replies", {

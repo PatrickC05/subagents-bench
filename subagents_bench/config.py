@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -95,6 +96,12 @@ class InteractiveConfig:
     questions_per_interval: int = 0  # code questions sent between consecutive bugs, evenly spaced (needs replies)
     status_every: int = 0  # 0: none; n: after every n-th bug, a status check halfway to the next asks for ETAs
     urgent_every: int = 0  # 0: none; n: bugs n, 2n, ... (0-based) are urgent: "fix this one before the others"
+    # `reply` to a bug must carry eta_min or done: true, or it is refused (an error, nothing sent; needs replies)
+    require_eta: bool = False
+    # Workspace snapshots (subagents_bench.snapshots): the collect hook's diff against `baseline`, taken in
+    # the background after every bash or edit_file call and every snapshot_every_sec, for `fix-times`.
+    snapshots: bool = False
+    snapshot_every_sec: float = 15.0
 
 
 @dataclass
@@ -180,9 +187,9 @@ def _check_interactive(cfg: ExperimentConfig) -> None:
         raise ConfigError(f"interactive.scope: {i.scope!r} is not one of {', '.join(SESSION_SCOPES)}")
     if i.hint_detail not in HINT_DETAILS:
         raise ConfigError(f"interactive.hint_detail: {i.hint_detail!r} is not one of {', '.join(HINT_DETAILS)}")
-    for name in ("wall_clock_sec", "interval_sec"):
+    for name in ("wall_clock_sec", "interval_sec", "snapshot_every_sec"):
         v = getattr(i, name)
-        if isinstance(v, bool) or not isinstance(v, (int, float)) or v <= 0:
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 < v < math.inf:
             raise ConfigError(f"interactive.{name}: expected a positive number, got {v!r}")
     for name, v, lo in (("max_hints", i.max_hints, 1), ("max_context_chars", i.max_context_chars, 10000)):
         if v is not None and (isinstance(v, bool) or not isinstance(v, int) or v < lo):
@@ -196,9 +203,11 @@ def _check_interactive(cfg: ExperimentConfig) -> None:
     if not i.replies and (i.questions_per_interval or i.status_every or i.urgent_every):
         raise ConfigError("interactive: questions, status checks and urgent bugs come with message ids and `reply`: "
                           "set replies: true")
-    for name in ("end_when_idle", "vary_order_by_round", "replies"):
+    for name in ("end_when_idle", "vary_order_by_round", "replies", "require_eta", "snapshots"):
         if not isinstance(getattr(i, name), bool):
             raise ConfigError(f"interactive.{name}: expected true or false, got {getattr(i, name)!r}")
+    if i.require_eta and not i.replies:
+        raise ConfigError("interactive.require_eta: it is a rule for `reply` to a bug: set replies: true")
     if cfg.topology == "subagents" and cfg.subagent.spawn_mode == "background" and cfg.subagent.strategy != "parallel":
         raise ConfigError("subagent.spawn_mode: background runs each instruction as its own subagent; "
                           "it needs strategy parallel")
