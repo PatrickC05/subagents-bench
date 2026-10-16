@@ -309,13 +309,13 @@ def bug_rows(t: Trial, keys: dict[str, Any], valid: bool, fixes: dict[str, dict]
         change = change_after(states, t0, files) if states and files else None
         starts = [x for x in (dispatch.get(sid), change) if x is not None and not pd.isna(x)]
         row = {**keys, "valid": valid, "setting": setting, "level": level, "msg_id": h.get("msg_id"),
-               "hint_index": h["hint_index"], "subtask_id": sid, "urgent": bool(h.get("urgent")),
+               "hint_index": h["hint_index"], "item": h.get("item"), "subtask_id": sid, "urgent": bool(h.get("urgent")),
                "target_files": files, "t_ready_sec": t0 - session_t0,
                "delivery_sec": None if h.get("t_delivered") is None else h["t_delivered"] - t0,
                "timed": timed and sid in fixes, "fixed_sec": fixed_sec,
                "pass_before_sent": f.get("pass_before_sent") if timed else None, "fixed_end": fixed_end,
                "dispatch_sec": dispatch.get(sid), "change_sec": change, "start_sec": min(starts) if starts else None}
-        earlier = [e for e in sent if e["hint_index"] < h["hint_index"]]
+        earlier = [e for e in sent if e["t_ready"] < t0]  # earlier messages' (not a listed bug's message-mates)
         own = set(files)
         other = list(dict.fromkeys(x for e in earlier for x in e.get("target_files") or [] if x not in own))
         if h.get("t_delivered") is not None and earlier:
@@ -323,7 +323,7 @@ def bug_rows(t: Trial, keys: dict[str, Any], valid: bool, fixes: dict[str, dict]
         fix_at[sid] = None if fixed_sec is None else row["t_ready_sec"] + fixed_sec
         rows.append(row)
     for row in rows:
-        earlier = [x["subtask_id"] for x in rows if x["hint_index"] < row["hint_index"]]
+        earlier = [x["subtask_id"] for x in rows if x["t_ready_sec"] < row["t_ready_sec"]]
         row["open_before"] = row["open_fixed_session_sec"] = None
         if row["timed"] and earlier:
             sent_t = row["t_ready_sec"]

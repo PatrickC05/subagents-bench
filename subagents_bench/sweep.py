@@ -37,7 +37,7 @@ from typing import IO, Any, Callable
 import yaml
 
 from .config import ConfigError, ExperimentConfig, ModelConfig, from_dict
-from .hints import (ANSWERS_VERSION, HINTS_DIR_ENV, HintError, fetch_source, generate_questions, generate_reports,
+from .hints import (ANSWERS_VERSION, GENERATED, HINTS_DIR_ENV, HintError, fetch_source, generate_questions, generate_reports,
                     grade_replies, load_questions, load_reports, load_subtasks, n_slots, schedule, write_questions,
                     write_reports)
 from .llm import BillingError, Message, SailClient
@@ -185,7 +185,7 @@ def check_interactive(spec: Spec) -> list[str]:
         try:
             load_subtasks(task)
             for c, cfg in conds.items():
-                if cfg.interactive.hint_detail == "report" or cfg.interactive.replies:
+                if cfg.interactive.hint_detail in GENERATED or cfg.interactive.replies:
                     schedule(cfg.interactive, task, t, hints_dir(spec))
         except HintError as e:
             problems.append(f"{t}: {e}")
@@ -315,30 +315,37 @@ def grade_answers(spec: Spec, force: bool = False) -> int:
     return 1 if unread or failed else 0
 
 
-def make_hints(spec: Spec, force: bool = False) -> int:
-    """Write a bug report per subtask of every task (``hint_detail: report``) with the
-    orchestrator's model of the first interactive condition; existing reports are kept unless
-    ``force``. 0 if every task has its reports, else 1."""
+def make_hints(spec: Spec, force: bool = False, details: list[str] | None = None) -> int:
+    """Write a report per subtask of every task, of each kind in ``details`` (default: the generated
+    hint details the sweep's interactive conditions use, else ``report``) with the orchestrator's
+    model of the first interactive condition; existing reports are kept unless ``force``. Prints
+    a few new symptom reports to judge. 0 if every task has its reports, else 1."""
     conds = interactive(spec)
     if not conds:
         say(f"sweep {spec.name!r} has no interactive condition: nothing to generate")
         return 0
+    used = [d for d in GENERATED if any(c.interactive.hint_detail == d for c in conds.values())]
+    details = list(dict.fromkeys(details or used or ["report"]))
     model = next(iter(conds.values())).orchestrator
     client, failed = SailClient(model), 0
     try:
-        for t in spec.tasks:
-            try:
-                existing = {} if force else load_reports(hints_dir(spec), t)
-            except HintError:
-                existing = {}
-            try:
-                reports = generate_reports(spec.dataset_path / t, client, existing)
-            except Exception as e:  # one task's failure does not lose the others'
-                say(f"  [FAIL] {t}: {type(e).__name__}: {str(e)[:300]}")
-                failed += 1
-                continue
-            path = write_reports(hints_dir(spec), t, model.model, reports)
-            say(f"  [OK] {t}: {len(reports)} reports ({len(reports) - len(existing)} new) -> {_rel(path, spec.root)}")
+        for detail in details:
+            for t in spec.tasks:
+                try:
+                    existing = {} if force else load_reports(hints_dir(spec), t, detail)
+                except HintError:
+                    existing = {}
+                try:
+                    reports = generate_reports(spec.dataset_path / t, client, existing, detail, log=say)
+                except Exception as e:  # one task's failure does not lose the others'
+                    say(f"  [FAIL] {t} ({detail}): {type(e).__name__}: {str(e)[:300]}")
+                    failed += 1
+                    continue
+                path = write_reports(hints_dir(spec), t, model.model, reports, detail)
+                new = [k for k in reports if k not in existing]
+                say(f"  [OK] {t}: {len(reports)} {"" if detail == "report" else detail + " "}reports ({len(new)} new) -> {_rel(path, spec.root)}")
+                for k in new[:2] if detail == "symptom" else ():
+                    say(f"    sample {k}:\n      " + reports[k].replace("\n", "\n      "))
     finally:
         client.close()
     return 1 if failed else 0

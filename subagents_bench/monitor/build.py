@@ -309,7 +309,8 @@ def schedule(icfg: dict) -> dict:
     after each bug and how many fit, and the urgent bugs (every ``urgent_every``-th, 0-based, not the
     first)."""
     iv, wall = float(icfg.get("interval_sec") or 0), float(icfg.get("wall_clock_sec") or 0)
-    bugs = [k * iv for k in range(int(icfg.get("max_hints") or 0)) if k * iv < wall] or [0.0]
+    b = max(1, int(icfg.get("bundle") or 1))  # bugs per message: the times are the messages'
+    bugs = [k * iv for k in range(-(-int(icfg.get("max_hints") or 0) // b)) if k * iv < wall] or [0.0]
     on = bool(icfg.get("replies"))
     se, q, u = (int(icfg.get(k) or 0) * on for k in ("status_every", "questions_per_interval", "urgent_every"))
     q_at = [j * iv / (q + 1) for j in range(1, q + 1)]

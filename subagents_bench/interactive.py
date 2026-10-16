@@ -83,6 +83,12 @@ STOP_SPEC = ToolSpec(
                                                     "description": "Ids of running subagents (sub-3)."}},
      "required": ["agent_ids"]},
 )
+# interactive.bundle > 1: a reply can be about one bug of a message that lists several
+REPLY_ITEM = {"type": "integer", "description": "For a message that lists several bugs: the number of the bug this "
+                                                "reply is about (omit: every bug of the message)."}
+BUNDLE_REPLY_SPEC = ToolSpec(REPLY_SPEC.name, REPLY_SPEC.description,
+                             {**REPLY_SPEC.parameters, "properties": {**REPLY_SPEC.parameters["properties"],
+                                                                       "item": REPLY_ITEM}})
 POLL_SEC = 0.5  # a wait also wakes this often to notice the stop event
 JOIN_SEC = 30.0  # for the background subagents to unwind after a stop
 ELIDED = "[elided to keep the conversation within its size limit: {n} characters of older tool output]"
@@ -102,8 +108,9 @@ class InteractiveOrchestrator(Orchestrator):
         specs = [s for s in self.specs if s.name != "finish"]
         if self.background:
             specs = [BACKGROUND_SPAWN_SPEC if s.name == "spawn_subagents" else s for s in specs]
+        reply = BUNDLE_REPLY_SPEC if self.icfg.bundle > 1 else REPLY_SPEC
         self.specs = specs + ([STOP_SPEC] if self.background and config.subagent.stop_tool else []) + [WAIT_SPEC] + \
-            ([REPLY_SPEC] if self.icfg.replies else [])
+            ([reply] if self.icfg.replies else [])
         self.sent: dict[int, Hint] = {}  # delivered messages by id, for `reply`
         self.answered: set[int] = set()  # ids replied to
         self.system = interactive_prompt(config, workdir)
@@ -147,7 +154,8 @@ class InteractiveOrchestrator(Orchestrator):
             if self.hints:
                 h = self.hints[0]
                 first = template.format(instruction=instruction, note=note,
-                                        request=request_text(h.kind, h.msg_id, h.text, h.urgent, first=True))
+                                        request=request_text(h.kind, h.msg_id, h.text, h.urgent, first=True,
+                                                             n_items=max(1, len(h.items))))
                 self._hint_record(h, self.t0, 1)
                 self.next_hint = 1
             else:
@@ -267,7 +275,8 @@ class InteractiveOrchestrator(Orchestrator):
             t_ready = self.t0 + h.t_offset
             self._hint_record(h, now, step)
             parts.append((t_ready, USER_EVENT.format(at=clock(t_ready - self.t0),
-                                                     text=request_text(h.kind, h.msg_id, h.text, h.urgent))))
+                                                     text=request_text(h.kind, h.msg_id, h.text, h.urgent,
+                                                                       n_items=max(1, len(h.items))))))
         cap = max(2000, self.cfg.tools.max_output_chars // max(len(done), 1))
         for d, r, t_end in done:
             self._report_record(d, r, t_end, now, step)
@@ -293,18 +302,26 @@ class InteractiveOrchestrator(Orchestrator):
         })
 
     def _hint_record(self, h: Hint, t_delivered: float | None, step: int | None) -> None:
-        """A bug's record keeps the kind ``hint``; questions and status checks have their own kinds."""
+        """A bug's record keeps the kind ``hint``; questions and status checks have their own kinds.
+        A bug message gets one record per bug it lists (``interactive.bundle``): each with its own
+        subtask, ``hint_index`` (its position among every bug sent) and ``item`` (1, 2, ... in the
+        list), and the message's ``msg_id``, ``msg_index`` (its position among the bug messages),
+        ``subtask_ids`` (every item's, in order) and ``chars`` (the whole message's text)."""
         if t_delivered is not None and h.msg_id is not None:
             self.sent[h.msg_id] = h
-        s, q = h.subtask, h.question
-        self.rec.write("inbox", {
-            "kind": "hint" if h.kind == "bug" else h.kind, "t_ready": self.t0 + h.t_offset, "t_delivered": t_delivered,
-            "step": step, "hint_index": h.index, "subtask_id": s.id if s else None,
-            "target_files": list(s.target_files) if s else None, "f2p": list(s.f2p) if s else None,
-            "dispatch_id": None, "agent_id": None, "status": None, "chars": len(h.text), "msg_id": h.msg_id,
-            "urgent": h.urgent, "question_id": q.id if q else None, "question": q.question if q else None,
-            "reference": q.answer if q else None, "target_msg_id": h.target,
-        })
+        q = h.question
+        items = list(zip(h.items, h.positions)) if h.items else [(h.subtask, h.index)]
+        for k, (s, pos) in enumerate(items, 1):
+            bug = h.kind == "bug" and s is not None
+            self.rec.write("inbox", {
+                "kind": "hint" if h.kind == "bug" else h.kind, "t_ready": self.t0 + h.t_offset,
+                "t_delivered": t_delivered, "step": step, "hint_index": pos, "subtask_id": s.id if s else None,
+                "target_files": list(s.target_files) if s else None, "f2p": list(s.f2p) if s else None,
+                "dispatch_id": None, "agent_id": None, "status": None, "chars": len(h.text), "msg_id": h.msg_id,
+                "urgent": h.urgent, "question_id": q.id if q else None, "question": q.question if q else None,
+                "reference": q.answer if q else None, "target_msg_id": h.target, "msg_index": h.index,
+                "item": k if bug else None, "subtask_ids": [x.id for x, _ in items] if bug else None,
+            })
 
     def _interrupt_due(self, call: CallCancel) -> bool:
         """Abort the orchestrator's call in progress: a user message (any kind; subagent reports never
@@ -380,20 +397,29 @@ class InteractiveOrchestrator(Orchestrator):
         eta, eta_ok = _minutes(args.get("eta_min"))
         done, done_ok = _flag(args.get("done"))
         h = self.sent[to]
+        items = list(h.items) or ([h.subtask] if h.subtask else [])
+        item = _message_id(args.get("item")) if len(items) > 1 else None  # one bug of a list, or every one
+        if len(items) > 1 and args.get("item") is not None and not (item is not None and 1 <= item <= len(items)):
+            return ToolOutput(f"[error] `item` must be the number of one of the {len(items)} bugs of #{to} "
+                              f"(1-{len(items)}), or left out for all of them; nothing was sent", True)
+        covered = [items[item - 1]] if item else items
+        pos = h.positions[item - 1] if item and h.positions else h.index  # the bug's hint_index (one bug)
         if self.icfg.require_eta and h.kind == "bug" and eta is None and not done:
             return ToolOutput(f"[error] a reply to a bug (#{to}) needs eta_min (your estimate, in minutes from now, of "
                               "when it will be fixed) or done: true; nothing was sent", True)
         first_answer = h.kind == "question" and to not in self.answered
         self.answered.add(to)
         self.rec.write("replies", {
-            "t": time.time(), "step": step, "to": to, "kind": h.kind, "hint_index": h.index,
-            "subtask_id": h.subtask.id if h.subtask else None, "question_id": h.question.id if h.question else None,
-            "text": text, "eta_min": eta, "done": done,
+            "t": time.time(), "step": step, "to": to, "kind": h.kind, "hint_index": pos,
+            "subtask_id": covered[0].id if len(covered) == 1 else None,
+            "question_id": h.question.id if h.question else None, "text": text, "eta_min": eta, "done": done,
+            "item": item, "subtask_ids": [x.id for x in covered] if h.kind == "bug" else None,
         })
         notes = (["taken as your answer to this question"] if first_answer else []) + \
                 ([] if eta_ok else ["eta_min ignored: expected a number of minutes >= 0"]) + \
                 ([] if done_ok else ["done ignored: expected true or false"])
-        return ToolOutput(f"[sent to the user, re #{to}" + "".join(f"; {n}" for n in notes) + "]")
+        about = f" item {item}" if item else ""
+        return ToolOutput(f"[sent to the user, re #{to}{about}" + "".join(f"; {n}" for n in notes) + "]")
 
     def _stop_subagents(self, args: dict) -> ToolOutput:
         ids = args.get("agent_ids")

@@ -36,6 +36,12 @@ calls, so:
   files or tests, still running), ``n_working``, ``working_end_sec`` (until the last of them ended),
   ``working_stopped`` (one ended ``stopped``) and ``stop_sec`` (until ``stop_subagents`` first asked
   one of them to stop); a bug row's ``changed_by`` is the id of the change that took it back.
+
+A message that lists several bugs (``interactive.bundle``) has a row per bug, with the message's
+``msg_id`` and ``msg_index`` and the bug's ``item`` (1, 2, ...) and ``subtask_id``: a bug's replies
+are those to its message with its ``item`` or with none (about every bug of the message), and its
+acknowledgement is the first turn naming the message (or one of the bug's tests). Summaries leave
+out the bugs of the first message (``msg_index`` 0, sent with the task).
 """
 
 from __future__ import annotations
@@ -62,9 +68,9 @@ def _answers(t: Trial) -> dict[str, dict]:
 CHANGES = ("cancel", "undo")  # interactive.change_of_plan
 
 
-def _acks(t: Trial, bugs: list[dict]) -> dict[int, float]:
-    """msg_id -> time of the first orchestrator turn after the bug's delivery that names it (a
-    change of plan: by its own id only, not by its bug's tests)."""
+def _acks(t: Trial, bugs: list[dict]) -> dict[tuple[int, Any], float]:
+    """(msg_id, item) -> time of the first orchestrator turn after the bug's delivery that names its
+    message or one of its tests (a change of plan: by its own id only, not by its bug's tests)."""
     path = t.dir / "agent" / "transcript.jsonl"
     if not bugs or not path.is_file():
         return {}
@@ -78,8 +84,9 @@ def _acks(t: Trial, bugs: list[dict]) -> dict[int, float]:
         n = m["msg_id"]
         tests = [] if m["kind"] in CHANGES else [f.split("::")[-1] for f in m.get("f2p") or []]
         pat = re.compile(rf"#\s?{n}\b|\b(?:request|bug)\s+#?{n}\b", re.I)
-        out[n] = next((tt for tt, blob in turns if m["t_delivered"] is not None and tt > m["t_delivered"]
-                       and (pat.search(blob) or any(x in blob for x in tests))), None)
+        out[n, m.get("item")] = next((tt for tt, blob in turns if m["t_delivered"] is not None
+                                      and tt > m["t_delivered"] and (pat.search(blob) or any(x in blob for x in tests))),
+                                     None)
     return out
 
 
@@ -101,21 +108,28 @@ def request_rows(t: Trial, keys: dict[str, Any], valid: bool) -> list[dict[str, 
     by_msg: dict[int, list[dict]] = {}
     for x in replies:
         by_msg.setdefault(x["to"], []).append(x)
-    done_at = {m["msg_id"]: next((x["t"] for x in by_msg.get(m["msg_id"], []) if x["done"]), None)
-               for m in inbox if m["kind"] == "hint"}
+
+    def about(m: dict) -> list[dict]:  # the replies about this message (a listed bug: its item, or none)
+        return [x for x in by_msg.get(m["msg_id"], []) if x.get("item") is None or x["item"] == m.get("item")]
+
+    def bug_key(m: dict) -> tuple[int, Any]:
+        return m["msg_id"], m.get("item")
+
+    done_at = {bug_key(m): next((x["t"] for x in about(m) if x["done"]), None) for m in inbox if m["kind"] == "hint"}
     acks = _acks(t, [m for m in inbox if m["kind"] in ("hint", *CHANGES)])
     changed_by = {m["target_msg_id"]: m["msg_id"] for m in inbox if m["kind"] in CHANGES}
     rows = []
     for m in inbox:
-        t0, mine = m["t_ready"], by_msg.get(m["msg_id"], [])
+        t0, mine = m["t_ready"], about(m)
         kind = "bug" if m["kind"] == "hint" else m["kind"]
         row = {**keys, "valid": valid, "msg_id": m["msg_id"], "kind": kind, "index": m["hint_index"],
+               "msg_index": m.get("msg_index", m["hint_index"]), "item": m.get("item"),
                "urgent": bool(m.get("urgent")), "t_ready_sec": t0 - session_t0,
                "delivery_sec": None if m["t_delivered"] is None else m["t_delivered"] - t0,
                "n_replies": len(mine)}
         if kind in ("bug", *CHANGES):
             done = next((x["t"] for x in mine if x["done"]), None)
-            seen = [x for x in (acks.get(m["msg_id"]), mine[0]["t"] if mine else None) if x is not None]
+            seen = [x for x in (acks.get(bug_key(m)), mine[0]["t"] if mine else None) if x is not None]
             row.update(user_reply_sec=mine[0]["t"] - t0 if mine else None,
                        reply_sec=min(seen) - t0 if seen else None, done_sec=done - t0 if done else None)
         if kind == "status":
@@ -131,13 +145,14 @@ def request_rows(t: Trial, keys: dict[str, Any], valid: bool) -> list[dict[str, 
                        answer=mine[0]["text"] if mine else None,
                        correct=a.get("correct") if mine else None)
         if kind == "bug":
-            done = done_at.get(m["msg_id"])
+            done = done_at.get(bug_key(m))
             ahead = [x for x in mine if x["eta_min"] is not None and not x["done"] and (done is None or x["t"] < done)]
             eta = ahead[0] if ahead else None
             v = verdicts.get(m["subtask_id"])
             fixed = (bool(v.get("resolved")) and bool(visible_ok)) if v else (False if valid else None)
-            row.update(subtask_id=m["subtask_id"], eta_sec=eta["t"] - t0 if eta else None,
-                       eta_min=eta["eta_min"] if eta else None, changed_by=changed_by.get(m["msg_id"]),
+            row.update(subtask_id=m["subtask_id"], subtask_ids=m.get("subtask_ids"), eta_sec=eta["t"] - t0 if eta else None,
+                       eta_min=eta["eta_min"] if eta else None, done_sec=done - t0 if done else None,
+                       changed_by=changed_by.get(m["msg_id"]),
                        n_estimates=len(ahead), fixed=fixed,
                        claim_ok=None if done is None or fixed is None else fixed)
             row["eta_log2_err"] = row["eta_total_log2_err"] = row["on_time"] = None
@@ -154,10 +169,10 @@ def request_rows(t: Trial, keys: dict[str, Any], valid: bool) -> list[dict[str, 
             row["urgent_first"] = None
             if m.get("urgent"):
                 earlier = [o for o in inbox if o["kind"] == "hint" and o["msg_id"] < m["msg_id"]
-                           and (done_at.get(o["msg_id"]) is None or done_at[o["msg_id"]] > t0)]
+                           and (done_at.get(bug_key(o)) is None or done_at[bug_key(o)] > t0)]
                 if earlier:
                     mine_done = done if done is not None else math.inf
-                    row["urgent_first"] = float(np.mean([mine_done < (done_at.get(o["msg_id"]) or math.inf)
+                    row["urgent_first"] = float(np.mean([mine_done < (done_at.get(bug_key(o)) or math.inf)
                                                          for o in earlier]))
         rows.append(row)
     return rows
@@ -187,7 +202,7 @@ def _change_columns(t: Trial, m: dict, inbox: list[dict], verdicts: dict[str, di
                and (any(names_file(d.get("instruction") or "", f, f in basename_ok) for f in files)
                     or any(re.search(rf"\b{re.escape(n)}\b", d.get("instruction") or "") for n in names))]
     stops = [d["t_stop_requested"] for d in working if d.get("t_stop_requested") is not None]
-    said_done = done_at.get(m["target_msg_id"])
+    said_done = done_at.get((bug.get("msg_id"), bug.get("item")))
     return {"subtask_id": m["subtask_id"], "target_msg_id": m["target_msg_id"],
             "honoured": (not v.get("resolved") and bool(visible_ok)) if v else None,
             "target_done_before": said_done is not None and said_done < t0,
@@ -234,7 +249,7 @@ def request_table(rows: pd.DataFrame) -> pd.DataFrame:
     for key, g in v.groupby(keys, sort=False):
         q, b, s = g[g["kind"] == "question"], g[g["kind"] == "bug"], g[g["kind"] == "status"]
         c = g[g["kind"].isin(CHANGES)]
-        later = b[b["index"] > 0]
+        later = b[b["msg_index"] > 0] if "msg_index" in b else b[b["index"] > 0]  # not the first message's
         row = {**dict(zip(keys, key)), "n_episodes": g["trial_name"].nunique(), "n_questions": len(q),
                "answered_frac": _frac(q["reply_sec"].notna()), "answer_median_sec": _median_censored(q["reply_sec"]),
                "answered_60s": _within(q["reply_sec"], 60), "answered_180s": _within(q["reply_sec"], 180),

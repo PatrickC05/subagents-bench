@@ -248,7 +248,23 @@ and echo. Some hidden tests extend a test the repository has (echo's
 checks this is not in the repository" rather than that the test is new. `report` instead sends a one-to-three-sentence bug report written
 beforehand from the hidden test patch by `subagents-bench hints` (the first
 interactive condition's orchestrator model, told not to describe the fix),
-read from `jobs/<sweep>/hints/<task>.json`. A scripted, timed user rather
+read from `jobs/<sweep>/hints/<task>.json`. `symptom` sends what an end user
+would report instead: what they ran (a short snippet or command), what they
+expected and what happened, written from the hidden test patch and the
+reference fix (`<task>.symptom.json`). It must not locate the bug, so a report
+that names a target file, its basename or module path (`click/core`,
+`click.core`), a hidden test or its test file (`test_options`), or a private
+function the fix changes (Python `_name`, Go camelCase lower-case names) is sent
+back to the writer to be rewritten, up to 4 writes, else `hints` fails for that
+task. Public API names (`click.Path`, `c.Scheme()`) are allowed: a user writes
+them. With `interactive.bundle: n` the ordered bugs go out n at a time, one
+message every `interval_sec`, as a numbered list under one id ("Request #2: a
+few more things are broken ... 1. ... 2. ... 3. ..."); `reply` takes an `item`
+(the bug's number; none: every bug of the message). The records keep one inbox
+record per bug with the shared `msg_id`, so every per-bug table stays per bug;
+"earlier" and "next" hints are other messages'. Approximate: an estimate or
+done written as `#N` in text (the regex fallback) covers every bug of message N.
+A scripted, timed user rather
 than harbor's simulated user (an LLM that converses through a bridge): the
 stimulus must be identical across conditions and arrive at fixed times,
 whatever the agent does.

@@ -31,6 +31,7 @@ jobs/<sweep>/
                                       their Dockerfiles pinned (the dirs harbor runs)
   hints/<task>.json                   interactive sweeps with `hint_detail: report`: {task, model, generated_at,
                                       reports: {subtask id: bug report}}, from `subagents-bench hints`
+  hints/<task>.symptom.json           the same for `hint_detail: symptom` (end-user reports of the behaviour)
   hints/<task>.questions.json         interactive sweeps with `questions_per_interval`: {task, model, generated_at,
                                       questions: [{id (q1, q2, ...), file, question, answer}]}, from
                                       `subagents-bench questions` (`answer`: the reference answer)
@@ -205,6 +206,7 @@ never delivered (the session ended first), written when the episode ends.
 | `urgent` | a bug marked urgent (`urgent_every`); false otherwise (absent in records written before it existed) |
 | `question_id`, `question`, `reference` | a question's id in `questions.json`, its text and the reference answer; null otherwise |
 | `target_msg_id` | a cancel or undo: the `msg_id` of the bug it takes back; null otherwise (absent in records written before it existed) |
+| `msg_index`, `item`, `subtask_ids` | a bug: its message's position among the bug messages, its number in the message's list (1, 2, ...; 1 when the message has one bug) and every subtask id the message lists, in order; with `interactive.bundle: n` a message gives n records, one per bug, sharing `msg_id`, `t_ready`, `msg_index`, `subtask_ids` and `chars` (the whole message), each with its own `hint_index` (position among every bug), `item` and subtask; null otherwise (absent before bundles existed) |
 
 ### `replies.jsonl`: one `reply` call (interactive episodes with `interactive.replies`)
 
@@ -219,6 +221,7 @@ written; a rejected call is an errored tool record. Empty otherwise.
 | `kind`, `hint_index` | that message's kind (`bug`, `question`, `status`, `cancel`, `undo`: note `bug`, where the inbox says `hint`) and position |
 | `subtask_id`, `question_id` | that message's subtask (a bug) or question, else null |
 | `text` | the message to the user |
+| `item`, `subtask_ids` | a reply to a message that lists several bugs: the bug's number it names (null: every bug of the message) and the subtask ids it is about; for a message with one bug, `item` null and `subtask_ids` that one id; null for other kinds |
 | `eta_min` | minutes from now until the bug is fixed, as a float (a numeric string is read); null when not given or not a number in [0, 10^6), in which case the tool result told the agent it was ignored |
 | `done` | true when the call passed `done` as `true`, `1` or `"true"`/`"yes"`; false when absent, `false`, `0`, `"false"`/`"no"`, or anything else (which the tool result reports as ignored) |
 
@@ -512,7 +515,8 @@ message's kind are filled only for that kind.
 | Columns | Meaning |
 |---|---|
 | keys, `valid` | the trial |
-| `msg_id`, `kind`, `index` | the message's id, `bug`, `question`, `status`, `cancel` or `undo`, and its position among its kind |
+| `msg_id`, `kind`, `index` | the message's id, `bug`, `question`, `status`, `cancel` or `undo`, and its position among its kind (a bug: among every bug) |
+| `msg_index`, `item`, `subtask_ids` | a bug: its message's position among the bug messages, its number in the message's list and the message's subtasks; a message listing n bugs (`interactive.bundle`) has n rows, each bug's replies being those to the message with its `item` or none, its `reply_sec` the first turn naming the message (or a reply about it); summaries leave out the first message's bugs |
 | `urgent` | a bug marked urgent |
 | `t_ready_sec`, `delivery_sec` | when it was sent after the session start; until it entered the conversation |
 | `n_replies` | replies naming its id |
