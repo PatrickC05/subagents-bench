@@ -39,10 +39,10 @@ Field definitions are in `docs/DATA.md` on `exp-all`.
 | `single` | Orchestrator alone |
 | `background_hinted` | Orchestrator + subagents |
 | `manager_background` | Subagents only |
-| `manager_available` | Orchestrator + subagents (available) |
-| `manager_owner` | Orchestrator + subagents (owner) |
+| `manager_available` | Subagents only + stay available |
+| `manager_owner` | Subagents only + owner |
 | `dispatcher_hinted` | Dispatcher |
-| `manager_available_stop` | Orchestrator + subagents (available, stop tool) |
+| `manager_available_stop` | Subagents only + stay available + stop tool |
 
 The suffix gives the level (`baseline`/`eta`/`questions`/`urgent` = L0–L3) or the variant (`change`, `interrupt_*`, `symptom`, `web`).
 
