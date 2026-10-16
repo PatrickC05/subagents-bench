@@ -289,6 +289,13 @@ INTERACTIVE_DELEGATION_HINT = ("\nYour attention is the scarce resource: while y
                                "wait until they finish. Subagents run in the background, so delegate long work "
                                "(investigating and fixing a bug, running a test suite) and keep yourself free to "
                                "respond to new requests and to combine reports.\n")
+INTERACTIVE_AVAILABILITY_HINT = ("\nStay available to the user: new messages reach you only between your steps, so "
+                                 "every long step, long thinking included, keeps the user waiting. Keep each step "
+                                 "short. Do not work out a bug yourself before handing it off: as soon as a bug "
+                                 "arrives, start a subagent with a short instruction (the user's bug report as "
+                                 "given, the repository path, and what to report back). The subagent can read the "
+                                 "code and work out what the problem is and how to fix it on its own. Then reply to "
+                                 "the user and go back to waiting.\n")
 FIRST_HINT = "{instruction}{note}\n\n{request}"
 # interactive.scope "reported": the task's own goal (SWE-sweep: find and fix every bug) is set aside,
 # so a bug the agent fixes before it is sent cannot pass for one it never started.
@@ -335,7 +342,8 @@ def interactive_prompt(cfg: ExperimentConfig, workdir: str) -> str:
     if not subagents:
         return text
     if background:
-        hint = INTERACTIVE_DELEGATION_HINT if s.delegation_hint else ""
+        hint = (INTERACTIVE_DELEGATION_HINT if s.delegation_hint else "") + \
+            (INTERACTIVE_AVAILABILITY_HINT if s.availability_hint else "")
         return text + SUBAGENTS_BACKGROUND.format(max_steps=s.max_steps, hint=hint, scope=SCOPE[s.scope],
                                                   max_concurrent=s.max_concurrent, max_dispatches=s.max_dispatches)
     if s.strategy == "parallel":  # the background text but for the blocking return, so only that differs

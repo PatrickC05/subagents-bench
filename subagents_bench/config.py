@@ -56,6 +56,9 @@ class SubagentConfig:
     max_steps: int = 8
     max_output_chars: int = 12000
     delegation_hint: bool = False  # tell the orchestrator its steps are scarce and subagents' steps free
+    # Interactive, background only: tell the orchestrator to stay available to the user (short steps,
+    # a short instruction per bug at once, the subagent works out the problem itself)
+    availability_hint: bool = False
     # Interactive episodes only: `background` returns from spawn_subagents at once and delivers each
     # report as a message when its subagent ends; `blocking` waits for all of them, as in batch episodes.
     spawn_mode: str = "blocking"
@@ -160,6 +163,8 @@ def from_dict(raw: Any) -> ExperimentConfig:
             raise ConfigError(f"{where}: {value!r} is not one of {', '.join(choices)}")
     if not isinstance(cfg.subagent.delegation_hint, bool):
         raise ConfigError(f"subagent.delegation_hint: expected true or false, got {cfg.subagent.delegation_hint!r}")
+    if not isinstance(cfg.subagent.availability_hint, bool):
+        raise ConfigError(f"subagent.availability_hint: expected true or false, got {cfg.subagent.availability_hint!r}")
     bad = sorted(set(cfg.tools.orchestrator_tools or []) - set(TOOL_NAMES))
     if bad:
         raise ConfigError(f"tools.orchestrator_tools: unknown tool(s) {bad}; choose from {list(TOOL_NAMES)}")
@@ -205,6 +210,10 @@ def _check_interactive(cfg: ExperimentConfig) -> None:
     if cfg.topology == "subagents" and cfg.subagent.delegation_hint and cfg.subagent.spawn_mode != "background":
         raise ConfigError("subagent.delegation_hint: in an interactive episode it says background subagents keep "
                           "the orchestrator free, so it needs spawn_mode background")
+    if cfg.subagent.availability_hint and not (cfg.interactive and cfg.topology == "subagents"
+                                               and cfg.subagent.spawn_mode == "background"):
+        raise ConfigError("subagent.availability_hint: it tells an interactive orchestrator to hand bugs to "
+                          "background subagents, so it needs interactive, topology subagents and spawn_mode background")
 
 
 def load_config(path: str | os.PathLike) -> ExperimentConfig:
