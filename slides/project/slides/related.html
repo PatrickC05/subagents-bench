@@ -1,0 +1,14 @@
+<section id="related" data-transition="fade" style="background:#F7F6F1;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:28px">
+<p style="font-size:28px;letter-spacing:3px;text-transform:uppercase;color:#C2551F;font-weight:600">Related work</p>
+<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:56px;font-weight:600;line-height:1.15">Timing, concurrency and small helpers</h2>
+<table style="font-size:24px;color:#14213D;width:1664px">
+<tr><th style="width:30%">Paper</th><th style="width:44%">What it shows</th><th style="width:26%">How we differ</th></tr>
+<tr><td><b>Gaia2</b> / ARE · Froger et al., ICLR 2026</td><td>Environments change on their own, with time limits; GPT-5 (high) leads at 42% but fails time-sensitive tasks</td><td>Coding agent; the user’s own requests</td></tr>
+<tr><td><b>AsyncTool</b> · Zhang et al., 2026</td><td>Several tasks at once with slow tools; delayed feedback hurts, better task switching helps</td><td>Requests not known in advance</td></tr>
+<tr><td><b>Asynchronous LLM Function Calling</b> (AsyncLM) · Gim et al., 2024</td><td>Non-blocking calls with interrupts cut task latency 1.6–5.4× on BFCL</td><td>Delegation to subagents, no fine-tuning</td></tr>
+<tr><td><b>τ-bench</b> · Yao et al., 2024</td><td>Agents talk to a simulated user while using tools and following policy</td><td>Several requests overlap in time</td></tr>
+<tr><td><b>Small LLMs Are Weak Tool Learners</b> (α-UMi) · Shen et al., EMNLP 2024</td><td>Splitting one agent into planner, caller and summarizer models beats a single small model</td><td>A large orchestrator, small workers</td></tr>
+</table>
+<p style="font-size:24px;color:#6A7280">arXiv: 2602.11964 · 2605.27995 · 2412.07017 · 2406.12045 · 2401.07324</p>
+<aside>A quick map of related work. Gaia2, from Meta at ICLR this year, is the closest: environments that keep changing with time limits, and even the best model fails the time-sensitive tasks. AsyncTool runs several tasks at once with slow tools and finds delayed feedback hurts agents. AsyncLM makes function calls non-blocking with interrupts and cuts latency up to five times. Tau-bench puts a simulated user in the loop. And the alpha-UMi paper splits an agent into several smaller models. We combine these threads: a coding agent, a user whose requests overlap in time, and a large orchestrator that can hand work to small subagents.</aside>
+</section>
