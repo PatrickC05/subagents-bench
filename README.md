@@ -58,24 +58,32 @@ judge is DeepSeek-V4.1-Flash on Sail for every model.
 
 | Experiment | Spec | Conditions | Models | Sessions per model |
 |---|---|---|---|---|
-| 1. Cost vs bugs fixed at L0 | `final_levels.yaml` (`*_baseline`) | `background_hinted`, `manager_background`, `manager_owner` at L0 | all 8 | 18 |
-| 1b. Isolated baseline | `final_isolated.yaml` | `single_bug0`-`single_bug5`: each bug alone in a fresh session (`interactive.only_bug`) | all 8 | 36 |
+| 1. Cost vs bugs fixed at L0 | `final_levels.yaml` (`*_baseline`) | `background_hinted`, `manager_background`, `manager_owner` at L0 | all 6 | 18 |
+| 1b. Isolated baseline | `final_isolated.yaml` | `single_bug0`-`single_bug5`: each bug alone in a fresh session (`interactive.only_bug`) | all 6 | 36 |
 | 2. Levels | `final_levels.yaml` | the three settings at L0-L3 (bugs; + ETAs; + questions; + an urgent bug) | Opus 5.5, GPT-5.6 Luna, DeepSeek-V4.1-Flash-1017 | 72 (L0 included) |
 
-The 8 models: GPT-5.6 Luna, Terra and Sol, Claude Opus 5.5 and Sonnet 5.5,
-Gemini 4 Argon, Kimi K3 and DeepSeek-V4.1-Flash-1017. Claude Haiku 5.5 and MiMo
-V2.6 are not on Prime and are left out.
+The 6 models: GPT-5.6 Luna, Terra and Sol, Claude Opus 5.5 and Sonnet 5.5, and
+DeepSeek-V4.1-Flash-1017 (486 sessions, about $1.5k). Gemini 4 Argon and Kimi K3
+are left out (no access), and Claude Haiku 5.5 and MiMo V2.6 are not on Prime.
 
 ```bash
 scripts/setup.sh --final            # .venv, .env (PRIME_API_KEY, PRIME_TEAM_ID to bill a team, SAIL_API_KEY),
                                     # the SWE-sweep tasks (scripts/get_tasks.sh), a Modal token check; no Docker
+scripts/run_final_patrick.sh        # Luna, DeepSeek (exp. 1 + 2), Sonnet (exp. 1): 270 sessions, ~$220
+scripts/run_final_jonathan.sh       # Opus (exp. 1 + 2), Sol, Terra (exp. 1): 216 sessions, ~$1.3k
 scripts/run_all_final.sh --dry-run  # every model's jobs
-scripts/run_all_final.sh            # the whole study, model after model, then the cross-model figures
+scripts/run_all_final.sh --parallel # the whole study on one machine, then the cross-model figures
 scripts/run_final.sh --model configs/prime/models/gpt-5.6-luna.yaml            # one model, experiments 1 and 2
 scripts/run_final.sh --model configs/prime/models/kimi-k3.yaml --l0-only       # one model, experiment 1 only
 ```
 
-Both are resumable. `run_final.sh` asks every model the same questions
+The two shares run on two machines at the same time. Each runs its models, and
+each model's two sweeps, all at once (`--parallel`; logs in `logs/final/`), so
+the sessions take about 30 minutes, about 1 hour with preflight and grading;
+Ctrl-C stops every run. The agent loops run on the launching machine (the
+sandboxes only run commands), so it must stay awake and online throughout.
+Without `--parallel` the models run one after another. Everything is
+resumable. `run_final.sh` asks every model the same questions
 (`data/questions/`, generated once by DeepSeek-V4.1-Flash), runs the two sweeps
 in `jobs/final_levels-<model>` and `jobs/final_isolated-<model>`, replays each
 trial's snapshots to time every fix (`fix-times`), judges the answers
@@ -93,7 +101,7 @@ by hand:
 # isolated sessions, also graded at the time each bug had in the shared sessions (isolated_capped)
 .venv/bin/python -m subagents_bench.analysis.final \
   --model "Opus 5.5"=analysis/final_levels-claude-opus-5.5:analysis/final_isolated-claude-opus-5.5 \
-  --model "Kimi K3"=analysis/final_levels-kimi-k3:analysis/final_isolated-kimi-k3 --out analysis/final_l0
+  --model "GPT-5.6 Sol"=analysis/final_levels-gpt-5.6-sol:analysis/final_isolated-gpt-5.6-sol --out analysis/final_l0
 # experiment 2: the levels across models
 .venv/bin/python -m subagents_bench.plots.final \
   --model "Opus 5.5"=analysis/final_levels-claude-opus-5.5 --model "GPT-5.6 Luna"=analysis/final_levels-gpt-5.6-luna \
