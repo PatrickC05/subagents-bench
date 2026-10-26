@@ -14,7 +14,8 @@
 #   --dry-run        print the jobs of both sweeps; run and grade nothing
 #
 # Steps: copy the fixed question sets (data/questions) into the levels sweep's own hints dir, which
-# every model's run reads, so every model is asked the same questions; run the levels sweep
+# every model's run reads, so every model is asked the same questions (a different file already
+# there stops the run; --dry-run writes nothing); run the levels sweep
 # (preflight with harbor's oracle first) and the isolated sweep (configs/sweeps/final_*.yaml);
 # replay each trial's snapshots to time every fix (`fix-times`, no LLM call); judge the answers to
 # questions (`grade-answers`, with the sweep's own model, DeepSeek-V4.1-Flash on Sail, for every
@@ -66,12 +67,20 @@ fi
 DRY=()
 [ "$DRY_RUN" = 1 ] && DRY=(--dry-run)
 
-if [ "$L0_ONLY" = 0 ]; then
-  mkdir -p "$HINTS"
-  for f in data/questions/*.questions.json; do
-    [ -e "$HINTS/$(basename "$f")" ] || cp "$f" "$HINTS/"
-  done
-fi
+# Every model must be asked data/questions: a different file already in the hints dir is an error
+# (preflight checks every condition of the levels sweep, L2-L3 included, so --l0-only needs them too).
+for f in data/questions/*.questions.json; do
+  dest="$HINTS/$(basename "$f")"
+  if [ -e "$dest" ]; then
+    cmp -s "$f" "$dest" || { echo "[FAIL] $dest differs from $f: every model must get the same questions" \
+      "(remove it to use $f)" >&2; exit 2; }
+  elif [ "$DRY_RUN" = 1 ]; then
+    echo "would copy $f -> $HINTS/"
+  else
+    mkdir -p "$HINTS"
+    cp "$f" "$dest"
+  fi
+done
 
 echo "== $STEM: levels sweep -> $LEVELS_JOBS"
 scripts/run_experiment.sh "$LEVELS" --model "$MODEL" ${ONLY[@]+"${ONLY[@]}"} --jobs-at-once "$AT_ONCE" \

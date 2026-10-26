@@ -1,21 +1,28 @@
 """Experiment 1 of the final study (issue #23): cost against bugs fixed at L0, each setting's shared
 sessions next to the isolated baseline (each bug alone in a fresh session).
 
-    python -m subagents_bench.analysis.final \
-        --model Opus=analysis/final_levels-claude-opus-5.5:analysis/final_isolated-claude-opus-5.5 \
-        --model Luna=... --out analysis/final_l0 [--interval 240] [--wall 1800]
+    python -m subagents_bench.analysis.final \\
+        --model Opus=analysis/final_levels-claude-opus-5.5:analysis/final_isolated-claude-opus-5.5 \\
+        --model Luna=... --out analysis/final_l0
 
 Each ``--model NAME=LEVELS:ISOLATED`` is one model's two sweeps' tables (``scripts/analyze.sh``
-writes them): ``episodes.csv`` for cost and ``fixes.csv`` for each bug's replayed fix time. Writes
+writes them): ``episodes.csv`` for cost and the trial dirs, ``fixes.csv`` for each bug's verdict
+and send time. The trial dirs (``trial_dir``, relative to ``--root``, default the current dir)
+give the shared sessions' wall clock and the isolated sessions' replayed snapshots. Writes
 ``l0.csv`` (one row per model and point) and ``l0.png`` (dollars per bug, log scale, against the
-share fixed: a color per model, a marker per point). The points:
+share fixed: a color per model, a marker per point).
 
-- a setting at L0 (``*_baseline``): every bug sent in its sessions; fixed means passing at the end
-  (``fixed_end``); a bug's cost is its session's cost over the bugs the session was sent;
+Every point of a model covers the same bugs: the (task, subtask) pairs that every L0 setting and
+the isolated sessions have a valid verdict for (``n_bugs``; ``n_dropped`` the bugs left out). The
+points:
+
+- a setting at L0 (``*_baseline``): fixed means passing at the end (``fixed_end``); a bug's cost is
+  its session's cost over the bugs the session was sent;
 - ``isolated``: the same bugs, each in its own session (``single_bug<k>``), fixed at its end;
-- ``isolated_capped``: the same sessions, fixed only if the fix came within the time the bug had in
-  the shared sessions, the wall clock minus its send time there (``wall - k * interval``), so the
-  gap to the settings is not only the isolated agent's extra time. Its cost is the whole session's,
+- ``isolated_capped``: the same sessions, graded on the replayed state at the time the bug had in
+  the shared sessions, their wall clock minus its send time there (``fixes.state_at``), as the
+  shared sessions are graded at their end. Trials whose replay is unusable (``timing_ok`` false)
+  are left out of this point only (``n_bugs`` is then smaller). Its cost is the whole session's,
   an upper bound on what the capped run would have cost.
 """
 
@@ -27,57 +34,82 @@ from pathlib import Path
 
 import pandas as pd
 
+from .estimates import _flag, _valid
+from .fixes import state_at
+from .load import load_trial
+
 ISOLATED = re.compile(r"single_bug(\d+)$")
+BUG = ["task_name", "subtask_id"]
 
 
 def _load(d: Path, name: str) -> pd.DataFrame:
     path = d / name
     if not path.is_file():
         raise SystemExit(f"[FAIL] {path} not found: run scripts/analyze.sh on that sweep first")
-    df = pd.read_csv(path)
-    return df[df["valid"].astype(bool)] if "valid" in df else df
+    return _valid(pd.read_csv(path, low_memory=False))
 
 
-def _row(point: str, fixed: pd.Series, cost_per_bug: pd.Series, n_sessions: int, n_tasks: int) -> dict:
+def _trial(root: Path, trial_dir: str):
+    path = root / trial_dir
+    if not path.is_dir():
+        raise SystemExit(f"[FAIL] {path} not found: the analysis needs the sweep's jobs dir (run it from the repo root)")
+    return load_trial(path)
+
+
+def _row(point: str, fixed: pd.Series, cost_per_bug: pd.Series, n_tasks: int, n_dropped: int) -> dict:
     n = len(fixed)
     return {"point": point, "n_bugs": n, "n_fixed": int(fixed.sum()), "fixed_frac": fixed.mean() if n else float("nan"),
             "usd_per_bug": cost_per_bug.mean() if n else float("nan"), "usd_total": cost_per_bug.sum(),
-            "usd_per_repo": cost_per_bug.sum() / n_tasks if n_tasks else float("nan"), "n_sessions": n_sessions}
+            "usd_per_repo": cost_per_bug.sum() / n_tasks if n_tasks else float("nan"), "n_dropped": n_dropped}
 
 
-def l0_table(levels: Path, isolated: Path, interval: float = 240.0, wall: float = 1800.0) -> pd.DataFrame:
+def _bugs(d: pd.DataFrame) -> set[tuple]:
+    return set(map(tuple, d[BUG].to_numpy()))
+
+
+def l0_table(levels: Path, isolated: Path, root: Path = Path(".")) -> pd.DataFrame:
     ep, fx = _load(levels, "episodes.csv"), _load(levels, "fixes.csv")
-    rows = []
-    for cond, e in ep[ep["condition"].str.endswith("_baseline")].groupby("condition"):
-        f = fx[fx["condition"] == cond].merge(e[["trial_name", "cost_total"]], on="trial_name")
-        per_bug = f["cost_total"] / f.groupby("trial_name")["subtask_id"].transform("count")
-        rows.append(_row(cond.removesuffix("_baseline"), f["fixed_end"].astype(bool), per_bug, len(e),
-                         e["task_name"].nunique()))
-    ep, fx = _load(isolated, "episodes.csv"), _load(isolated, "fixes.csv")
-    f = fx.merge(ep[["trial_name", "cost_total"]], on="trial_name")
-    k = f["condition"].str.extract(ISOLATED, expand=False)
-    if k.isna().any():
-        bad = sorted(f.loc[k.isna(), "condition"].unique())
+    shared_ep = ep[ep["condition"].str.endswith("_baseline")]
+    shared = fx.merge(shared_ep[["trial_name", "cost_total", "trial_dir"]], on="trial_name")
+    shared["usd"] = shared["cost_total"] / shared.groupby("trial_name")["subtask_id"].transform("count")
+    shared["fixed"] = _flag(shared, "fixed_end")
+    iep, ifx = _load(isolated, "episodes.csv"), _load(isolated, "fixes.csv")
+    iso = ifx.merge(iep[["trial_name", "cost_total", "trial_dir"]], on="trial_name")
+    bad = sorted(c for c in iso["condition"].unique() if not ISOLATED.search(c))
+    if bad:
         raise SystemExit(f"[FAIL] {isolated}: conditions {bad} are not single_bug<k>")
-    cap = wall - k.astype(int) * interval
-    fixed_sec = pd.to_numeric(f["fixed_sec"], errors="coerce")
-    n_tasks = ep["task_name"].nunique()
-    rows.append(_row("isolated", f["fixed_end"].astype(bool), f["cost_total"], len(ep), n_tasks))
-    # fixed_sec: the first pass the bug then keeps (fixes.py), so a fix by the cap counts even if the
-    # isolated agent went on working after it
-    rows.append(_row("isolated_capped", fixed_sec.le(cap), f["cost_total"], len(ep), n_tasks))
+    iso["fixed"] = _flag(iso, "fixed_end")
+
+    # the bugs every point has: a verdict in each L0 setting and in the isolated sessions
+    sets = [_bugs(g) for _, g in shared.groupby("condition")] + [_bugs(iso)]
+    common, n_all = set.intersection(*sets), len(set.union(*sets))
+    shared = shared[[b in common for b in map(tuple, shared[BUG].to_numpy())]]
+    iso = iso[[b in common for b in map(tuple, iso[BUG].to_numpy())]]
+    n_tasks, dropped = len({t for t, _ in common}), n_all - len(common)
+    rows = [_row(cond.removesuffix("_baseline"), g["fixed"], g["usd"], n_tasks, dropped)
+            for cond, g in shared.groupby("condition")]
+    rows.append(_row("isolated", iso["fixed"], iso["cost_total"], n_tasks, dropped))
+
+    # each bug's time in the shared sessions: their configured wall clock minus its send time there
+    walls = {d: float((_trial(root, d).episode or {})["config"]["interactive"]["wall_clock_sec"])
+             for d in shared["trial_dir"].unique()}
+    had = (shared.assign(had=shared["trial_dir"].map(walls) - shared["ready_session_sec"])
+           .groupby(BUG)["had"].median())
+    capped = []
+    for _, r in iso.iterrows():
+        status = state_at(_trial(root, r["trial_dir"]), float(had[(r["task_name"], r["subtask_id"])])).get(r["subtask_id"])
+        if status is not None:  # {} when the replay is unusable: left out of this point
+            capped.append({"fixed": status == "pass", "usd": r["cost_total"]})
+    c = pd.DataFrame(capped, columns=["fixed", "usd"])
+    rows.append(_row("isolated_capped", c["fixed"].astype(bool), c["usd"], n_tasks, dropped))
     return pd.DataFrame(rows)
 
 
-MARKERS = {"background_hinted": "o", "manager_background": "s", "manager_owner": "D", "isolated": "*",
-           "isolated_capped": "*"}
-
-
 def plot(table: pd.DataFrame, path: Path, title: str = "") -> None:
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
+
+    from ..plots.final import MARKERS, pyplot
+    plt = pyplot()
     fig, ax = plt.subplots(figsize=(7, 4.5))
     models = list(dict.fromkeys(table["model"]))
     colors = {m: plt.get_cmap("tab10")(i % 10) for i, m in enumerate(models)}
@@ -100,24 +132,15 @@ def plot(table: pd.DataFrame, path: Path, title: str = "") -> None:
     plt.close(fig)
 
 
-def _model_arg(text: str) -> tuple[str, Path, Path]:
-    name, sep, dirs = text.partition("=")
-    levels, sep2, isolated = dirs.partition(":")
-    if not (sep and sep2 and name and levels and isolated):
-        raise argparse.ArgumentTypeError(f"expected NAME=LEVELS_DIR:ISOLATED_DIR, got {text!r}")
-    return name, Path(levels), Path(isolated)
-
-
 def main(argv: list[str] | None = None) -> int:
+    from ..plots.final import named_dirs
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--model", type=_model_arg, action="append", required=True, metavar="NAME=LEVELS:ISOLATED",
+    p.add_argument("--model", type=named_dirs(2), action="append", required=True, metavar="NAME=LEVELS:ISOLATED",
                    help="a model's levels and isolated analysis dirs; repeat per model")
     p.add_argument("--out", type=Path, required=True)
-    p.add_argument("--interval", type=float, default=240.0, help="seconds between bugs in the shared sessions")
-    p.add_argument("--wall", type=float, default=1800.0, help="the shared sessions' wall clock in seconds")
+    p.add_argument("--root", type=Path, default=Path("."), help="the dir the tables' trial_dir paths are relative to")
     a = p.parse_args(argv)
-    table = pd.concat([l0_table(lv, iso, a.interval, a.wall).assign(model=name) for name, lv, iso in a.model],
-                      ignore_index=True)
+    table = pd.concat([l0_table(lv, iso, a.root).assign(model=name) for name, (lv, iso) in a.model], ignore_index=True)
     table = table[["model"] + [c for c in table.columns if c != "model"]]
     a.out.mkdir(parents=True, exist_ok=True)
     table.to_csv(a.out / "l0.csv", index=False)

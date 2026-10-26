@@ -43,10 +43,12 @@ if [ "$hv" = "0.24.0" ]; then pass "harbor $hv"; else fail "harbor 0.24.0 not in
 
 if [ "$FINAL" = 1 ]; then
   if scripts/get_tasks.sh; then pass "SWE-sweep tasks"; else fail "scripts/get_tasks.sh failed (see above)"; fi
-  if [ -n "${MODAL_TOKEN_ID:-}" ] || [ -f "$HOME/.modal.toml" ]; then
-    pass "Modal token"
+  # the same check preflight makes (both MODAL_TOKEN_ID and MODAL_TOKEN_SECRET, or ~/.modal.toml)
+  if msg="$(.venv/bin/python -c 'from subagents_bench.sweep import modal_ready
+ok, msg = modal_ready(); print(msg); raise SystemExit(0 if ok else 1)')"; then
+    pass "Modal: $msg"
   else
-    fail "no Modal token: run .venv/bin/modal token new"
+    fail "Modal: $msg"
   fi
 else
   if docker info >/dev/null 2>&1; then pass "Docker running"; else fail "Docker is not running: start Docker Desktop or dockerd"; fi

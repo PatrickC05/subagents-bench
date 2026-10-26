@@ -2,20 +2,22 @@
 
 from __future__ import annotations
 
+import argparse
 import math
+from pathlib import Path
 
 import pandas as pd
 import pytest
 
-from subagents_bench.plots.final import FIGURES, censored_median, main, split
+from subagents_bench.plots.final import FIGURES, main, named_dirs
 
 
-def test_split_and_censored_median():
-    assert split("manager_owner_questions") == ("manager_owner", "questions")
-    assert split("background_hinted_baseline") == ("background_hinted", "baseline")
-    assert censored_median(pd.Series([10.0, None, 30.0])) == 30.0
-    assert math.isinf(censored_median(pd.Series([10.0, None, None])))
-    assert censored_median(pd.Series([10.0, 20.0])) == 15.0
+def test_named_dirs():
+    assert named_dirs(1)("A b=x/y") == ("A b", Path("x/y"))
+    assert named_dirs(2)("A=x:y") == ("A", (Path("x"), Path("y")))
+    for bad, n in (("A", 1), ("=x", 1), ("A=x", 2), ("A=x:", 2), ("A=x:y", 1)):
+        with pytest.raises(argparse.ArgumentTypeError):
+            named_dirs(n)(bad)
 
 
 def write_model(d, slow: float):
@@ -28,7 +30,7 @@ def write_model(d, slow: float):
             for k in range(3):
                 msgs.append({"condition": cond, "trial_name": trial, "valid": True, "kind": "bug", "index": k,
                              "user_reply_sec": None if k == 2 else slow * (k + 1), "reply_sec": 5.0,
-                             "fixed": k == 0})
+                             "fixed": True if k == 0 else None})  # None: no verdict, not fixed
             if lv in ("questions", "urgent"):
                 msgs.append({"condition": cond, "trial_name": trial, "valid": True, "kind": "question", "index": 0,
                              "user_reply_sec": None, "reply_sec": 30.0, "fixed": None})
@@ -54,8 +56,10 @@ def test_figures_and_tables(tmp_path):
         assert (out / f"{f.__name__}.png").is_file() and (out / f"{f.__name__}.csv").is_file()
     rt = pd.read_csv(out / "response_time.csv")
     assert set(rt["setting"]) == {"background_hinted", "manager_background", "manager_owner"}
-    r = rt[(rt["model"] == "B") & (rt["setting"] == "manager_owner") & (rt["level"] == "eta")].iloc[0]
-    assert (r["n"], r["replied_frac"]) == (2, 0.5) and math.isinf(r["median_sec"])  # bug 2 never replied
+    r = rt[(rt["model"] == "B") & (rt["setting"] == "manager_owner") & (rt["level"] == "L1")].iloc[0]
+    assert (r["n"], r["replied_frac"]) == (2, 0.5) and math.isnan(r["median_sec"])  # bug 2 never replied: never
+    bf = pd.read_csv(out / "bugs_fixed.csv")
+    assert bf["n_fixed"].eq(1).all() and bf["n"].eq(3).all()
     ot = pd.read_csv(out / "orchestrator_time.csv").iloc[0]
     assert ot["llm_frac"] == pytest.approx(1000 / 1800) and ot["tool_frac"] == pytest.approx(180 / 1800)
     qb = pd.read_csv(out / "question_vs_bug.csv")

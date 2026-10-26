@@ -9,8 +9,8 @@ figures, each with the table it draws (``<name>.csv``):
 
 1. ``response_time``: median seconds from a bug being sent to the first reply the user saw
    (``user_reply_sec``; not the session's first bug), per model, level and setting. A bug never
-   replied to counts as never (censored median): a bar whose median is never is drawn hatched at
-   the session length.
+   replied to counts as never (``interactivity._median_censored``: NaN when the median is never):
+   such a bar is drawn hatched at the session length.
 2. ``bugs_fixed``: share of the bugs sent that pass at the end (the verifier, ``fixed``).
 3. ``eta``: each scored estimate (``estimates.csv``): the minutes it gave against the minutes the
    fix actually took from then (replayed ``fixed_sec``); a bug never fixed is drawn at the session's
@@ -33,36 +33,38 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from ..analysis.estimates import _flag, _valid
+from ..analysis.interactivity import _median_censored
+from ..analysis.levels import setting_level
+
 SETTINGS = ["background_hinted", "manager_background", "manager_owner"]
 SETTING_LABEL = {"background_hinted": "Orchestrator + subagents", "manager_background": "Subagents only",
                  "manager_owner": "Subagents only (owner)"}
-LEVELS = {"baseline": "L0 bugs", "eta": "L1 + ETA", "questions": "L2 + questions", "urgent": "L3 + urgent"}
+LEVELS = {"L0": "L0 bugs", "L1": "L1 + ETA", "L2": "L2 + questions", "L3": "L3 + urgent"}  # levels.setting_level's
 SETTING_SHORT = {"background_hinted": "Orch + sub", "manager_background": "Sub only", "manager_owner": "Owner"}
-LEVEL_SHORT = {"baseline": "L0", "eta": "L1", "questions": "L2", "urgent": "L3"}
+MARKERS = {"background_hinted": "o", "manager_background": "s", "manager_owner": "D", "isolated": "*",
+           "isolated_capped": "*"}  # experiment 1's points (analysis.final)
+# the columns each table is read with (calls.csv and tools.csv have hundreds of thousands of rows)
+COLUMNS = {"messages": ["condition", "trial_name", "valid", "kind", "index", "user_reply_sec", "reply_sec", "fixed"],
+           "estimates": ["condition", "trial_name", "valid", "scored", "task_name", "subtask_id", "ready_session_sec",
+                         "est_sec", "eta_min", "fixed_sec", "on_time", "weight"],
+           "calls": ["condition", "trial_name", "valid", "role", "t_start", "t_end"],
+           "tools": ["condition", "trial_name", "valid", "role", "name", "t_start", "t_end"],
+           "episodes": ["condition", "trial_name", "valid", "wall_clock_sec"]}
 COLORS = {"background_hinted": "#3a6fb0", "manager_background": "#c4571f", "manager_owner": "#d9a634"}
 WALL = 1800.0
 
 
-def split(condition: str) -> tuple[str, str]:
-    """``manager_owner_questions`` -> (``manager_owner``, ``questions``)."""
-    setting, _, level = condition.rpartition("_")
-    return setting, level
-
-
 def _read(d: Path, name: str, required: bool = True) -> pd.DataFrame:
-    path = d / name
+    path = d / f"{name}.csv"
     if not path.is_file():
         if required:
             raise SystemExit(f"[FAIL] {path} not found: run scripts/analyze.sh on that sweep first")
-        return pd.DataFrame()
-    df = pd.read_csv(path, low_memory=False)
-    if "valid" in df:
-        df = df[df["valid"].astype(bool)]
-    if "condition" in df and len(df):
-        sl = df["condition"].map(split)
-        df = df.assign(setting=sl.str[0], level=sl.str[1])
-        df = df[df["setting"].isin(SETTINGS) & df["level"].isin(LEVELS)]
-    return df
+        return pd.DataFrame(columns=COLUMNS[name])
+    df = _valid(pd.read_csv(path, usecols=lambda c: c in COLUMNS[name], low_memory=False))
+    sl = df["condition"].map(setting_level)
+    df = df.assign(setting=sl.str[0], level=sl.str[1])
+    return df[df["setting"].isin(SETTINGS) & df["level"].isin(LEVELS)]
 
 
 def load(models: dict[str, Path]) -> dict[str, pd.DataFrame]:
@@ -71,24 +73,32 @@ def load(models: dict[str, Path]) -> dict[str, pd.DataFrame]:
     for model, d in models.items():
         for name, required in (("messages", True), ("estimates", False), ("calls", False), ("tools", False),
                                ("episodes", True)):
-            out.setdefault(name, []).append(_read(d, f"{name}.csv", required).assign(model=model))
+            out.setdefault(name, []).append(_read(d, name, required).assign(model=model))
     return {k: pd.concat(v, ignore_index=True) for k, v in out.items()}
 
 
-def censored_median(values: pd.Series) -> float:
-    """Median with a missing value (never) as +inf: inf when most never happened."""
-    v = np.sort(pd.to_numeric(values, errors="coerce").fillna(math.inf).to_numpy())
-    if not len(v):
-        return math.nan
-    mid = len(v) // 2
-    return float(v[mid]) if len(v) % 2 else float((v[mid - 1] + v[mid]) / 2)
+def _never(median: float, n: int) -> bool:
+    """``interactivity._median_censored`` is NaN when the censored median is never (or no rows)."""
+    return n > 0 and math.isnan(median)
 
 
-def _plt():
+def pyplot():
+    """matplotlib.pyplot on the Agg backend (no display needed)."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     return plt
+
+
+def named_dirs(n: int):
+    """An argparse type for ``NAME=DIR`` (n = 1) or ``NAME=DIR:DIR`` (n = 2): (name, dirs)."""
+    def parse(text: str) -> tuple[str, Path | tuple[Path, ...]]:
+        name, sep, rest = text.partition("=")
+        dirs = rest.split(":") if rest else []
+        if not sep or not name or len(dirs) != n or not all(dirs):
+            raise argparse.ArgumentTypeError(f"expected NAME={':'.join(['DIR'] * n)}, got {text!r}")
+        return name, Path(dirs[0]) if n == 1 else tuple(Path(d) for d in dirs)
+    return parse
 
 
 def _bars(ax, table: pd.DataFrame, value: str, models: list[str], ylabel: str, cap: float | None = None) -> None:
@@ -102,11 +112,11 @@ def _bars(ax, table: pd.DataFrame, value: str, models: list[str], ylabel: str, c
                 if r.empty:
                     continue
                 v = float(r[value].iloc[0])
-                never = cap is not None and math.isinf(v)
+                never = cap is not None and _never(v, int(r["n"].iloc[0]))
                 ax.bar(x0 + j * width, cap if never else v, width, color="white" if never else COLORS[s],
                        edgecolor=COLORS[s], hatch="//" if never else None)
             ticks.append(x0 + width * (len(SETTINGS) - 1) / 2)
-            labels.append(LEVEL_SHORT[lv])
+            labels.append(lv)
             x0 += 1
         ax.text((ticks[-1] + ticks[-len(LEVELS)]) / 2, -0.12, m, transform=ax.get_xaxis_transform(), ha="center",
                 fontsize=8, fontweight="bold")
@@ -130,8 +140,8 @@ def response_time(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> p
     m = t["messages"]
     bugs = m[(m["kind"] == "bug") & (m["index"] > 0)]
     tab = bugs.groupby(["model", "setting", "level"])["user_reply_sec"].agg(
-        median_sec=censored_median, replied_frac=lambda v: v.notna().mean(), n="size").reset_index()
-    plt = _plt()
+        median_sec=_median_censored, replied_frac=lambda v: v.notna().mean(), n="size").reset_index()
+    plt = pyplot()
     fig, ax = plt.subplots(figsize=(max(6, 3 * len(models)), 4))
     _bars(ax, tab, "median_sec", models, "median s to first reply (hatched: never)", cap=WALL)
     fig.suptitle("Time to the first reply the user saw, bugs (L0 bugs, L1 + ETA, L2 + questions, L3 + urgent)", fontsize=9)
@@ -141,10 +151,10 @@ def response_time(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> p
 
 def bugs_fixed(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> pd.DataFrame:
     m = t["messages"]
-    bugs = m[m["kind"] == "bug"]
+    bugs = m[m["kind"] == "bug"].assign(fixed=lambda d: _flag(d, "fixed"))  # no verdict: not fixed
     tab = bugs.groupby(["model", "setting", "level"])["fixed"].agg(
-        fixed_frac=lambda v: v.astype(bool).mean(), n_fixed=lambda v: int(v.astype(bool).sum()), n="size").reset_index()
-    plt = _plt()
+        fixed_frac="mean", n_fixed="sum", n="size").reset_index()
+    plt = pyplot()
     fig, ax = plt.subplots(figsize=(max(6, 3 * len(models)), 4))
     _bars(ax, tab, "fixed_frac", models, "share of bugs fixed")
     ax.set_ylim(0, 1)
@@ -157,13 +167,13 @@ def eta(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> pd.DataFram
     e = t["estimates"]
     if e.empty:
         return e
-    e = e[e["scored"].astype(bool)].copy()
+    e = e[_flag(e, "scored")].copy()
     start = e["ready_session_sec"] + e["est_sec"]  # seconds into the session the estimate was given
     fixed = pd.to_numeric(e["fixed_sec"], errors="coerce")
     e["predicted_min"] = e["eta_min"]
     e["actual_min"] = ((fixed - e["est_sec"]).where(fixed.notna(), WALL - start)) / 60
     e["never_fixed"] = fixed.isna()
-    plt = _plt()
+    plt = pyplot()
     fig, axes = plt.subplots(1, len(models), figsize=(4 * len(models), 4), squeeze=False)
     for ax, mname in zip(axes[0], models):
         d = e[e["model"] == mname]
@@ -180,7 +190,7 @@ def eta(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> pd.DataFram
         ax.set_xlim(0.1, max(100, float(d["predicted_min"].max() or 1) * 2) if len(d) else 100)
         ax.set_ylim(0.1, 100)
         w = d["weight"].fillna(0)
-        share = float((d["on_time"].astype(bool) * w).sum() / w.sum()) if w.sum() else math.nan
+        share = float((_flag(d, "on_time") * w).sum() / w.sum()) if w.sum() else math.nan
         ax.set_title(f"{mname}: on time {share:.0%}" if not math.isnan(share) else mname, fontsize=9)
         ax.set_xlabel("estimate (min)")
     axes[0][0].set_ylabel("actual minutes to fix\n(triangles: never fixed, at session end)")
@@ -196,7 +206,7 @@ def response_cdf(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> pd
     bugs = m[(m["kind"] == "bug") & (m["index"] > 0)]
     grid = np.arange(0, WALL + 1, 15.0)
     rows = []
-    plt = _plt()
+    plt = pyplot()
     fig, axes = plt.subplots(1, len(models), figsize=(4 * len(models), 3.5), squeeze=False, sharey=True)
     for ax, mname in zip(axes[0], models):
         for s in SETTINGS:
@@ -242,7 +252,7 @@ def orchestrator_time(t: dict[str, pd.DataFrame], models: list[str], out: Path) 
         ep[f"{c}_frac"] = (ep[f"{c}_sec"] / ep["wall_clock_sec"]).clip(0, 1)
     ep["other_frac"] = (1 - ep["llm_frac"] - ep["tool_frac"]).clip(lower=0)
     tab = ep.groupby(["model", "setting"])[["llm_frac", "tool_frac", "other_frac"]].mean().reset_index()
-    plt = _plt()
+    plt = pyplot()
     fig, ax = plt.subplots(figsize=(max(6, 2.5 * len(models)), 4))
     x, ticks, labels = 0, [], []
     for mname in models:
@@ -271,13 +281,13 @@ def orchestrator_time(t: dict[str, pd.DataFrame], models: list[str], out: Path) 
 
 def question_vs_bug(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> pd.DataFrame:
     m = t["messages"]
-    m = m[m["level"].isin(["questions", "urgent"])]
+    m = m[m["level"].isin(["L2", "L3"])]
     q = m[m["kind"] == "question"].assign(kind="question", sec=lambda d: d["reply_sec"])
     b = m[(m["kind"] == "bug") & (m["index"] > 0)].assign(kind="bug", sec=lambda d: d["user_reply_sec"])
     both = pd.concat([q, b])
     tab = both.groupby(["model", "setting", "kind"])["sec"].agg(
-        median_sec=censored_median, mean_replied_sec="mean", replied_frac=lambda v: v.notna().mean(), n="size").reset_index()
-    plt = _plt()
+        median_sec=_median_censored, mean_replied_sec="mean", replied_frac=lambda v: v.notna().mean(), n="size").reset_index()
+    plt = pyplot()
     fig, axes = plt.subplots(1, len(models), figsize=(4 * len(models), 3.8), squeeze=False, sharey=True)
     for ax, mname in zip(axes[0], models):
         for j, s in enumerate(SETTINGS):
@@ -286,7 +296,7 @@ def question_vs_bug(t: dict[str, pd.DataFrame], models: list[str], out: Path) ->
                 if r.empty:
                     continue
                 v, frac = float(r["median_sec"].iloc[0]), float(r["replied_frac"].iloc[0])
-                never = math.isinf(v)
+                never = _never(v, int(r["n"].iloc[0]))
                 xpos = j + (k - 0.5) * 0.38
                 ax.bar(xpos, WALL / 60 if never else v / 60, 0.38, color="white" if never else COLORS[s], alpha=alpha,
                        edgecolor=COLORS[s], hatch="//" if never else None)
@@ -305,20 +315,12 @@ def _save(fig, path: Path, tight: bool = True) -> None:
     if tight:
         fig.tight_layout()
     fig.savefig(path, dpi=150)
-    import matplotlib.pyplot as plt
-    plt.close(fig)
-
-
-def _model_arg(text: str) -> tuple[str, Path]:
-    name, sep, d = text.partition("=")
-    if not sep or not name or not d:
-        raise argparse.ArgumentTypeError(f"expected NAME=DIR, got {text!r}")
-    return name, Path(d)
+    pyplot().close(fig)
 
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--model", type=_model_arg, action="append", required=True, metavar="NAME=DIR",
+    p.add_argument("--model", type=named_dirs(1), action="append", required=True, metavar="NAME=DIR",
                    help="a model's levels-sweep analysis dir; repeat per model, in plotting order")
     p.add_argument("--out", type=Path, required=True)
     a = p.parse_args(argv)

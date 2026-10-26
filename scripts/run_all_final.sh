@@ -13,7 +13,9 @@
 #   experiments 1 and 2 (L0-L3 + isolated, 108 sessions each): Opus 5.5, Luna, DeepSeek-V4.1-Flash-1017
 #   experiment 1 only (L0 + isolated, 54 sessions each):        Terra, Sol, Sonnet 5.5, Argon, Kimi K3
 # Claude Haiku 5.5 and MiMo V2.6 are not on Prime and are left out.
-# A model that fails does not stop the others; the exit code is the first failure's (0: all done).
+# A model whose jobs fail (exit 1) or whose provider is down (4) does not stop the others; an
+# interrupt (130), a billing error (3: every model bills the same Prime account) or a config error
+# (2) does. The exit code is the first failure's (0: all done).
 # Figures: analysis/final_l0/ (experiment 1, every model) and figures/final/ (experiment 2).
 set -euo pipefail
 
@@ -54,6 +56,9 @@ run() {  # STEM [--l0-only]
     echo "[FAIL] $1: scripts/run_final.sh exited $rc"
     [ "$first_rc" -ne 0 ] || first_rc=$rc
   fi
+  case "$rc" in  # stop: interrupted (Ctrl-C), billing (every model bills the same account), config error
+    130 | 3 | 2) echo "[ABORT] not starting the other models (exit $rc)"; exit "$rc" ;;
+  esac
 }
 for m in "${FULL[@]}"; do run "$m"; done
 for m in "${L0_ONLY[@]}"; do run "$m" --l0-only; done
@@ -63,11 +68,18 @@ echo "== cross-model figures"
 L0_ARGS=() EXP2_ARGS=()
 for m in "${FULL[@]}" "${L0_ONLY[@]}"; do
   lv="analysis/final_levels-$m" iso="analysis/final_isolated-$m"
-  if [ -f "$lv/episodes.csv" ] && [ -f "$iso/episodes.csv" ]; then L0_ARGS+=(--model "$(name "$m")=$lv:$iso"); fi
+  if [ -f "$lv/episodes.csv" ] && [ -f "$lv/fixes.csv" ] && [ -f "$iso/episodes.csv" ] && [ -f "$iso/fixes.csv" ]; then
+    L0_ARGS+=(--model "$(name "$m")=$lv:$iso")
+  fi
 done
 for m in "${FULL[@]}"; do
   if [ -f "analysis/final_levels-$m/messages.csv" ]; then EXP2_ARGS+=(--model "$(name "$m")=analysis/final_levels-$m"); fi
 done
-[ ${#L0_ARGS[@]} -eq 0 ] || .venv/bin/python -m subagents_bench.analysis.final "${L0_ARGS[@]}" --out analysis/final_l0
-[ ${#EXP2_ARGS[@]} -eq 0 ] || .venv/bin/python -m subagents_bench.plots.final "${EXP2_ARGS[@]}" --out figures/final
+figure() {  # a failed figure is reported, and the other still drawn
+  local rc=0
+  .venv/bin/python -m "$@" || rc=$?
+  if [ "$rc" -ne 0 ]; then echo "[FAIL] $1 exited $rc"; [ "$first_rc" -ne 0 ] || first_rc=$rc; fi
+}
+if [ ${#L0_ARGS[@]} -gt 0 ]; then figure subagents_bench.analysis.final "${L0_ARGS[@]}" --out analysis/final_l0; fi
+if [ ${#EXP2_ARGS[@]} -gt 0 ]; then figure subagents_bench.plots.final "${EXP2_ARGS[@]}" --out figures/final; fi
 exit "$first_rc"
