@@ -17,8 +17,8 @@
 #
 # What runs (issue #23 is the source of truth):
 #   experiments 1 and 2 (L0-L2 + isolated, 90 sessions each):  Opus 5.5, Luna, DeepSeek-V4.1-Flash-1017
-#   experiment 1 only (L0 + isolated, 54 sessions each):        Terra, Sol, Sonnet 5.5
-# Gemini 4 Argon and Kimi K3 are left out (we have no access to them), and Claude Haiku 5.5 and
+#   experiment 1 only (L0 + isolated, 54 sessions each):        Terra, Sol, Sonnet 5.5, Kimi K3
+# Gemini 4 Argon is left out (no access), and Claude Haiku 5.5 and
 # MiMo V2.6 are not on Prime. scripts/run_final_patrick.sh and scripts/run_final_jonathan.sh split
 # the models between two machines.
 # A model whose jobs fail (exit 1) or whose provider is down (4) does not stop the others; an
@@ -32,12 +32,12 @@ cd "$ROOT"
 usage() { sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed -e '$d' -e 's/^# \{0,1\}//'; }
 
 FULL=(claude-opus-5.5 gpt-5.6-luna deepseek-v4.1-flash-1017)
-L0_ONLY=(gpt-5.6-sol gpt-5.6-terra claude-sonnet-5.5)
+L0_ONLY=(gpt-5.6-sol gpt-5.6-terra claude-sonnet-5.5 kimi-k3)
 name() {  # the figures' label of a model file stem
   case "$1" in
     claude-opus-5.5) echo "Opus 5.5" ;; claude-sonnet-5.5) echo "Sonnet 5.5" ;;
     gpt-5.6-luna) echo "GPT-5.6 Luna" ;; gpt-5.6-terra) echo "GPT-5.6 Terra" ;; gpt-5.6-sol) echo "GPT-5.6 Sol" ;;
-    deepseek-v4.1-flash-1017) echo "DeepSeek-V4.1-Flash" ;; *) echo "$1" ;;
+    deepseek-v4.1-flash-1017) echo "DeepSeek-V4.1-Flash" ;; kimi-k3) echo "Kimi K3" ;; *) echo "$1" ;;
   esac
 }
 

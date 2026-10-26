@@ -12,9 +12,10 @@ figures, each with the table it draws (``<name>.csv``):
    replied to counts as never (``interactivity._median_censored``: NaN when the median is never):
    such a bar is drawn hatched at the session length.
 2. ``bugs_fixed``: share of the bugs sent that pass at the end (the verifier, ``fixed``).
-3. ``eta``: each scored estimate (``estimates.csv``): the minutes it gave against the minutes the
-   fix actually took from then (replayed ``fixed_sec``); a bug never fixed is drawn at the session's
-   end, as a lower bound. The title gives the on-time share (weighted, one weight per bug).
+3. ``eta``: each scored estimate (``estimates.csv``) against the minutes the fix actually took from
+   then (replayed ``fixed_sec``): the overestimation factor per model and setting (``eta.png``) and
+   estimate against actual (``eta_scatter.png``); a bug never fixed counts at the session's end, as
+   a lower bound. The on-time share is weighted, one weight per bug.
 4. ``response_cdf``: share of bugs replied to within t, per setting, one panel per model. A curve
    that stays below 1 is bugs never replied to.
 5. ``orchestrator_time``: the share of each session the orchestrator spends in model calls, in its
@@ -112,27 +113,50 @@ def named_dirs(n: int):
     return parse
 
 
-def _bars(ax, table: pd.DataFrame, value: str, models: list[str], ylabel: str, cap: float | None = None) -> None:
-    """Grouped bars: x = model x level, one bar per setting; inf drawn hatched at ``cap``."""
+def _log_limits(values, pad: float = 1.6, floor: float = 1e-3) -> tuple[float, float]:
+    """Log-axis limits around the finite positive values, padded by a factor."""
+    v = [x for x in values if x is not None and math.isfinite(x) and x > 0]
+    if not v:
+        return 1.0, 10.0
+    return max(floor, min(v) / pad), max(v) * pad
+
+
+def _bars(ax, table: pd.DataFrame, value: str, models: list[str], ylabel: str, log: bool = False) -> None:
+    """Grouped bars: x = model x the levels it ran, one bar per setting. With ``log``, a log axis
+    fitted to the data, and a median that is never (NaN with rows) drawn hatched up to the top."""
     width, x0 = 0.8 / len(SETTINGS), 0
     ticks, labels = [], []
+    top = None
+    if log:
+        lo, hi = _log_limits(table[value])
+        top = hi * 2.5  # room above the tallest bar for the never bars
+        ax.set_yscale("log")
     for m in models:
-        for lv in LEVELS:
+        levels = [lv for lv in LEVELS if ((table["model"] == m) & (table["level"] == lv)).any()]
+        first = len(ticks)
+        for lv in levels:
             for j, s in enumerate(SETTINGS):
                 r = table[(table["model"] == m) & (table["level"] == lv) & (table["setting"] == s)]
                 if r.empty:
                     continue
                 v = float(r[value].iloc[0])
-                never = cap is not None and _never(v, int(r["n"].iloc[0]))
-                ax.bar(x0 + j * width, cap if never else v, width, color="white" if never else COLORS[s],
-                       edgecolor=COLORS[s], hatch="//" if never else None)
+                never = log and _never(v, int(r["n"].iloc[0]))
+                x = x0 + j * width
+                if never:
+                    ax.bar(x, top - lo, width, bottom=lo, color="white", edgecolor=COLORS[s], hatch="//")
+                    ax.annotate("never", (x, top), ha="center", va="top", fontsize=5, rotation=90)
+                else:
+                    ax.bar(x, v - (lo if log else 0), width, bottom=lo if log else 0, color=COLORS[s])
             ticks.append(x0 + width * (len(SETTINGS) - 1) / 2)
             labels.append(lv)
             x0 += 1
-        ax.text((ticks[-1] + ticks[-len(LEVELS)]) / 2, -0.12, m, transform=ax.get_xaxis_transform(), ha="center",
-                fontsize=8, fontweight="bold")
+        if len(ticks) > first:
+            ax.text((ticks[-1] + ticks[first]) / 2, -0.12, m, transform=ax.get_xaxis_transform(), ha="center",
+                    fontsize=8, fontweight="bold")
         x0 += 0.5
     ax.set_xticks(ticks, labels, fontsize=7)
+    if log:
+        ax.set_ylim(lo, top)
     ax.set_ylabel(ylabel)
     _legend(ax)
 
@@ -154,7 +178,7 @@ def response_time(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> p
         median_sec=_median_censored, replied_frac=lambda v: v.notna().mean(), n="size").reset_index()
     plt = pyplot()
     fig, ax = plt.subplots(figsize=(max(6, 3 * len(models)), 4))
-    _bars(ax, tab, "median_sec", models, "median s to first reply (hatched: never)", cap=WALL)
+    _bars(ax, tab, "median_sec", models, "median s to first reply (log; hatched: never)", log=True)
     fig.suptitle("Time to the first reply the user saw, bugs (L0 bugs, L1 + ETA, L2 + questions)", fontsize=9)
     _save(fig, out / "response_time.png")
     return tab
@@ -168,13 +192,17 @@ def bugs_fixed(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> pd.D
     plt = pyplot()
     fig, ax = plt.subplots(figsize=(max(6, 3 * len(models)), 4))
     _bars(ax, tab, "fixed_frac", models, "share of bugs fixed")
-    ax.set_ylim(0, 1)
+    ax.set_ylim(max(0.0, float(tab["fixed_frac"].min()) - 0.1), 1.02)
     fig.suptitle("Bugs fixed at the end of the session", fontsize=9)
     _save(fig, out / "bugs_fixed.png")
     return tab
 
 
 def eta(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> pd.DataFrame:
+    """How far each estimate is off: ``eta.png`` shows estimate / actual time to fix (log; 1 = exact,
+    above = overestimated) per model and setting, for the bugs that were fixed, with each model's
+    median factor and on-time share; ``eta_scatter.png`` shows estimate against actual, each axis
+    fitted to its own data (bugs never fixed as triangles at the session's end, a lower bound)."""
     e = t["estimates"]
     if e.empty:
         return e
@@ -184,38 +212,81 @@ def eta(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> pd.DataFram
     e["predicted_min"] = e["eta_min"]
     e["actual_min"] = ((fixed - e["est_sec"]).where(fixed.notna(), WALL - start)) / 60
     e["never_fixed"] = fixed.isna()
+    e["ratio"] = (e["predicted_min"] / e["actual_min"].clip(lower=1 / 60)).where(~e["never_fixed"])
+    models = [m for m in models if (e["model"] == m).any()]
+    if not models:
+        return e
     plt = pyplot()
-    fig, axes = plt.subplots(1, len(models), figsize=(4 * len(models), 4), squeeze=False)
+    rng = np.random.default_rng(0)
+
+    # 1. the overestimation factor
+    fig, ax = plt.subplots(figsize=(max(6, 2.6 * len(models)), 4.2))
+    width = 0.8 / len(SETTINGS)
+    ratios = e["ratio"].dropna()
+    lo, hi = _log_limits(list(ratios) + [1.0], pad=1.8)
+    for i, mname in enumerate(models):
+        d = e[e["model"] == mname]
+        for j, s in enumerate(SETTINGS):
+            r = d.loc[(d["setting"] == s), "ratio"].dropna()
+            if r.empty:
+                continue
+            x = i + (j - (len(SETTINGS) - 1) / 2) * width
+            ax.boxplot(r, positions=[x], widths=width * 0.8, showfliers=False, patch_artist=True,
+                       boxprops={"facecolor": COLORS[s], "alpha": 0.35, "edgecolor": COLORS[s]},
+                       medianprops={"color": COLORS[s], "lw": 1.5}, whiskerprops={"color": COLORS[s]},
+                       capprops={"color": COLORS[s]})
+            ax.scatter(x + rng.uniform(-width * 0.3, width * 0.3, len(r)), r, s=6, color=COLORS[s], alpha=0.6, zorder=3)
+        med = float(d["ratio"].median())
+        w = d["weight"].fillna(0)
+        on_time = float((_flag(d, "on_time") * w).sum() / w.sum()) if w.sum() else math.nan
+        n_never = int(d["never_fixed"].sum())
+        ax.annotate(f"median ×{med:.1f}\non time {on_time:.0%}\n{n_never} never fixed", (i, hi), ha="center", va="top",
+                    fontsize=7)
+    ax.axhline(1.0, color="grey", lw=0.8, ls="--")
+    ax.annotate("exact", (len(models) - 0.5, 1.0), ha="right", va="bottom", fontsize=7, color="grey")
+    ax.set_yscale("log")
+    ax.set_ylim(lo, hi * 4)
+    ax.set_xlim(-0.6, len(models) - 0.4)
+    ax.set_xticks(range(len(models)), models, fontsize=8)
+    ax.set_ylabel("estimate / actual time to fix (log; >1: overestimated)")
+    _legend(ax)
+    fig.suptitle("How far the ETAs are off (bugs fixed in the session)", fontsize=9)
+    _save(fig, out / "eta.png")
+
+    # 2. estimate against actual
+    fig, axes = plt.subplots(1, len(models), figsize=(3.6 * len(models), 3.8), squeeze=False)
     for ax, mname in zip(axes[0], models):
         d = e[e["model"] == mname]
+        xlo, xhi = 0.0, float(d["predicted_min"].max()) * 1.1 + 0.5  # estimates span a few minutes: linear
+        ylo, yhi = _log_limits(d["actual_min"], pad=1.5, floor=1 / 60)
         for s in SETTINGS:
             x = d[d["setting"] == s]
             for never, marker in ((False, "o"), (True, "^")):
                 y = x[x["never_fixed"] == never]
-                ax.scatter(y["predicted_min"].clip(lower=0.1), y["actual_min"].clip(lower=0.1), s=14, marker=marker,
-                           color=COLORS[s], alpha=0.7, facecolors="none" if never else None)
-        lim = [0.1, 1e5]
-        ax.plot(lim, lim, color="grey", lw=0.8)
-        ax.set_xscale("log")
+                ax.scatter(y["predicted_min"], y["actual_min"].clip(lower=ylo), s=14, marker=marker, color=COLORS[s],
+                           alpha=0.7, facecolors="none" if never else None)
+        line = np.linspace(max(xlo, ylo, 1e-3), xhi, 100)
+        ax.plot(line, line, color="grey", lw=0.8, ls="--")
         ax.set_yscale("log")
-        ax.set_xlim(0.1, max(100, float(d["predicted_min"].max() or 1) * 2) if len(d) else 100)
-        ax.set_ylim(0.1, 100)
-        w = d["weight"].fillna(0)
-        share = float((_flag(d, "on_time") * w).sum() / w.sum()) if w.sum() else math.nan
-        ax.set_title(f"{mname}: on time {share:.0%}" if not math.isnan(share) else mname, fontsize=9)
+        ax.set_xlim(xlo, xhi)
+        ax.set_ylim(ylo, yhi)
+        ax.set_title(mname, fontsize=9)
         ax.set_xlabel("estimate (min)")
-    axes[0][0].set_ylabel("actual minutes to fix\n(triangles: never fixed, at session end)")
+    axes[0][0].set_ylabel("actual minutes to fix (log)\n(triangles: never fixed, at session end)")
     fig.legend(handles=[_patch(s) for s in SETTINGS], fontsize=7, loc="lower center", ncol=len(SETTINGS), frameon=False)
-    fig.subplots_adjust(bottom=0.2)
-    _save(fig, out / "eta.png", tight=False)
-    return e[["model", "setting", "level", "task_name", "subtask_id", "predicted_min", "actual_min", "never_fixed",
-              "on_time", "weight"]]
+    fig.subplots_adjust(bottom=0.22, wspace=0.35)
+    _save(fig, out / "eta_scatter.png", tight=False)
+    return e[["model", "setting", "level", "task_name", "subtask_id", "predicted_min", "actual_min", "ratio",
+              "never_fixed", "on_time", "weight"]]
 
 
 def response_cdf(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> pd.DataFrame:
     m = t["messages"]
     bugs = m[(m["kind"] == "bug") & (m["index"] > 0)]
-    grid = np.arange(0, WALL + 1, 15.0)
+    replied = pd.to_numeric(bugs["user_reply_sec"], errors="coerce").dropna()
+    lo, hi = _log_limits(list(replied), pad=1.3, floor=0.5)
+    hi = min(hi, WALL)
+    grid = np.geomspace(lo, hi, 200)
     rows = []
     plt = pyplot()
     fig, axes = plt.subplots(1, len(models), figsize=(4 * len(models), 3.5), squeeze=False, sharey=True)
@@ -225,11 +296,13 @@ def response_cdf(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> pd
             if v.empty:
                 continue
             cdf = [(v <= g).sum() / len(v) for g in grid]
-            ax.step(grid / 60, cdf, where="post", color=COLORS[s], label=SETTING_LABEL[s])
+            ax.step(grid, cdf, where="post", color=COLORS[s], label=SETTING_LABEL[s])
             rows += [{"model": mname, "setting": s, "t_sec": g, "replied_frac": c} for g, c in zip(grid, cdf)]
         ax.set_title(mname, fontsize=9)
-        ax.set_xlabel("minutes after the bug was sent")
-        ax.set_ylim(0, 1)
+        ax.set_xscale("log")
+        ax.set_xlim(lo, hi)
+        ax.set_xlabel("seconds after the bug was sent (log)")
+        ax.set_ylim(0, 1.02)
     axes[0][0].set_ylabel("share of bugs replied to")
     axes[0][-1].legend(fontsize=7, loc="lower right")
     _save(fig, out / "response_cdf.png")
@@ -299,8 +372,14 @@ def question_vs_bug(t: dict[str, pd.DataFrame], models: list[str], out: Path) ->
     tab = both.groupby(["model", "setting", "kind"])["sec"].agg(
         median_sec=_median_censored, mean_replied_sec="mean", replied_frac=lambda v: v.notna().mean(), n="size").reset_index()
     plt = pyplot()
-    fig, axes = plt.subplots(1, len(models), figsize=(4 * len(models), 3.8), squeeze=False, sharey=True)
+    models = [mn for mn in models if (tab["model"] == mn).any()]  # the models that ran L2
+    if not models:
+        return tab
+    lo, hi = _log_limits(tab["median_sec"])
+    top = hi * 2.5
+    fig, axes = plt.subplots(1, len(models), figsize=(max(6.5, 4 * len(models)), 4.2), squeeze=False, sharey=True)
     for ax, mname in zip(axes[0], models):
+        ax.set_yscale("log")
         for j, s in enumerate(SETTINGS):
             for k, (kind, alpha) in enumerate((("bug", 1.0), ("question", 0.5))):
                 r = tab[(tab["model"] == mname) & (tab["setting"] == s) & (tab["kind"] == kind)]
@@ -309,12 +388,16 @@ def question_vs_bug(t: dict[str, pd.DataFrame], models: list[str], out: Path) ->
                 v, frac = float(r["median_sec"].iloc[0]), float(r["replied_frac"].iloc[0])
                 never = _never(v, int(r["n"].iloc[0]))
                 xpos = j + (k - 0.5) * 0.38
-                ax.bar(xpos, WALL / 60 if never else v / 60, 0.38, color="white" if never else COLORS[s], alpha=alpha,
+                height = top if never else v
+                ax.bar(xpos, height - lo, 0.38, bottom=lo, color="white" if never else COLORS[s], alpha=alpha,
                        edgecolor=COLORS[s], hatch="//" if never else None)
-                ax.annotate(f"{frac:.0%}", (xpos, (WALL if never else v) / 60), ha="center", va="bottom", fontsize=6)
+                ax.annotate(f"{frac:.0%}", (xpos, height), ha="center", va="bottom", fontsize=6)
         ax.set_xticks(range(len(SETTINGS)), [SETTING_SHORT[s] for s in SETTINGS], fontsize=7)
-        ax.set_title(f"{mname} (dark: bugs, light: questions)", fontsize=8)
-    axes[0][0].set_ylabel("median minutes to first reply (L2; % replied)")
+        ax.set_title(mname, fontsize=9)
+        ax.set_ylim(lo, top * 1.6)
+    axes[0][0].set_ylabel("median s to first reply (log)")
+    fig.suptitle("L2: first reply to bugs (dark) and questions (light)\n% replied above each bar; hatched: never",
+                 fontsize=8)
     _save(fig, out / "question_vs_bug.png")
     return tab
 

@@ -28,6 +28,7 @@ from subagents_bench.analysis.pricing import call_cost, load_prices  # noqa: E40
 EXPECTED = {
     "claude-opus-5.5": (613, 54, 36), "gpt-5.6-luna": (34, 54, 36), "deepseek-v4.1-flash-1017": (34, 54, 36),
     "gpt-5.6-sol": (360, 18, 36), "gpt-5.6-terra": (180, 18, 36), "claude-sonnet-5.5": (130, 18, 36),
+    "kimi-k3": (225, 18, 36),
 }
 
 

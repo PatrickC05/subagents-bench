@@ -147,7 +147,9 @@ def plot(table: pd.DataFrame, path: Path, title: str = "") -> None:
     ax.set_xscale("log")
     ax.set_xlabel("USD per bug (log)")
     ax.set_ylabel("share of bugs fixed")
-    ax.set_ylim(0, 1)
+    ax.set_ylim(max(0.0, float(table["fixed_frac"].min()) - 0.08), min(1.0, float(table["fixed_frac"].max()) + 0.05))
+    lo, hi = float(table["usd_per_bug"].min()), float(table["usd_per_bug"].max())
+    ax.set_xlim(lo / 1.4, hi * 1.4)
     ax.set_title(title or "L0: cost vs bugs fixed")
     handles = [Line2D([], [], color=colors[m], marker="o", ls="", label=m) for m in models]
     handles += [Line2D([], [], color="grey", marker=MARKERS[p], ls="", label=p,
