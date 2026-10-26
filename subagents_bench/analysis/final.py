@@ -314,6 +314,64 @@ def plot(table: pd.DataFrame, path: Path, title: str = "", levels: pd.DataFrame 
     plt.close(fig)
 
 
+def plot_model(table: pd.DataFrame, levels: pd.DataFrame, model: str, path: Path) -> None:
+    """One model's cost against bugs fixed: its independent sessions (star) and each same-session setting
+    (a color and marker per setting) at L0, L1 and L2 (filled, faded, hollow), with each level's Pareto
+    frontier over the three settings."""
+    from matplotlib.lines import Line2D
+
+    from ..plots.final import COLORS, MARKERS, SETTING_LABEL, pyplot
+    plt = pyplot()
+    t, lv = table[table["model"] == model], levels[levels["model"] == model]
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    iso = t[t["point"] == "isolated"]
+    ax.scatter(iso["usd_per_bug"], iso["fixed_frac"], marker="*", s=200, color="black", linewidths=0, zorder=3)
+    for _, r in lv.iterrows():
+        style = {"L0": {}, **LEVEL_STYLE}[r["level"]]
+        hollow = "facecolor" in style
+        ax.scatter(r["usd_per_bug"], r["fixed_frac"], marker=MARKERS[r["point"]], s=60, zorder=2,
+                   color=COLORS[r["point"]], edgecolors=COLORS[r["point"]], linewidths=1.4 if hollow else 0,
+                   **({"facecolors": "white"} if hollow else {"alpha": style.get("alpha", 1.0)}))
+    every = pd.concat([iso, lv], ignore_index=True)
+    right = float(every["usd_per_bug"].max()) * 1.4
+    shade = plt.get_cmap("Greys")
+    styles = {"isolated": (shade(0.95), "-"), "L0": (shade(0.75), "--"), "L1": (shade(0.6), "-."), "L2": (shade(0.45), ":")}
+    fronts = []
+    for name in styles:
+        pts = iso if name == "isolated" else lv[lv["level"] == name]
+        if pts.empty:
+            continue
+        fx, fy = zip(*pareto(pts))
+        color, ls = styles[name]
+        ax.step([fx[0]] + list(fx) + [right], [-1.0] + list(fy) + [fy[-1]], where="post", color=color, lw=1.2,
+                ls=ls, zorder=0)
+        fronts.append(Line2D([], [], color=color, lw=1.2, ls=ls,
+                             label=f"frontier: {'independent sessions' if name == 'isolated' else name}"))
+    ax.set_xscale("log")
+    ax.set_xlabel("USD per bug (log)")
+    ax.set_ylabel("share of bugs fixed")
+    ax.set_ylim(max(0.0, float(every["fixed_frac"].min()) - 0.08), min(1.0, float(every["fixed_frac"].max()) + 0.05))
+    ax.set_xlim(float(every["usd_per_bug"].min()) / 1.6, right)
+    from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
+    ax.xaxis.set_major_locator(LogLocator(subs=(1.0, 2.0, 5.0)))  # a narrow log range: label 1-2-5 in dollars
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"${v:.2f}" if v < 1 else f"${v:.1f}"))
+    ax.xaxis.set_minor_formatter(NullFormatter())
+    ax.set_title(f"Cost Performance Frontier: {SHORT.get(model, model)}")
+    handles = [Line2D([], [], color=COLORS[p], marker=MARKERS[p], ls="", markeredgewidth=0, label=SETTING_LABEL[p])
+               for p in COLORS if (lv["point"] == p).any()]
+    handles.append(Line2D([], [], color="black", marker="*", ls="", markeredgewidth=0, markersize=11,
+                          label="independent sessions"))
+    handles += [Line2D([], [], color="grey", marker="o", ls="", markeredgewidth=0, markersize=6, label="L0"),
+                Line2D([], [], color="grey", marker="o", ls="", alpha=0.5, markeredgewidth=0, markersize=6,
+                       label="L1 (+ ETA requests)"),
+                Line2D([], [], color="grey", marker="o", ls="", markerfacecolor="white", markersize=6,
+                       label="L2 (+ questions)")] + fronts
+    ax.legend(handles=handles, fontsize=7, loc="center left", bbox_to_anchor=(1.0, 0.5), frameon=False)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
 def main(argv: list[str] | None = None) -> int:
     from ..plots.final import named_dirs
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -346,6 +404,8 @@ def main(argv: list[str] | None = None) -> int:
     for pt in shared:
         sub = table[table["point"].isin([pt, "isolated", "isolated_capped"])]
         plot(sub, a.out / f"l0_{pt}.png", title=TITLE.get(pt, f"Cost Performance Frontier: {pt}"), levels=levels)
+    for m in ([] if levels is None else list(dict.fromkeys(levels["model"]))):  # one plot per model with levels
+        plot_model(table, levels, m, a.out / f"l0_model_{m}.png")
     print(table.to_string(index=False))
     print(f"[OK] {a.out / 'l0.csv'}, {a.out / 'l0.png'} and l0_<setting>.png for {', '.join(shared)}")
     return 0
