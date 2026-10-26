@@ -922,7 +922,7 @@ def test_probe_sends_one_short_request_per_model(spec, monkeypatch):
         def close(self):
             pass
 
-    monkeypatch.setattr(sweep, "SailClient", Client)
+    monkeypatch.setattr(sweep, "ChatClient", Client)
     assert sweep.probe(sweep.sweep_models(spec)) == [f"{SUB_MODEL}: RuntimeError: boom"]
     assert [(c.model, c.max_retries, c.request_timeout_sec, c.retry_budget_sec) for c in sent] == [
         (ORCH_MODEL, 1, 60.0, 30.0), (SUB_MODEL, 1, 60.0, 30.0)]
@@ -1063,3 +1063,63 @@ def test_harbor_environment_is_checked(tmp_path, monkeypatch):
     monkeypatch.chdir(REPO)
     with pytest.raises(ConfigError, match="harbor.environment"):
         sweep.load_spec(tmp_path / "bad.yaml")
+
+
+# --- --model ------------------------------------------------------------------------------------
+
+LUNA = REPO / "configs/prime/models/gpt-5.6-luna.yaml"
+
+
+def test_model_flag_runs_every_orchestrator_on_the_model(tmp_path, fake, monkeypatch, capsys):
+    path = make_spec(tmp_path, conditions={"single": {"topology": "single"}, "same": {"subagent": {"model": None}},
+                                           "par": {}})
+    own, spec = sweep.load_spec(path), sweep.load_spec(path, model=LUNA)
+    assert spec.name == "t-gpt-5.6-luna" and spec.jobs_dir == own.jobs_dir.with_name("t-gpt-5.6-luna")
+    assert spec.model == LUNA and sweep.hints_dir(spec) == own.jobs_dir / "hints"
+    for cfg in spec.configs.values():  # the file replaces the orchestrator: no Sail keys left over
+        assert (cfg.orchestrator.model, cfg.orchestrator.provider, cfg.orchestrator.completion_window) == (
+            "openai/gpt-5.6-luna", "prime", None)
+    assert spec.configs["same"].subagent_model.model == "openai/gpt-5.6-luna"
+    assert spec.configs["par"].subagent_model.model == SUB_MODEL  # a sweep's own subagent model stays
+    assert sweep.job_name(spec, 1, "single") == "t-gpt-5.6-luna__r1__single"
+    assert cli.main(["sweep", str(path), "--model", str(LUNA), "--dry-run"]) == 0
+    assert "t-gpt-5.6-luna__r1__single" in capsys.readouterr().out
+    monkeypatch.delenv("PRIME_API_KEY", raising=False)
+    monkeypatch.setenv("SAIL_API_KEY", "test-key")
+    assert sweep.preflight(spec) == 1
+    out = capsys.readouterr().out
+    assert "[FAIL] PRIME_API_KEY: missing" in out and "[PASS] SAIL_API_KEY: set" in out  # Gemma's still Sail
+    assert "[PASS] request openai/gpt-5.6-luna" in out and f"request {ORCH_MODEL}" not in out
+
+
+def test_model_flag_errors_and_relative_path(tmp_path, monkeypatch):
+    path = make_spec(tmp_path)
+    bad = tmp_path / "proj/configs/bad.yaml"
+    bad.write_text("model: x/y\nprovider: openrouter\n")
+    with pytest.raises(ConfigError, match=r"^--model .*bad\.yaml: orchestrator\.provider: 'openrouter' is not one of"):
+        sweep.load_spec(path, model=bad)
+    with pytest.raises(ConfigError, match="^--model: .*missing.yaml"):
+        sweep.load_spec(path, model=tmp_path / "missing.yaml")
+    shutil.copy(LUNA, tmp_path / "proj/configs/luna.yaml")
+    monkeypatch.chdir(tmp_path)  # not under the repository root: resolved against it, as the spec in run_experiment.sh
+    assert sweep.load_spec(path, model="configs/luna.yaml").name == "t-luna"
+
+
+@pytest.mark.parametrize("model", sorted((REPO / "configs/prime/models").glob("*.yaml")), ids=lambda p: p.stem)
+def test_prime_model_files_load_and_match_the_prices(model):
+    spec = sweep.load_spec(REPO / "configs/sweeps/swe_interactive_levels.yaml", model=model)
+    m = spec.configs["single_baseline"].orchestrator
+    assert m.provider == "prime" and m.max_output_tokens == 32768 and spec.configs["single_eta"].subagent_model == m
+    prices = yaml.safe_load((REPO / "configs/pricing.yaml").read_text())
+    assert prices["prime"][m.model] == prices["default"][m.model] == {
+        "in": m.price_in, "cached": m.price_cache_read, "out": m.price_out}
+
+
+@pytest.mark.parametrize("over, msg", [
+    ({"provider": "openrouter"}, "orchestrator.provider: 'openrouter' is not one of prime, sail"),
+    ({"reasoning_effort": ""}, "orchestrator.reasoning_effort: expected null or a level"),
+    ({"cache_control": "yes"}, "orchestrator.cache_control: expected true or false"),
+])
+def test_bad_model_configs(tmp_path, over, msg):
+    with pytest.raises(ConfigError, match=msg):
+        sweep.load_spec(make_spec(tmp_path, overrides={"orchestrator": over}))

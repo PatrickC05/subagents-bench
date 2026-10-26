@@ -16,7 +16,7 @@ from typing import Any, Callable
 from .arbiter import run_arbitration
 from .config import ExperimentConfig
 from .environment import AgentStopped
-from .llm import BillingError, LLMError, Message, SailClient, ToolCall, ToolResult, ToolSpec
+from .llm import BillingError, ChatClient, LLMError, Message, ToolCall, ToolResult, ToolSpec
 from .prompts import LENGTH_CUTOFF_NOTE, LENGTH_CUTOFF_REPLY, orchestrator_prompt, step_note
 from .records import EpisodeRecorder, Who
 from .subagent import Runtime, new_dispatch, run_dispatch
@@ -41,7 +41,7 @@ MIN_REPORT_CHARS = 2000  # per report in a spawn result
 
 class Orchestrator:
     def __init__(self, config: ExperimentConfig, env: Any, rec: EpisodeRecorder, workdir: str,
-                 client_factory: Callable[[Any], Any] = SailClient):
+                 client_factory: Callable[[Any], Any] = ChatClient):
         self.cfg, self.env, self.rec, self.workdir = config, env, rec, workdir
         env.stop_event = rec.stop_event
         self.client_factory = client_factory
@@ -113,7 +113,7 @@ class Orchestrator:
                 t_llm_end = time.time()
             cut_off = not r.tool_calls and r.finish_reason == "length"
             self._add(Message("assistant", r.text or (LENGTH_CUTOFF_REPLY if cut_off else ""), r.tool_calls,
-                              reasoning=r.reasoning or None), call_id)
+                              reasoning=r.reasoning or None, reasoning_details=r.reasoning_details or None), call_id)
             if not r.tool_calls:
                 if not cut_off:
                     return "no_tool_call"

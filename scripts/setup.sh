@@ -5,8 +5,9 @@
 #
 # Installs .venv (Python 3.13) with the exact versions pinned in uv.lock, harbor 0.24.0
 # included; checks harbor and Docker; downloads the Terminal-Bench 2.0 tasks into harbor's
-# task cache; creates .env from .env.example if missing and checks that SAIL_API_KEY is set
-# (never printing it). Ends with exit 1 if any check failed.
+# task cache; creates .env from .env.example if missing and checks that PRIME_API_KEY is set
+# (never printing it; SAIL_API_KEY too, for the configs/sail sweeps and their judge). Ends with
+# exit 1 if any check failed.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -48,10 +49,15 @@ if [ ! -f .env ]; then
   chmod 600 .env
   echo "created .env from .env.example"
 fi
+if [ -n "${PRIME_API_KEY:-}" ] || grep -Eq '^(export )?PRIME_API_KEY=.' .env; then
+  pass "PRIME_API_KEY set"
+else
+  fail "PRIME_API_KEY missing: add it to .env"
+fi
 if [ -n "${SAIL_API_KEY:-}" ] || grep -Eq '^(export )?SAIL_API_KEY=.' .env; then
   pass "SAIL_API_KEY set"
 else
-  fail "SAIL_API_KEY missing: add it to .env"
+  printf '[INFO] %s\n' "SAIL_API_KEY not set: the sweeps on configs/sail/base.yaml (and their questions and judge, under --model too) need it"
 fi
 
 if [ "$failed" = 0 ]; then echo "Setup OK. Next: scripts/run_experiment.sh configs/sweeps/smoke.yaml"; fi

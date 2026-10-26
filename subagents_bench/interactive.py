@@ -27,6 +27,7 @@ workspace's diff against ``baseline`` in the background from the session's start
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import threading
 import time
 import traceback
@@ -36,7 +37,7 @@ from typing import Any, Callable
 from .config import ExperimentConfig
 from .environment import AgentStopped
 from .hints import Hint
-from .llm import BillingError, LLMError, Message, SailClient, ToolCall, ToolResult, ToolSpec
+from .llm import BillingError, ChatClient, LLMError, Message, ToolCall, ToolResult, ToolSpec
 from .orchestrator import SPAWN_SPEC, Orchestrator
 from .prompts import (FIRST_HINT, REPORT_EVENT, REPORTED_SCOPE, USER_EVENT, WAIT_RESULT, clock, interactive_note,
                       interactive_prompt, request_text)
@@ -80,7 +81,7 @@ ELIDE_TO = 0.75  # elide down to this fraction of max_context_chars, so the prom
 
 class InteractiveOrchestrator(Orchestrator):
     def __init__(self, config: ExperimentConfig, env: Any, rec: EpisodeRecorder, workdir: str, hints: list[Hint],
-                 client_factory: Callable[[Any], Any] = SailClient):
+                 client_factory: Callable[[Any], Any] = ChatClient):
         super().__init__(config, env, rec, workdir, client_factory)
         self.icfg = config.interactive
         self.hints = hints
@@ -442,9 +443,9 @@ class InteractiveOrchestrator(Orchestrator):
                         m.content = m.content.replace(body, marker, 1)
                         size -= len(body) - len(marker)
                         self.n_elided += 1
-            elif m.role == "assistant" and m.reasoning:
-                size -= len(m.reasoning)
-                m.reasoning = None
+            elif m.role == "assistant" and (m.reasoning or m.reasoning_details):
+                size -= _reasoning_chars(m)
+                m.reasoning = m.reasoning_details = None
                 self.n_elided += 1
 
 
@@ -501,5 +502,10 @@ def wait_timeout(raw: Any, cap: float) -> float | None:
 
 
 def _chars(m: Message) -> int:
-    return (len(m.content or "") + len(m.reasoning or "") + sum(len(r.content) for r in m.tool_results)
+    return (len(m.content or "") + _reasoning_chars(m) + sum(len(r.content) for r in m.tool_results)
             + sum(len(str(c.arguments)) for c in m.tool_calls))
+
+
+def _reasoning_chars(m: Message) -> int:
+    """The reasoning sent back with ``m``: its reasoning_details if any (llm._wire), else its reasoning."""
+    return len(json.dumps(m.reasoning_details)) if m.reasoning_details else len(m.reasoning or "")

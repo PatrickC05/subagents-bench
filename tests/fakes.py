@@ -43,6 +43,7 @@ class Reply:
     completion_tokens: int = 10
     reasoning: str = ""
     latency: float | None = None
+    reasoning_details: list[dict[str, Any]] = field(default_factory=list)
 
 
 Script = list | Callable[..., Any]
@@ -79,7 +80,8 @@ class FakeClient:
             return LLMResponse(
                 text=item.text, tool_calls=copy.deepcopy(item.tool_calls),
                 finish_reason=item.finish_reason or ("tool_calls" if item.tool_calls else "stop"),
-                reasoning=item.reasoning, prompt_tokens=item.prompt_tokens, cached_tokens=item.cached_tokens,
+                reasoning=item.reasoning, reasoning_details=copy.deepcopy(item.reasoning_details),
+                prompt_tokens=item.prompt_tokens, cached_tokens=item.cached_tokens,
                 completion_tokens=item.completion_tokens, reasoning_tokens=len(item.reasoning) // 4 or None,
                 t_start=t_start, t_first_chunk=time.time(), t_end=time.time(),
             )

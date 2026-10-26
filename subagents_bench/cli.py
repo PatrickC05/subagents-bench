@@ -28,17 +28,23 @@ def _job(text: str) -> tuple[int, str]:
     return int(m[1]), m[2]
 
 
+def _spec(p: argparse.ArgumentParser) -> None:
+    p.add_argument("spec", help="sweep spec (configs/sweeps/*.yaml)")
+    p.add_argument("--model", metavar="FILE", help="run every orchestrator on this model (configs/prime/models/*.yaml), "
+                                                   "in jobs/<sweep>-<file stem>")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="subagents-bench",
                                      description="Orchestrator + subagents on Terminal-Bench 2.0 and SWE-sweep.")
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("validate", help="load experiment config YAML(s) and print the resolved config")
     p.add_argument("configs", nargs="+")
-    p = sub.add_parser("preflight", help="check Docker, harbor, SAIL_API_KEY and every model before a sweep")
-    p.add_argument("spec", help="sweep spec (configs/sweeps/*.yaml)")
+    p = sub.add_parser("preflight", help="check Docker, harbor, the API keys and every model before a sweep")
+    _spec(p)
     p.add_argument("--oracle", action="store_true", help="also run harbor's oracle agent on every task")
     p = sub.add_parser("sweep", help="run every (round, condition) harbor job of a sweep spec; re-run to resume")
-    p.add_argument("spec", help="sweep spec (configs/sweeps/*.yaml)")
+    _spec(p)
     p.add_argument("--dry-run", action="store_true", help="print the jobs and their harbor commands; run nothing")
     p.add_argument("--only", nargs="+", metavar="COND", help="run only these conditions")
     p.add_argument("--rounds", type=_rounds, help="comma-separated rounds to run, e.g. 1,2")
@@ -47,18 +53,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--jobs-at-once", type=int, default=1, metavar="N",
                    help="harbor jobs to run side by side (default 1; each runs its own sessions)")
     p = sub.add_parser("hints", help="write the bug reports of an interactive sweep (hint_detail: report)")
-    p.add_argument("spec", help="sweep spec (configs/sweeps/*.yaml)")
+    _spec(p)
     p.add_argument("--force", action="store_true", help="rewrite reports that already exist")
     p = sub.add_parser("questions", help="write the code questions of an interactive sweep (questions_per_interval)")
-    p.add_argument("spec", help="sweep spec (configs/sweeps/*.yaml)")
+    _spec(p)
     p.add_argument("--per-task", type=int, help="questions per task (default: the most one session asks)")
     p.add_argument("--force", action="store_true", help="rewrite questions that already exist")
     p = sub.add_parser("grade-answers", help="judge the answers to the questions of a sweep's finished trials")
-    p.add_argument("spec", help="sweep spec (configs/sweeps/*.yaml)")
+    _spec(p)
     p.add_argument("--force", action="store_true", help="grade again trials that already have answers.json")
     p = sub.add_parser("fix-times", help="grade the workspace snapshots of a sweep's finished trials on Modal: "
                                          "when each bug was fixed")
-    p.add_argument("spec", help="sweep spec (configs/sweeps/*.yaml)")
+    _spec(p)
     p.add_argument("--force", action="store_true", help="replay again trials that already have fix_states.json")
     p.add_argument("--concurrency", type=int, default=24, metavar="N",
                    help="trials replayed at once, one Modal sandbox each (default 24)")
@@ -83,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "validate":
         return _validate(args.configs)
     try:
-        spec = sweep.load_spec(args.spec)
+        spec = sweep.load_spec(args.spec, model=args.model)
         jobs = sweep.plan(spec, args.only, args.rounds, args.job) if args.cmd == "sweep" else []
     except (ConfigError, OSError, yaml.YAMLError) as e:
         print(f"[FAIL] {e}", file=sys.stderr)
