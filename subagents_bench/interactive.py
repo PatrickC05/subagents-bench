@@ -498,13 +498,15 @@ class InteractiveOrchestrator(Orchestrator):
     def _elide(self) -> None:
         """While the conversation is over its limit, replace, oldest message first, tool outputs and
         subagent reports with a marker and drop old reasoning (never the task message or the newest
-        message)."""
+        message, and never the newest assistant turn's reasoning: Anthropic and Gemini reject a tool
+        loop whose current turn lost its signed thinking or thought signature)."""
         limit = self.icfg.max_context_chars
         if limit is None:
             return
         size = sum(_chars(m) for m in self.messages)
         if size <= limit:
             return
+        newest_turn = next((m for m in reversed(self.messages) if m.role == "assistant"), None)
         for m in self.messages[1:-1]:
             if size <= ELIDE_TO * limit:
                 break
@@ -525,7 +527,7 @@ class InteractiveOrchestrator(Orchestrator):
                         m.content = m.content.replace(body, marker, 1)
                         size -= len(body) - len(marker)
                         self.n_elided += 1
-            elif m.role == "assistant" and (m.reasoning or m.reasoning_details):
+            elif m.role == "assistant" and m is not newest_turn and (m.reasoning or m.reasoning_details):
                 size -= _reasoning_chars(m)
                 m.reasoning = m.reasoning_details = None
                 self.n_elided += 1

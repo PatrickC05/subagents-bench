@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-SCRIPTS = ["setup.sh", "run_experiment.sh"]
+SCRIPTS = ["setup.sh", "run_experiment.sh", "run_final.sh", "run_all_final.sh", "run_final_patrick.sh", "run_final_jonathan.sh"]
 
 
 @pytest.mark.parametrize("name", SCRIPTS)
@@ -57,3 +57,26 @@ def test_run_experiment_runs_preflight_then_sweep(tmp_path):
         "subagents-bench preflight ROOT/configs/sweeps/pilot.yaml --oracle",
         "subagents-bench sweep ROOT/configs/sweeps/pilot.yaml --rounds 3,4 --only a b --job 1:c --job 2:a"])
     assert run_experiment(tmp_path, PREFLIGHT_RC="1") == (1, ["subagents-bench preflight ROOT/configs/sweeps/pilot.yaml --oracle"])
+
+
+def test_parallel_forwards_ctrl_c_to_every_command(tmp_path):
+    """scripts/parallel.sh: each command in its own process group, a Ctrl-C forwarded to all."""
+    import signal
+    import time
+    child = tmp_path / "child.sh"
+    child.write_text('trap \'echo "$1 got INT"; exit 130\' INT\necho "$1 running"\n'
+                     'for i in $(seq 1 300); do sleep 0.1; done\necho "$1 done"\n')
+    main = tmp_path / "main.sh"
+    main.write_text(f"set -euo pipefail\n. {REPO / 'scripts' / 'parallel.sh'}\n"
+                    f"par_start {tmp_path}/a.log bash {child} a\npar_start {tmp_path}/b.log bash {child} b\n"
+                    "rc=0; par_wait || rc=$?\necho \"rc=$rc\"\n")
+    p = subprocess.Popen(["/bin/bash", str(main)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                         preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL), start_new_session=True)
+    for _ in range(100):  # until both children are running
+        if all((tmp_path / f"{x}.log").exists() and "running" in (tmp_path / f"{x}.log").read_text() for x in "ab"):
+            break
+        time.sleep(0.1)
+    p.send_signal(signal.SIGINT)  # the terminal's Ctrl-C reaches the foreground script only
+    out, _ = p.communicate(timeout=20)
+    assert "rc=130" in out and out.count("[FAIL] exit 130") == 2
+    assert all("got INT" in (tmp_path / f"{x}.log").read_text() for x in "ab")

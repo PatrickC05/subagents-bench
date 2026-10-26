@@ -1,22 +1,124 @@
-# subagents-bench
+# subagents-bench: human-interactive coding agents
 
-Measuring the **cost and latency** of a frontier **orchestrator** directing
-smaller **subagents** on executable coding tasks — the configuration
-practitioners actually deploy, but one existing scaling studies don't primarily
-measure.
+A coding agent's user does not send one request and wait: they send a bug, ask
+a question about the code, check how long the fix will take, and change
+priorities while earlier work is still running. This repository measures how
+well an agent stays **correct, predictable and responsive** in such a session,
+and whether handing work to background **subagents** keeps the orchestrator
+free to answer.
 
-Prior work (Kim et al. 2025, *Towards a Science of Scaling Agent Systems*)
-assigns the **same** model to every agent, reports **accuracy** rather than
-latency, and includes no repository-level coding with executable tests. This
-project instead varies **subagent size** independently of the orchestrator, runs
-on **Terminal-Bench 2.0** and **ExploitBench** (tasks with real, runnable
-scoring), and reports resolve rate against **tokens** and **wall-clock time** as
-Pareto curves.
+A session is 30 minutes on one [SWE-sweep](https://github.com/facebookresearch/swe-sweep)
+repository: a simulated user sends 6 bugs, one every 4 minutes, and, depending
+on the level, status checks asking for ETAs and questions about the code. The
+agent answers with a `reply` tool; the user sees nothing else.
+Every LLM and tool call is logged, workspace snapshots are replayed to time
+each fix, and the hidden tests grade every bug, so we measure, per request:
+time to the first reply, bugs fixed, ETA error, questions answered (judged
+correct or not), and cost.
 
-This version runs Terminal-Bench 2.0 and [SWE-sweep](#swe-sweep); the
-ExploitBench adapter is not part of it.
+The settings differ in what the orchestrator may do itself and what it is told
+about subagents (the subagents are the same model, with every tool):
 
-## The experiment
+| Setting | Orchestrator's tools | Told |
+|---|---|---|
+| `background_hinted` (orchestrator + subagents) | all five | delegating long work keeps it free for the user |
+| `manager_background` (subagents only) | read-only | nothing: it must delegate every command and edit |
+| `manager_owner` (subagents only, owner) | read-only | stay available; put one subagent in charge of each bug (it may start helpers) |
+| `single_bug<k>` (isolated baseline) | all five, no subagents | one bug per fresh session |
+
+To reproduce the final study, see [Final study](#final-study-issue-23).
+
+## Setup
+
+You need macOS or Linux, [Docker](https://docs.docker.com/get-docker/) running
+(4 task containers at once: give it about 6 CPUs and 12 GB), [uv](https://docs.astral.sh/uv/),
+network access and a [Prime Inference](https://docs.primeintellect.ai/inference/overview) API key
+(and a Sail key for the DeepSeek sweeps on `configs/sail/base.yaml`).
+
+```bash
+scripts/setup.sh        # .venv from uv.lock (harbor 0.24.0 included), Docker check,
+                        # Terminal-Bench 2.0 download, creates .env from .env.example
+```
+
+Put `PRIME_API_KEY=...` (and `SAIL_API_KEY=...`) in `.env` and run it again; it ends
+with `Setup OK`. `PRIME_TEAM_ID=...` bills a Prime team instead of the key's owner.
+`.env` never overrides a variable already set in your shell, and no script
+prints a key. The task images are `linux/amd64`: on Apple Silicon they run
+emulated, which slows tool calls (tool time is measured separately).
+
+## Final study (issue #23)
+
+Two experiments on SWE-sweep, in 30-minute sessions where a user sends 6 bugs
+every 4 minutes on 6 repositories (click, echo, dateutil, gin, dayjs, luxon),
+1 round. The tasks are [facebookresearch/swe-sweep](https://github.com/facebookresearch/swe-sweep)
+at `5968c69`. The sessions run on Modal; the models run on
+[Prime Inference](https://docs.primeintellect.ai/inference/overview) at high
+reasoning effort (`configs/prime/models/`, see *Models* below); the questions'
+judge is DeepSeek-V4.1-Flash on Sail for every model.
+
+| Experiment | Spec | Conditions | Models | Sessions per model |
+|---|---|---|---|---|
+| 1. Cost vs bugs fixed at L0 | `final_levels.yaml` (`*_baseline`) | `background_hinted`, `manager_background`, `manager_owner` at L0 | all 6 | 18 |
+| 1b. Isolated baseline | `final_isolated.yaml` | `single_bug0`-`single_bug5`: each bug alone in a fresh session (`interactive.only_bug`) | all 6 | 36 |
+| 2. Levels | `final_levels.yaml` | the three settings at L0-L2 (bugs; + ETAs; + questions; no urgent tier) | Opus 5.5, GPT-5.6 Luna, DeepSeek-V4.1-Flash-1017 | 54 (L0 included) |
+
+The 6 models: GPT-5.6 Luna, Terra and Sol, Claude Opus 5.5 and Sonnet 5.5, and
+DeepSeek-V4.1-Flash-1017 (432 sessions, about $1.35k). Gemini 4 Argon and Kimi K3
+are left out (no access), and Claude Haiku 5.5 and MiMo V2.6 are not on Prime.
+
+```bash
+scripts/setup.sh --final            # .venv, .env (PRIME_API_KEY, PRIME_TEAM_ID to bill a team, SAIL_API_KEY),
+                                    # the SWE-sweep tasks (scripts/get_tasks.sh), a Modal token check; no Docker
+scripts/run_final_patrick.sh        # Luna, DeepSeek (exp. 1 + 2), Sonnet (exp. 1): 234 sessions, ~$200
+scripts/run_final_jonathan.sh       # Opus (exp. 1 + 2), Sol, Terra (exp. 1): 198 sessions, ~$1.15k
+scripts/run_all_final.sh --dry-run  # every model's jobs
+scripts/run_all_final.sh --parallel # the whole study on one machine, then the cross-model figures
+scripts/run_final.sh --model configs/prime/models/gpt-5.6-luna.yaml            # one model, experiments 1 and 2
+scripts/run_final.sh --model configs/prime/models/kimi-k3.yaml --l0-only       # one model, experiment 1 only
+```
+
+The two shares run on two machines at the same time. Each runs its models, and
+each model's two sweeps, all at once (`--parallel`; logs in `logs/final/`), so
+the sessions take about 30 minutes, about 1 hour with preflight and grading;
+Ctrl-C stops every run. The agent loops run on the launching machine (the
+sandboxes only run commands), so it must stay awake and online throughout.
+Without `--parallel` the models run one after another. Everything is
+resumable. `run_final.sh` asks every model the same questions
+(`data/questions/`, generated once by DeepSeek-V4.1-Flash), runs the two sweeps
+in `jobs/final_levels-<model>` and `jobs/final_isolated-<model>`, replays each
+trial's snapshots to time every fix (`fix-times`), judges the answers
+(`grade-answers`), writes `analysis/final_levels-<model>/` and
+`analysis/final_isolated-<model>/` with `scripts/analyze.sh`, and the model's
+experiment 1 table, `analysis/final_l0-<model>/l0.csv`.
+
+### Plots
+
+`run_all_final.sh` draws both from whatever models' tables exist; to draw them
+by hand:
+
+```bash
+# experiment 1: dollars per bug against the share fixed, every model and setting, and the
+# isolated sessions, also graded at the time each bug had in the shared sessions (isolated_capped)
+.venv/bin/python -m subagents_bench.analysis.final \
+  --model "Opus 5.5"=analysis/final_levels-claude-opus-5.5:analysis/final_isolated-claude-opus-5.5 \
+  --model "GPT-5.6 Sol"=analysis/final_levels-gpt-5.6-sol:analysis/final_isolated-gpt-5.6-sol --out analysis/final_l0
+# experiment 2: the levels across models
+.venv/bin/python -m subagents_bench.plots.final \
+  --model "Opus 5.5"=analysis/final_levels-claude-opus-5.5 --model "GPT-5.6 Luna"=analysis/final_levels-gpt-5.6-luna \
+  --model "DeepSeek-V4.1-Flash"=analysis/final_levels-deepseek-v4.1-flash-1017 --out figures/final
+```
+
+Experiment 2 gives six figures in `figures/final/`, each with the table it draws:
+`response_time` (median time to the first reply the user saw, per model, level
+and setting; a bug never replied to counts as never), `bugs_fixed`, `eta`
+(estimate against the real time to fix), `response_cdf`, `orchestrator_time`
+(share of the session in model calls, own tools, or waiting) and
+`question_vs_bug` (L2).
+
+## Earlier study: orchestrator and subagents on Terminal-Bench
+
+The repository started as a batch study of cost and latency on Terminal-Bench 2.0; the
+sections from here to *SWE-sweep* describe it.
 
 One episode is one Terminal-Bench 2.0 task, run by harbor 0.24.0 in the task's
 own Docker image:
@@ -40,7 +142,7 @@ own Docker image:
 | Scope | `easy`: `read_file`, `list_dir`, `search`; `medium`: + `bash` (told not to edit project files); `hard`: + `edit_file` |
 | Orchestrator tools | all five, or `read_file`, `list_dir`, `search` only (a **manager**, which must delegate every command and edit) |
 
-### Conditions
+### Conditions (pilot)
 
 All 15 are in [`configs/sweeps/pilot.yaml`](configs/sweeps/pilot.yaml), each a
 set of overrides on [`configs/sail/base.yaml`](configs/sail/base.yaml).
@@ -58,24 +160,6 @@ x 3 rounds = 45 harbor jobs, 450 episodes. The **smoke** sweep
 ([`configs/sweeps/smoke.yaml`](configs/sweeps/smoke.yaml)) is the same 15
 conditions on `fix-git` and `prove-plus-comm`, 1 round (30 episodes). Each
 round runs the conditions in its own shuffled order.
-
-## Setup
-
-You need macOS or Linux, [Docker](https://docs.docker.com/get-docker/) running
-(4 task containers at once: give it about 6 CPUs and 12 GB), [uv](https://docs.astral.sh/uv/),
-network access and a [Prime Inference](https://docs.primeintellect.ai/inference/overview) API key
-(and a Sail key for the DeepSeek sweeps on `configs/sail/base.yaml`).
-
-```bash
-scripts/setup.sh        # .venv from uv.lock (harbor 0.24.0 included), Docker check,
-                        # Terminal-Bench 2.0 download, creates .env from .env.example
-```
-
-Put `PRIME_API_KEY=...` (and `SAIL_API_KEY=...`) in `.env` and run it again; it ends
-with `Setup OK`. `PRIME_TEAM_ID=...` bills a Prime team instead of the key's owner.
-`.env` never overrides a variable already set in your shell, and no script
-prints a key. The task images are `linux/amd64`: on Apple Silicon they run
-emulated, which slows tool calls (tool time is measured separately).
 
 ## The three scripts
 

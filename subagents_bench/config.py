@@ -97,6 +97,9 @@ class InteractiveConfig:
     wall_clock_sec: float = 3600.0  # the episode ends here, wherever it is
     interval_sec: float = 300.0  # hint k (0-based) is sent at k * interval_sec
     max_hints: int | None = None  # None: as many as fit in the wall clock (and the task has)
+    # Isolated baseline: send only the bug at this 0-based position of the order, at the start, so each
+    # bug gets a fresh agent and the whole session (bugs only: no questions, checks, urgency or bundles)
+    only_bug: int | None = None
     # files | tests (+ the hidden tests' ids) | report (a generated bug report) | symptom (a generated report
     # of the observable behaviour only: no file, module or test names)
     hint_detail: str = "tests"
@@ -248,6 +251,13 @@ def _check_interactive(cfg: ExperimentConfig) -> None:
     for name, v, lo in (("max_hints", i.max_hints, 1), ("max_context_chars", i.max_context_chars, 10000)):
         if v is not None and (isinstance(v, bool) or not isinstance(v, int) or v < lo):
             raise ConfigError(f"interactive.{name}: expected null or an integer >= {lo}, got {v!r}")
+    if i.only_bug is not None:
+        if isinstance(i.only_bug, bool) or not isinstance(i.only_bug, int) or i.only_bug < 0:
+            raise ConfigError(f"interactive.only_bug: expected null or an integer >= 0, got {i.only_bug!r}")
+        if i.max_hints not in (None, 1) or i.bundle != 1 or i.questions_per_interval or i.status_every \
+                or i.urgent_every or i.change_of_plan:
+            raise ConfigError("interactive.only_bug: a session with one bug sends nothing else: set max_hints: 1, "
+                              "bundle: 1 and no questions, status checks, urgent bugs or changes of plan")
     if isinstance(i.order_seed, bool) or not isinstance(i.order_seed, int):
         raise ConfigError(f"interactive.order_seed: expected an integer, got {i.order_seed!r}")
     for name in ("questions_per_interval", "status_every", "urgent_every"):
