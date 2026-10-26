@@ -928,6 +928,25 @@ def test_probe_sends_one_short_request_per_model(spec, monkeypatch):
         (ORCH_MODEL, 1, 60.0, 30.0), (SUB_MODEL, 1, 60.0, 30.0)]
 
 
+def test_a_busy_model_is_not_an_outage(spec, monkeypatch):
+    """A 429 (Prime's per-model concurrency limit) answers the probe: the model is busy, not down."""
+    from subagents_bench.llm import ProviderError
+
+    class Client:
+        def __init__(self, cfg):
+            self.cfg = cfg
+
+        def complete(self, system, messages, tools):
+            status = 429 if self.cfg.model == ORCH_MODEL else 503
+            raise ProviderError("giving up", status=status)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(sweep, "ChatClient", Client)
+    assert [p.split(":")[0] for p in sweep.probe(sweep.sweep_models(spec))] == [SUB_MODEL]
+
+
 @pytest.mark.parametrize("over, msg", [
     ({"bogus": 1}, "unknown key(s): bogus"),
     ({"harbor": {"n_concurrent": 4, "agent_timeout_multiplier": 4.0, "env": "modal"}}, "harbor.env"),

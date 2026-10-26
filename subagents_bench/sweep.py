@@ -40,7 +40,7 @@ from .config import ConfigError, ExperimentConfig, ModelConfig, from_dict
 from .hints import (ANSWERS_VERSION, GENERATED, HINTS_DIR_ENV, HintError, fetch_source, generate_questions, generate_reports,
                     grade_replies, load_questions, load_reports, load_subtasks, n_slots, schedule, write_questions,
                     write_reports)
-from .llm import PROVIDERS, BillingError, ChatClient, Message
+from .llm import PROVIDERS, BillingError, ChatClient, Message, ProviderError
 from .records import git_commit
 
 AGENT = "subagents_bench.harness.harbor_agent:OrchestratorAgent"
@@ -557,7 +557,11 @@ def ping(m: ModelConfig) -> str | None:
                                             retry_budget_sec=30.0))
     try:
         client.complete("You are a connectivity check.", [Message("user", "Reply with the single word OK.")], [])
-    except Exception as e:  # any failure means the model cannot serve the sweep now
+    except ProviderError as e:
+        if e.status == 429:  # busy, not down (Prime's per-model concurrency limit): the sweep goes on
+            return None
+        return f"{type(e).__name__}: {str(e)[:300]}"
+    except Exception as e:  # any other failure means the model cannot serve the sweep now
         return f"{type(e).__name__}: {str(e)[:300]}"
     finally:
         client.close()

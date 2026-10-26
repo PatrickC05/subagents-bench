@@ -249,10 +249,10 @@ def test_a_stream_error_after_a_tool_call_is_retried_asking_for_one_call():
 
 
 def test_retries_exhausted_raise_provider_error():
-    server = Server(*[error(503, "down")] * 5)
+    server = Server(*[error(500, "down")] * 5)
     with pytest.raises(ProviderError) as ei:
         client(server, [], max_retries=4, retry_budget_sec=1e9).complete("s", USER, [])
-    assert ei.value.n_attempts == 5 and ei.value.status == 503 and len(server.requests) == 5
+    assert ei.value.n_attempts == 5 and ei.value.status == 500 and len(server.requests) == 5
     assert ei.value.backoff_sec == 2 + 4 + 8 + 15
 
 
@@ -268,6 +268,21 @@ def test_a_429_waits_past_max_retries_until_the_retry_budget(monkeypatch):
     with pytest.raises(ProviderError, match="giving up after 6 attempt") as ei:
         c.complete("s", USER, [])
     assert ei.value.status == 429 and clock[0] == 1044.0  # 2 + 4 + 8 + 15 + 15; one more 15 s wait passes 50 s
+
+
+def stream_503():
+    return sse(chunk({"content": "x"}), {"error": {"code": 503, "message": "Service temporarily unavailable."}},
+               done=False)
+
+
+def test_a_503_also_waits_past_max_retries_but_other_failures_do_not():
+    """Prime's 503 "Service temporarily unavailable", as a status or inside the stream (Sol, issue
+    #28), waits like a 429; any other failure still stops at max_retries."""
+    server = Server(*[error(503, "Service temporarily unavailable")] * 3, stream_503(), stream_503(), ok("fine"))
+    r = client(server, [], max_retries=2, retry_budget_sec=1e9).complete("s", USER, [])
+    assert r.text == "fine" and r.n_attempts == 6
+    with pytest.raises(ProviderError, match="giving up after 3 attempt"):
+        client(Server(*[error(500, "boom")] * 3, ok()), [], max_retries=2, retry_budget_sec=1e9).complete("s", USER, [])
 
 
 def test_no_retry_starts_past_the_retry_budget(monkeypatch):

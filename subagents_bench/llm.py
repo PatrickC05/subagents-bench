@@ -157,6 +157,15 @@ class _Retry(Exception):
         self.status = status
         self.after_tool_call = after_tool_call  # a stream error once a tool call had started streaming
 
+    @property
+    def throttled(self) -> bool:
+        """The provider is busy, not failing: HTTP 429 (billing 429s never get here) or 503, or the same
+        code in a stream error (Prime: "Too many concurrent requests for this model", "Service
+        temporarily unavailable")."""
+        text = str(self).lower()
+        return self.status in (429, 503) or "'code': 503" in text or "'code': 429" in text or \
+            "too many concurrent requests" in text
+
 
 # Sail's tool-call parsing for Gemma-4-31B fails when a reply holds more than one tool call: it
 # streams the first (sometimes under index 3) and then an `upstream_error` "chat completion failed"
@@ -432,7 +441,8 @@ class ChatClient:
 
     def complete(self, system: str, messages: list[Message], tools: list[ToolSpec],
                  cancel: CallCancel | None = None) -> LLMResponse:
-        """One call with retries (full-jitter backoff; no retry starts past ``retry_budget_sec``).
+        """One call with retries (full-jitter backoff; no retry starts past ``retry_budget_sec``; at most
+        ``max_retries`` failed attempts that are not throttling).
         ``cancel`` (interactive interrupts) aborts it: CallInterrupted, never retried."""
         key = os.environ.get(self._key_var)
         if not key:
@@ -444,7 +454,7 @@ class ChatClient:
             headers["X-Prime-Team-ID"] = os.environ["PRIME_TEAM_ID"]
         body = self._body(system, messages, tools)
         t_start = time.time()
-        attempts, backoff, one_call = 0, 0.0, False
+        attempts, failures, backoff, one_call = 0, 0, 0.0, False
         while True:
             attempts += 1
             if cancel is not None:
@@ -458,12 +468,14 @@ class ChatClient:
                 if e.after_tool_call and tools and not one_call:
                     one_call = True
                     body = self._body(system + ONE_CALL_NOTE, messages, tools)
+                failures += not e.throttled  # throttled attempts count toward retry_budget_sec only
                 delay = self._rng.uniform(0.0, min(BACKOFF_MAX_SEC, BACKOFF_BASE_SEC * 2 ** (attempts - 1)))
-                # a 429 (a billing one raised above) is a rate or concurrency limit: it waits for a free
-                # slot until retry_budget_sec, past max_retries (Prime, 2026-10-26: "Too many concurrent
-                # requests for this model (limit: 16)" failed 5 attempts in 10-20 s, issue #28)
-                capped = attempts > self.cfg.max_retries and e.status != 429
-                if capped or time.time() + delay - t_start > self.cfg.retry_budget_sec:
+                # a throttle (a 429 that is not billing, which is raised above, or a 503, also inside the
+                # stream) is a rate or concurrency limit or a busy provider: it waits for a free slot until
+                # retry_budget_sec, past max_retries (Prime, 2026-10-26: "Too many concurrent requests for
+                # this model (limit: 16)" failed 5 attempts in 10-20 s; "Service temporarily unavailable"
+                # inside Sol's streams, issue #28)
+                if failures > self.cfg.max_retries or time.time() + delay - t_start > self.cfg.retry_budget_sec:
                     raise ProviderError(
                         f"{self.cfg.model}: giving up after {attempts} attempt(s) in {time.time() - t_start:.0f}s: {e}",
                         status=e.status, n_attempts=attempts, backoff_sec=backoff,
