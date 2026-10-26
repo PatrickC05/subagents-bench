@@ -22,7 +22,7 @@ figures, each with the table it draws (``<name>.csv``):
    own tool calls (``wait`` excluded), and neither (waiting for the user or subagents), per model
    and setting.
 6. ``question_vs_bug``: median time to the first reply to a question (``reply_sec``) and to a bug
-   (``user_reply_sec``) at L2, censored as in 1, with the share replied to above each bar.
+   (``user_reply_sec``) at L2, censored as in 1, with the median seconds above each bar.
 """
 
 from __future__ import annotations
@@ -391,12 +391,15 @@ def question_vs_bug(t: dict[str, pd.DataFrame], models: list[str], out: Path) ->
                 height = top if never else v
                 ax.bar(xpos, height - lo, 0.38, bottom=lo, color="white" if never else COLORS[s], alpha=alpha,
                        edgecolor=COLORS[s], hatch="//" if never else None)
-                ax.annotate(f"{frac:.0%}", (xpos, height), ha="center", va="bottom", fontsize=6)
+                label = "never" if never else f"{v:.0f}s" if v >= 10 else f"{v:.1f}s"
+                if frac < 1 and not never:
+                    label += f"\n{frac:.0%}"
+                ax.annotate(label, (xpos, height), ha="center", va="bottom", fontsize=6)
         ax.set_xticks(range(len(SETTINGS)), [SETTING_SHORT[s] for s in SETTINGS], fontsize=7)
         ax.set_title(mname, fontsize=9)
         ax.set_ylim(lo, top * 1.6)
     axes[0][0].set_ylabel("median s to first reply (log)")
-    fig.suptitle("L2: first reply to bugs (dark) and questions (light)\n% replied above each bar; hatched: never",
+    fig.suptitle("L2: median first reply to bugs (dark) and questions (light)\nseconds above each bar (with % replied when below 100%); hatched: never",
                  fontsize=8)
     _save(fig, out / "question_vs_bug.png")
     return tab
