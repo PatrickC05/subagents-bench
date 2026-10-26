@@ -232,7 +232,7 @@ def pareto(points: pd.DataFrame) -> list[tuple[float, float]]:
 
 
 def plot(table: pd.DataFrame, path: Path, title: str = "", levels: pd.DataFrame | None = None,
-         frontiers: bool = False) -> None:
+         frontiers: bool = True) -> None:
     """``levels`` (``levels_table`` rows with a ``model`` column): each model's L1 and L2 points for the
     settings in ``table``, joined to its L0 point by a dotted line. With ``frontiers``, the Pareto
     frontier of the independent sessions (before) and of the same-session L0 points (after)."""
@@ -258,7 +258,7 @@ def plot(table: pd.DataFrame, path: Path, title: str = "", levels: pd.DataFrame 
                    s=130 if r["point"] == "isolated" else 45, color=colors[r["model"]], linewidths=0, zorder=2)
     lv = pd.DataFrame() if levels is None else levels[levels["model"].isin(models) & levels["point"].isin(set(table["point"]))
                                                       & levels["level"].isin(LEVEL_STYLE)]
-    for (m, pt), g in lv.groupby(["model", "point"], sort=False):
+    for (m, pt), g in (lv.groupby(["model", "point"], sort=False) if not lv.empty else []):
         l0 = table[(table["model"] == m) & (table["point"] == pt)]
         path_pts = l0[["usd_per_bug", "fixed_frac"]].values.tolist() + g.sort_values("level")[["usd_per_bug", "fixed_frac"]].values.tolist()
         ax.plot(*zip(*path_pts), color=colors[m], lw=0.8, ls=":", alpha=0.8, zorder=1)
@@ -339,8 +339,7 @@ def main(argv: list[str] | None = None) -> int:
     shared = [pt for pt in dict.fromkeys(table["point"]) if not pt.startswith("isolated")]
     for pt in shared:
         sub = table[table["point"].isin([pt, "isolated", "isolated_capped"])]
-        plot(sub, a.out / f"l0_{pt}.png", title=TITLE.get(pt, f"Cost Performance Frontier: {pt}"), levels=levels,
-             frontiers=pt == "background_hinted")
+        plot(sub, a.out / f"l0_{pt}.png", title=TITLE.get(pt, f"Cost Performance Frontier: {pt}"), levels=levels)
     print(table.to_string(index=False))
     print(f"[OK] {a.out / 'l0.csv'}, {a.out / 'l0.png'} and l0_<setting>.png for {', '.join(shared)}")
     return 0
