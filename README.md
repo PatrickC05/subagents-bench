@@ -1,63 +1,32 @@
-# subagents-bench
+# subagents-bench: human-interactive coding agents
 
-Measuring the **cost and latency** of a frontier **orchestrator** directing
-smaller **subagents** on executable coding tasks — the configuration
-practitioners actually deploy, but one existing scaling studies don't primarily
-measure.
+A coding agent's user does not send one request and wait: they send a bug, ask
+a question about the code, check how long the fix will take, and change
+priorities while earlier work is still running. This repository measures how
+well an agent stays **correct, predictable and responsive** in such a session,
+and whether handing work to background **subagents** keeps the orchestrator
+free to answer.
 
-Prior work (Kim et al. 2025, *Towards a Science of Scaling Agent Systems*)
-assigns the **same** model to every agent, reports **accuracy** rather than
-latency, and includes no repository-level coding with executable tests. This
-project instead varies **subagent size** independently of the orchestrator, runs
-on **Terminal-Bench 2.0** and **ExploitBench** (tasks with real, runnable
-scoring), and reports resolve rate against **tokens** and **wall-clock time** as
-Pareto curves.
+A session is 30 minutes on one [SWE-sweep](https://github.com/facebookresearch/swe-sweep)
+repository: a simulated user sends 6 bugs, one every 4 minutes, and, depending
+on the level, status checks asking for ETAs, questions about the code, and an
+urgent bug. The agent answers with a `reply` tool; the user sees nothing else.
+Every LLM and tool call is logged, workspace snapshots are replayed to time
+each fix, and the hidden tests grade every bug, so we measure, per request:
+time to the first reply, bugs fixed, ETA error, questions answered (judged
+correct or not), and cost.
 
-This version runs Terminal-Bench 2.0 and [SWE-sweep](#swe-sweep); the
-ExploitBench adapter is not part of it.
+The settings differ in what the orchestrator may do itself and what it is told
+about subagents (the subagents are the same model, with every tool):
 
-## The experiment
+| Setting | Orchestrator's tools | Told |
+|---|---|---|
+| `background_hinted` (orchestrator + subagents) | all five | delegating long work keeps it free for the user |
+| `manager_background` (subagents only) | read-only | nothing: it must delegate every command and edit |
+| `manager_owner` (subagents only, owner) | read-only | stay available; put one subagent in charge of each bug (it may start helpers) |
+| `single_bug<k>` (isolated baseline) | all five, no subagents | one bug per fresh session |
 
-One episode is one Terminal-Bench 2.0 task, run by harbor 0.24.0 in the task's
-own Docker image:
-
-1. The **orchestrator**, `deepseek-ai/DeepSeek-V4.1-Flash` on Sail's `balanced`
-   tier, gets the task instruction and **5 steps**. A step is one LLM call
-   plus the tools it asks for: `bash`, `edit_file`, `read_file`, `list_dir`,
-   `search`, `finish`.
-2. In a subagent condition it can also call `spawn_subagents(instructions)`.
-   **Subagents** (`nvidia/Gemma-4-31B-IT-NVFP4` on Sail, `balanced`) then work
-   in the same container, each from a fresh context, for at most 8 steps, and
-   report back. The **strategy** says how they run, the **scope** which tools
-   they get.
-3. harbor's verifier tests the container's final state (reward 1 = resolved).
-   Every LLM call, tool call, step, spawn, dispatch and arbitration is logged
-   with raw tokens and timestamps, so cost and latency are computed offline.
-
-| Axis | Values |
-|---|---|
-| Strategy | `parallel` (up to 3 subagents at once), `sequential` (one at a time, in order), `arbiter` (3 candidates per instruction, an LLM judge, one confidence-aware debate round) |
-| Scope | `easy`: `read_file`, `list_dir`, `search`; `medium`: + `bash` (told not to edit project files); `hard`: + `edit_file` |
-| Orchestrator tools | all five, or `read_file`, `list_dir`, `search` only (a **manager**, which must delegate every command and edit) |
-
-### Conditions
-
-All 15 are in [`configs/sweeps/pilot.yaml`](configs/sweeps/pilot.yaml), each a
-set of overrides on [`configs/sail/base.yaml`](configs/sail/base.yaml).
-
-| Condition | What it is |
-|---|---|
-| `single_5step` | the orchestrator alone, 5 steps |
-| `single_matched` | alone, 40 steps (5 orchestrator steps x 8 subagent steps) |
-| `gemma31b_{parallel,sequential,arbiter}_{easy,medium,hard}` | Gemma-4-31B subagents, strategy x scope (9 conditions) |
-| `samemodel_parallel_hard` | subagents run the orchestrator's own model: having subagents vs their size |
-| `manager_{parallel,sequential,arbiter}_hard` | Gemma subagents, orchestrator limited to read-only tools |
-
-The **pilot** is these 15 conditions on 10 tasks (4 easy, 6 short medium)
-x 3 rounds = 45 harbor jobs, 450 episodes. The **smoke** sweep
-([`configs/sweeps/smoke.yaml`](configs/sweeps/smoke.yaml)) is the same 15
-conditions on `fix-git` and `prove-plus-comm`, 1 round (30 episodes). Each
-round runs the conditions in its own shuffled order.
+To reproduce the final study, see [Setup](#setup) and [Final study](#final-study-issue-23).
 
 ## Setup
 
@@ -91,8 +60,8 @@ at `5968c69`; the sessions run on Modal (`modal token new`) and call Sail.
 | 2. Levels | `final_levels.yaml` | the three settings at L0-L3 (bugs; + ETAs; + questions; + an urgent bug) | 72 (L0 included) |
 
 ```bash
-scripts/setup.sh                 # .venv, .env (put SAIL_API_KEY=... in it)
-scripts/get_tasks.sh             # SWE-sweep tasks at 5968c69 -> ../class-6-swe-sweep/swe-sweep
+scripts/setup.sh --final         # .venv, .env (put SAIL_API_KEY=... in it), the SWE-sweep tasks at
+                                 # 5968c69 (scripts/get_tasks.sh), a Modal token check; no Docker needed
 scripts/run_final.sh --dry-run   # list the jobs of both sweeps
 scripts/run_final.sh             # experiments 1 and 2 for DeepSeek-V4.1-Flash-1017, graded and tabulated
 scripts/run_final.sh --l0-only   # experiment 1 only
@@ -108,6 +77,71 @@ share fixed, per setting and for the isolated sessions, which are also graded
 at the time each bug had in the shared sessions (`isolated_capped`). Another
 model runs with specs that extend these two with their own `name` and `base`:
 `scripts/run_final.sh --levels SPEC --isolated SPEC`.
+
+### Plots
+
+Experiment 2 compares models: give each model's levels-sweep tables (written by
+`run_final.sh`) a name, in plotting order:
+
+```bash
+.venv/bin/python -m subagents_bench.plots.final \
+  --model "DeepSeek-V4.1-Flash"=analysis/final_levels \
+  --model "Opus 5.5"=analysis/final_levels_opus --model "Luna"=analysis/final_levels_luna \
+  --out figures/final
+```
+
+It writes six figures to `figures/final/`, each with the table it draws:
+`response_time` (median time to the first reply the user saw, per model, level
+and setting; a bug never replied to counts as never), `bugs_fixed`, `eta`
+(estimate against the real time to fix), `response_cdf`, `orchestrator_time`
+(share of the session in model calls, own tools, or waiting) and
+`question_vs_bug` (L2-L3).
+
+## Earlier study: orchestrator and subagents on Terminal-Bench
+
+The repository started as a batch study of cost and latency on Terminal-Bench 2.0; the
+sections from here to *SWE-sweep* describe it.
+
+One episode is one Terminal-Bench 2.0 task, run by harbor 0.24.0 in the task's
+own Docker image:
+
+1. The **orchestrator**, `deepseek-ai/DeepSeek-V4.1-Flash` on Sail's `balanced`
+   tier, gets the task instruction and **5 steps**. A step is one LLM call
+   plus the tools it asks for: `bash`, `edit_file`, `read_file`, `list_dir`,
+   `search`, `finish`.
+2. In a subagent condition it can also call `spawn_subagents(instructions)`.
+   **Subagents** (`nvidia/Gemma-4-31B-IT-NVFP4` on Sail, `balanced`) then work
+   in the same container, each from a fresh context, for at most 8 steps, and
+   report back. The **strategy** says how they run, the **scope** which tools
+   they get.
+3. harbor's verifier tests the container's final state (reward 1 = resolved).
+   Every LLM call, tool call, step, spawn, dispatch and arbitration is logged
+   with raw tokens and timestamps, so cost and latency are computed offline.
+
+| Axis | Values |
+|---|---|
+| Strategy | `parallel` (up to 3 subagents at once), `sequential` (one at a time, in order), `arbiter` (3 candidates per instruction, an LLM judge, one confidence-aware debate round) |
+| Scope | `easy`: `read_file`, `list_dir`, `search`; `medium`: + `bash` (told not to edit project files); `hard`: + `edit_file` |
+| Orchestrator tools | all five, or `read_file`, `list_dir`, `search` only (a **manager**, which must delegate every command and edit) |
+
+### Conditions (pilot)
+
+All 15 are in [`configs/sweeps/pilot.yaml`](configs/sweeps/pilot.yaml), each a
+set of overrides on [`configs/sail/base.yaml`](configs/sail/base.yaml).
+
+| Condition | What it is |
+|---|---|
+| `single_5step` | the orchestrator alone, 5 steps |
+| `single_matched` | alone, 40 steps (5 orchestrator steps x 8 subagent steps) |
+| `gemma31b_{parallel,sequential,arbiter}_{easy,medium,hard}` | Gemma-4-31B subagents, strategy x scope (9 conditions) |
+| `samemodel_parallel_hard` | subagents run the orchestrator's own model: having subagents vs their size |
+| `manager_{parallel,sequential,arbiter}_hard` | Gemma subagents, orchestrator limited to read-only tools |
+
+The **pilot** is these 15 conditions on 10 tasks (4 easy, 6 short medium)
+x 3 rounds = 45 harbor jobs, 450 episodes. The **smoke** sweep
+([`configs/sweeps/smoke.yaml`](configs/sweeps/smoke.yaml)) is the same 15
+conditions on `fix-git` and `prove-plus-comm`, 1 round (30 episodes). Each
+round runs the conditions in its own shuffled order.
 
 ## The three scripts
 
