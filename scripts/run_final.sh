@@ -19,9 +19,9 @@
 #                    that ended with failed trials, without rerunning them)
 #   --dry-run        print the jobs of both sweeps; run and grade nothing
 #
-# Trials that fail (a provider error past every retry) are not rerun: when a sweep ends with failed
+# Trials that fail (a provider error past every retry, an agent crash) are not rerun: when a sweep ends with failed
 # trials (exit 1), the grading and tables still run, and the analysis counts a session that ended
-# in a provider error as a failure (its bugs not fixed, its unanswered requests never answered).
+# in a provider error or an agent crash as a failure (its bugs not fixed, its unanswered requests never answered).
 # Rerunning the same command without --grade-only does rerun them.
 #
 # Steps: copy the fixed question sets (data/questions) into the levels sweep's own hints dir, which
@@ -127,7 +127,7 @@ fi
 [ "$DRY_RUN" = 1 ] && exit "$rc"
 case "$rc" in
   0) ;;
-  1) echo "[WARN] $STEM: some trials failed; grading what the sweeps have (a provider error counts as a failure)" ;;
+  1) echo "[WARN] $STEM: some trials failed; grading what the sweeps have (a provider error or an agent crash counts as a failure)" ;;
   *) exit "$rc" ;;  # interrupted, billing, config error, outage: stop
 esac
 

@@ -107,13 +107,13 @@ def test_isolated_condition_names_are_checked(tmp_path, trials):
         l0_table(lv, iso)
 
 
-def test_a_provider_error_counts_as_a_failure(tmp_path, trials):
+def test_a_provider_error_or_agent_crash_counts_as_a_failure(tmp_path, trials):
     """A session that ended in a provider error stays in, with its bugs not fixed (even one whose
     replayed state passed) and its cost counted; another invalid session is left out."""
     states, asked = trials
     lv, iso = tmp_path / "levels", tmp_path / "isolated"
     failed = {**ep("manager_owner_baseline", "t1", 1.0, valid=False), "invalid_reason": "provider_error"}
-    crashed = {**ep("manager_owner_baseline", "t3", 1.0, task="c", valid=False), "invalid_reason": "agent_crash"}
+    crashed = {**ep("manager_owner_baseline", "t3", 1.0, task="c", valid=False), "invalid_reason": "no_result"}
     write(lv, [failed, crashed], [fx("manager_owner_baseline", "t1", "b0", True),
                                   fx("manager_owner_baseline", "t3", "b0", True, task="c")])
     iso_failed = {**ep("single_bug0", "i0", 0.5, valid=False), "invalid_reason": "provider_error"}
@@ -121,7 +121,21 @@ def test_a_provider_error_counts_as_a_failure(tmp_path, trials):
           [fx("single_bug0", "i0", "b0", None), fx("single_bug0", "i3", "b0", True, task="c")])
     states.update({"i0": [(0.0, "pass")]})
     t = l0_table(lv, iso).set_index("point")
-    assert (t["n_bugs"] == 1).all()  # (a, b0): task c's shared session crashed, so (c, b0) is not in every point
+    assert (t["n_bugs"] == 1).all()  # (a, b0): task c's shared session has no result, so (c, b0) is left out
     assert (t.loc["manager_owner", "n_fixed"], t.loc["manager_owner", "usd_per_bug"]) == (0, 1.0)
     assert (t.loc["isolated", "n_fixed"], t.loc["isolated_capped", "n_fixed"]) == (0, 0)
     assert t.loc["isolated", "usd_total"] == 0.5 and not any(name == "i0" for name, _ in asked)
+
+
+def test_an_agent_crash_counts_as_a_failure(tmp_path, trials):
+    """An out-of-memory sandbox under the agents' own commands (harbor fails after the agent
+    started: agent_crash) counts as a failure like a provider error."""
+    lv, iso = tmp_path / "levels", tmp_path / "isolated"
+    oom = {**ep("manager_owner_baseline", "t1", 2.0, valid=False), "invalid_reason": "agent_crash"}
+    write(lv, [oom], [fx("manager_owner_baseline", "t1", "b0", True), fx("manager_owner_baseline", "t1", "b1", None, 240.0)])
+    write(iso, [ep("single_bug0", "i0", 0.2), ep("single_bug1", "i1", 0.2)],
+          [fx("single_bug0", "i0", "b0", True), fx("single_bug1", "i1", "b1", True)])
+    trials[0].update({"i0": [(0.0, "pass")], "i1": [(0.0, "pass")]})
+    t = l0_table(lv, iso).set_index("point")
+    assert (t.loc["manager_owner", "n_bugs"], t.loc["manager_owner", "n_fixed"]) == (2, 0)
+    assert t.loc["manager_owner", "usd_total"] == 2.0

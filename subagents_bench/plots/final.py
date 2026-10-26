@@ -73,7 +73,7 @@ def _read(d: Path, name: str, keep: set[str] | None, required: bool = True) -> p
 
 def load(models: dict[str, Path]) -> dict[str, pd.DataFrame]:
     """Every model's tables, concatenated with a ``model`` column. The valid sessions and those that
-    ended in a provider error (``analysis.final.counted``), which count as failures: their bugs are
+    failed (``analysis.final.counted``: a provider error or an agent crash), which count as failures: their bugs are
     not fixed and the requests they never answered count as never answered."""
     out: dict[str, list[pd.DataFrame]] = {}
     for model, d in models.items():

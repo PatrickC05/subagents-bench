@@ -12,9 +12,11 @@ give the shared sessions' wall clock and the isolated sessions' replayed snapsho
 ``l0.csv`` (one row per model and point) and ``l0.png`` (dollars per bug, log scale, against the
 share fixed: a color per model, a marker per point).
 
-A session that ended in a provider error (``invalid_reason`` provider_error: the provider failed
-past every retry) counts as a failure, not as missing data: its bugs are not fixed, its cost
-counts. Other invalid sessions are left out.
+A session that failed counts as a failure, not as missing data: its bugs are not fixed, its cost
+counts. Failed means ``invalid_reason`` ``provider_error`` (the provider failed past every retry)
+or ``agent_crash`` (harbor failed once the agent had started, e.g. the sandbox ran out of memory
+under the agents' own commands). Other invalid sessions (no episode, a grader or verifier failure,
+a harbor exception before the agent ran) are left out.
 
 Every point of a model covers the same bugs: the (task, subtask) pairs that every L0 setting and
 the isolated sessions have a valid verdict for (``n_bugs``; ``n_dropped`` the bugs left out). The
@@ -43,6 +45,7 @@ from .fixes import state_at
 from .load import load_trial
 
 ISOLATED = re.compile(r"single_bug(\d+)$")
+FAILURES = ("provider_error", "agent_crash")  # invalid sessions that count as failures
 BUG = ["task_name", "subtask_id"]
 
 
@@ -55,9 +58,9 @@ def _read(d: Path, name: str) -> pd.DataFrame:
 
 def counted(episodes: pd.DataFrame) -> tuple[set[str], set[str]]:
     """(trials the analysis counts, those of them that are failures): the valid trials and those
-    that ended in a provider error, which count as failures."""
+    that failed (FAILURES), which count as failures."""
     valid = _flag(episodes, "valid")
-    failed = episodes["invalid_reason"].eq("provider_error") if "invalid_reason" in episodes else valid & False
+    failed = episodes["invalid_reason"].isin(FAILURES) if "invalid_reason" in episodes else valid & False
     return set(episodes.loc[valid | failed, "trial_name"]), set(episodes.loc[failed & ~valid, "trial_name"])
 
 
@@ -117,7 +120,7 @@ def l0_table(levels: Path, isolated: Path, root: Path = Path(".")) -> pd.DataFra
            .groupby(BUG)["had"].median())
     capped = []
     for _, r in iso.iterrows():
-        if r["failed"]:  # a provider error: a failure at the cap too
+        if r["failed"]:  # a failed session: a failure at the cap too
             capped.append({"fixed": False, "usd": r["cost_total"]})
             continue
         status = state_at(_trial(root, r["trial_dir"]), float(had[(r["task_name"], r["subtask_id"])])).get(r["subtask_id"])
