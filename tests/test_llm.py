@@ -256,6 +256,20 @@ def test_retries_exhausted_raise_provider_error():
     assert ei.value.backoff_sec == 2 + 4 + 8 + 15
 
 
+def test_a_429_waits_past_max_retries_until_the_retry_budget(monkeypatch):
+    """Prime's per-model concurrency limit answers 429 until a slot frees up: no attempt cap, only the budget."""
+    busy = error(429, '{"error":{"message":"Too many concurrent requests for this model (limit: 16). Try again shortly."}}')
+    r = client(Server(*[busy] * 7, ok("fine")), [], max_retries=4, retry_budget_sec=1e9).complete("s", USER, [])
+    assert r.text == "fine" and r.n_attempts == 8
+    clock = [1000.0]
+    monkeypatch.setattr(llm.time, "time", lambda: clock[0])
+    c = client(Server(*[busy] * 20), max_retries=4, retry_budget_sec=50.0)
+    c._sleep = lambda s: clock.__setitem__(0, clock[0] + s)
+    with pytest.raises(ProviderError, match="giving up after 6 attempt") as ei:
+        c.complete("s", USER, [])
+    assert ei.value.status == 429 and clock[0] == 1044.0  # 2 + 4 + 8 + 15 + 15; one more 15 s wait passes 50 s
+
+
 def test_no_retry_starts_past_the_retry_budget(monkeypatch):
     clock = [1000.0]  # backoff sleeps advance a fake clock
     monkeypatch.setattr(llm.time, "time", lambda: clock[0])

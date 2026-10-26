@@ -459,7 +459,11 @@ class ChatClient:
                     one_call = True
                     body = self._body(system + ONE_CALL_NOTE, messages, tools)
                 delay = self._rng.uniform(0.0, min(BACKOFF_MAX_SEC, BACKOFF_BASE_SEC * 2 ** (attempts - 1)))
-                if attempts > self.cfg.max_retries or time.time() + delay - t_start > self.cfg.retry_budget_sec:
+                # a 429 (a billing one raised above) is a rate or concurrency limit: it waits for a free
+                # slot until retry_budget_sec, past max_retries (Prime, 2026-10-26: "Too many concurrent
+                # requests for this model (limit: 16)" failed 5 attempts in 10-20 s, issue #28)
+                capped = attempts > self.cfg.max_retries and e.status != 429
+                if capped or time.time() + delay - t_start > self.cfg.retry_budget_sec:
                     raise ProviderError(
                         f"{self.cfg.model}: giving up after {attempts} attempt(s) in {time.time() - t_start:.0f}s: {e}",
                         status=e.status, n_attempts=attempts, backoff_sec=backoff,

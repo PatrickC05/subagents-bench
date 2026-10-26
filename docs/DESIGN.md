@@ -132,7 +132,12 @@ runs, 4 of 314 calls needed a retry, Sail's failed attempts ended after
 about 28 s (at most 60 s), one call recovered only after 380 s, and the two
 that never recovered spent 407 s and 533 s on 9 attempts under the old limits (8
 retries, 120 s backoff cap, 600 s read timeout). A failure now surfaces in
-about two minutes, and the episode stops (below).
+about two minutes, and the episode stops (below). A 429 that is not a
+billing error has no attempt cap, only the budget: it is a rate or
+concurrency limit, so the call waits for a free slot. On 2026-10-26 Prime
+answered "Too many concurrent requests for this model (limit: 16)" to
+GPT-5.6 Luna and DeepSeek-V4.1-Flash-1017 with 90 sessions each at once, and
+the 5 attempts ran out in 10-20 s (issue #28).
 
 **Stall rule.** An attempt fails, retryably, once `request_timeout_sec`
 (180 s) passes without a chunk carrying data; keep-alive bytes do not count.
