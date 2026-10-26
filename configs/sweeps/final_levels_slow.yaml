@@ -1,0 +1,8 @@
+# final_levels at 2 sessions at a time, for a model whose Prime concurrency limit (16 requests per
+# model and account: GPT-5.6 Luna, issue #28) throttles it at 6 sessions per job. Same conditions;
+# its own jobs dir (jobs/final_levels_slow-<model>). Run one job at a time (--jobs-at-once 1):
+#   scripts/run_final.sh --model configs/prime/models/gpt-5.6-luna.yaml --slow --part l0   # and --part l1l2
+extends: configs/sweeps/final_levels.yaml
+name: final_levels_slow
+harbor:
+  n_concurrent: 2

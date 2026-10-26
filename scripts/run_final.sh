@@ -2,7 +2,8 @@
 # Run the final study (issue #23) for one model, end to end: the sessions, the grading and the
 # tables. Resumable: re-run the same command after any stop; finished jobs and grades are kept.
 #
-#   scripts/run_final.sh [--model FILE] [--l0-only] [--parallel] [--grade-only] [--jobs-at-once N] [--dry-run]
+#   scripts/run_final.sh [--model FILE] [--l0-only | --l1l2-only] [--slow] [--parallel] [--grade-only]
+#                        [--jobs-at-once N] [--dry-run]
 #
 #   --model FILE     the model, a configs/prime/models/*.yaml file, default
 #                    configs/prime/models/deepseek-v4.1-flash-1017.yaml; the orchestrator and its
@@ -10,6 +11,12 @@
 #   --l0-only        experiment 1 only: the three settings at L0 (18 sessions) and the isolated
 #                    baseline (36). Without it, experiment 2 as well: the three settings at
 #                    L0-L2 (54 sessions, L0 included), and the isolated baseline.
+#   --l1l2-only      only the three settings at L1 and L2 (36 sessions; no L0, no isolated baseline):
+#                    the other half of experiment 2, for splitting a model between two machines
+#                    (one runs --l0-only, the other --l1l2-only)
+#   --slow           2 sessions at a time, one job at a time (configs/sweeps/final_*_slow.yaml, in
+#                    jobs/final_*_slow-<stem>), for a model Prime throttles at 6 sessions per job
+#                    (GPT-5.6 Luna: 16 requests at once per model and account); not with --parallel
 #   --parallel       run the two sweeps at the same time (after preflight), each logging to
 #                    logs/final/<stem>-levels.log and -isolated.log: every session of the model at
 #                    once, so the sessions take about 30 minutes in all
@@ -46,12 +53,14 @@ usage() { sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed -e '$d' -e 's/^# \{0
 LEVELS=configs/sweeps/final_levels.yaml
 ISOLATED=configs/sweeps/final_isolated.yaml
 MODEL=configs/prime/models/deepseek-v4.1-flash-1017.yaml
-L0_ONLY=0 DRY_RUN=0 PARALLEL=0 GRADE_ONLY=0 AT_ONCE=12
+L0_ONLY=0 L1L2_ONLY=0 SLOW=0 DRY_RUN=0 PARALLEL=0 GRADE_ONLY=0 AT_ONCE=
 while [ $# -gt 0 ]; do
   case "$1" in
     -h | --help) usage; exit 0 ;;
     --model) MODEL="$2"; shift ;;
     --l0-only) L0_ONLY=1 ;;
+    --l1l2-only) L1L2_ONLY=1 ;;
+    --slow) SLOW=1 ;;
     --jobs-at-once) AT_ONCE="$2"; shift ;;
     --dry-run) DRY_RUN=1 ;;
     --parallel) PARALLEL=1 ;;
@@ -61,6 +70,14 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ -f "$MODEL" ] || { echo "[FAIL] model file not found: $MODEL" >&2; exit 2; }
+[ "$L0_ONLY" = 0 ] || [ "$L1L2_ONLY" = 0 ] || { echo "[FAIL] --l0-only and --l1l2-only exclude each other" >&2; exit 2; }
+[ "$SLOW" = 0 ] || [ "$PARALLEL" = 0 ] || { echo "[FAIL] --slow runs one job at a time: drop --parallel" >&2; exit 2; }
+if [ "$SLOW" = 1 ]; then
+  LEVELS=configs/sweeps/final_levels_slow.yaml
+  ISOLATED=configs/sweeps/final_isolated_slow.yaml
+  AT_ONCE="${AT_ONCE:-1}"
+fi
+AT_ONCE="${AT_ONCE:-12}"
 
 BIN="$ROOT/.venv/bin/subagents-bench"
 [ -x "$BIN" ] || { echo "[FAIL] $BIN not found: run scripts/setup.sh --final first" >&2; exit 1; }
@@ -76,6 +93,9 @@ STEM="$(basename "$MODEL" .yaml)"
 ONLY=()
 if [ "$L0_ONLY" = 1 ]; then
   ONLY=(--only background_hinted_baseline manager_background_baseline manager_owner_baseline)
+elif [ "$L1L2_ONLY" = 1 ]; then
+  ONLY=(--only background_hinted_eta manager_background_eta manager_owner_eta
+        background_hinted_questions manager_background_questions manager_owner_questions)
 fi
 DRY=()
 [ "$DRY_RUN" = 1 ] && DRY=(--dry-run)
@@ -115,7 +135,7 @@ else
   echo "== $STEM: levels sweep -> $LEVELS_JOBS"
   scripts/run_experiment.sh "$LEVELS" --model "$MODEL" ${ONLY[@]+"${ONLY[@]}"} --jobs-at-once "$AT_ONCE" \
     ${DRY[@]+"${DRY[@]}"} || rc=$?
-  if [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; then
+  if { [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; } && [ "$L1L2_ONLY" = 0 ]; then
     echo "== $STEM: isolated baseline -> $ISOLATED_JOBS"
     rc2=0
     SKIP_PREFLIGHT=1 scripts/run_experiment.sh "$ISOLATED" --model "$MODEL" --jobs-at-once "$AT_ONCE" \
@@ -133,16 +153,24 @@ esac
 
 echo "== $STEM: grading"
 "$BIN" fix-times "$LEVELS" --model "$MODEL"
-"$BIN" fix-times "$ISOLATED" --model "$MODEL"
+[ "$L1L2_ONLY" = 1 ] || "$BIN" fix-times "$ISOLATED" --model "$MODEL"
 [ "$L0_ONLY" = 1 ] || "$BIN" grade-answers "$LEVELS" --model "$MODEL"
 
 echo "== $STEM: tables and figures"
 LV="$(basename "$LEVELS_JOBS")" ISO="$(basename "$ISOLATED_JOBS")"
-for d in "$LEVELS_JOBS" "$ISOLATED_JOBS"; do
+DIRS=("$LEVELS_JOBS")
+[ "$L1L2_ONLY" = 1 ] || DIRS+=("$ISOLATED_JOBS")
+for d in "${DIRS[@]}"; do
   arc=0
   scripts/analyze.sh "$d" || arc=$?
   [ "$arc" -eq 0 ] || [ "$arc" -eq 3 ] || exit "$arc"  # 3: the delegation gate; the tables are written
 done
-.venv/bin/python -m subagents_bench.analysis.final --model "$STEM=analysis/$LV:analysis/$ISO" --out "analysis/final_l0-$STEM"
-echo "[OK] analysis/$LV, analysis/$ISO and analysis/final_l0-$STEM (experiment 1: l0.csv, l0.png)"
+if [ "$L1L2_ONLY" = 1 ]; then
+  echo "[OK] analysis/$LV (L1-L2 only: experiment 1 comes from the --l0-only half)"
+  exit "$rc"
+fi
+L0OUT="analysis/final_l0-$STEM"
+[ "$SLOW" = 0 ] || L0OUT="analysis/final_l0_slow-$STEM"
+.venv/bin/python -m subagents_bench.analysis.final --model "$STEM=analysis/$LV:analysis/$ISO" --out "$L0OUT"
+echo "[OK] analysis/$LV, analysis/$ISO and $L0OUT (experiment 1: l0.csv, l0.png)"
 exit "$rc"  # 1 if trials failed: graded as failures, rerun the command (without --grade-only) to rerun them

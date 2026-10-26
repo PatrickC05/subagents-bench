@@ -1,0 +1,5 @@
+# final_isolated at 2 sessions at a time (see final_levels_slow.yaml).
+extends: configs/sweeps/final_isolated.yaml
+name: final_isolated_slow
+harbor:
+  n_concurrent: 2
