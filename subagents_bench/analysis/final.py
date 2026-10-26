@@ -271,14 +271,25 @@ def plot(table: pd.DataFrame, path: Path, title: str = "", levels: pd.DataFrame 
     right = float(every["usd_per_bug"].max()) * 1.4
     fronts = []
     if frontiers:
-        for pts, color, label in ((table[table["point"] == "isolated"], "dimgrey", "frontier: independent sessions"),
-                                  (table[~table["point"].str.startswith("isolated")], "black", "frontier: same session")):
+        # one frontier per condition, isolated then L0-L2; with levels, on the models that ran every level so
+        # the curves cover the same models
+        fm = sorted(set(lv["model"])) if not lv.empty else models
+        sets = [("isolated", table[(table["point"] == "isolated") & table["model"].isin(fm)]),
+                ("L0", table[~table["point"].str.startswith("isolated") & table["model"].isin(fm)])]
+        sets += [(lvl, lv[lv["level"] == lvl]) for lvl in LEVEL_STYLE] if not lv.empty else []
+        shade = plt.get_cmap("Greys")
+        styles = {"isolated": (shade(0.95), "-"), "L0": (shade(0.75), "--"), "L1": (shade(0.6), "-."),
+                  "L2": (shade(0.45), ":")}
+        for name, pts in sets:
             if pts.empty:
                 continue
+            color, ls = styles[name]
             fx, fy = zip(*pareto(pts))
-            ax.step(list(fx) + [right], list(fy) + [fy[-1]], where="post", color=color, lw=1.1,
-                    ls=(0, (2, 2)) if color == "dimgrey" else "--", zorder=0)
-            fronts.append(Line2D([], [], color=color, lw=1.1, ls=(0, (2, 2)) if color == "dimgrey" else "--", label=label))
+            ax.step(list(fx) + [right], list(fy) + [fy[-1]], where="post", color=color, lw=1.2, ls=ls, zorder=0)
+            label = "independent sessions" if name == "isolated" else name
+            fronts.append(Line2D([], [], color=color, lw=1.2, ls=ls, label=f"frontier: {label}"))
+        if not lv.empty and len(fm) < len(models):
+            fronts.append(Line2D([], [], ls="", label="(frontiers: " + ", ".join(TAG.get(m, m) for m in fm) + ")"))
     ax.set_xscale("log")
     ax.set_xlabel("USD per bug (log)")
     ax.set_ylabel("share of bugs fixed")
