@@ -131,6 +131,10 @@ def l0_table(levels: Path, isolated: Path, root: Path = Path(".")) -> pd.DataFra
     return pd.DataFrame(rows)
 
 
+POINT_LABEL = {"background_hinted": "same session: orch + sub", "manager_background": "same session: sub only",
+               "manager_owner": "same session: owner", "isolated": "independent sessions"}  # legend names
+TITLE = {"background_hinted": "Cost Performance Frontier", "manager_background": "Cost Performance Frontier: subagents only",
+         "manager_owner": "Cost Performance Frontier: subagents with owner"}
 SHORT = {"claude-opus-5.5": "Opus 5.5", "claude-sonnet-5.5": "Sonnet 5.5", "gpt-5.6-sol": "GPT-5.6 Sol",
          "gpt-5.6-terra": "GPT-5.6 Terra", "gpt-5.6-luna": "GPT-5.6 Luna", "kimi-k3": "Kimi K3",
          "deepseek-v4.1-flash-1017": "DeepSeek V4.1 Flash"}  # display names for the legend
@@ -195,6 +199,7 @@ def plot(table: pd.DataFrame, path: Path, title: str = "") -> None:
 
     from ..plots.final import MARKERS, pyplot
     plt = pyplot()
+    table = table[table["point"] != "isolated_capped"]  # the capped point is in l0.csv; the figure shows the frontier
     fig, ax = plt.subplots(figsize=(7, 4.5))
     models = list(dict.fromkeys(table["model"]))
     colors = {m: plt.get_cmap("tab10")(i % 10) for i, m in enumerate(models)}
@@ -208,23 +213,23 @@ def plot(table: pd.DataFrame, path: Path, title: str = "") -> None:
             ax.plot([x0, r["usd_per_bug"]], [y0, r["fixed_frac"]], color=colors[m], lw=0.9, alpha=0.45, zorder=1)
         labels.append((m, x0, y0))
     for _, r in table.iterrows():
-        capped = r["point"] == "isolated_capped"  # a hollow ring around the isolated star, visible when they coincide
         ax.scatter(r["usd_per_bug"], r["fixed_frac"], marker=MARKERS.get(r["point"], "x"),
-                   s=260 if capped else 110 if r["point"] == "isolated" else 45, color=colors[r["model"]],
-                   facecolors="none" if capped else colors[r["model"]], linewidths=1.1 if capped else None, zorder=2)
+                   s=130 if r["point"] == "isolated" else 45, color=colors[r["model"]], linewidths=0, zorder=2)
     ax.set_xscale("log")
     ax.set_xlabel("USD per bug (log)")
     ax.set_ylabel("share of bugs fixed")
     ax.set_ylim(max(0.0, float(table["fixed_frac"].min()) - 0.08), min(1.0, float(table["fixed_frac"].max()) + 0.05))
     lo, hi = float(table["usd_per_bug"].min()), float(table["usd_per_bug"].max())
     ax.set_xlim(lo / 2.6, hi * 1.4)  # room on the left for the model labels
-    ax.set_title(title or "L0: cost vs bugs fixed")
+    ax.set_title(title or "Cost Performance Frontier")
     _place_labels(fig, ax, labels, table, colors)
     handles = [Line2D([], [], color=colors[m], marker="o", ls="", label=SHORT.get(m, m)) for m in models]
     points = set(table["point"])
-    handles += [Line2D([], [], color="grey", marker=MARKERS[p], ls="", label=p,
-                       markerfacecolor="none" if p == "isolated_capped" else "grey") for p in MARKERS if p in points]
-    handles.append(Line2D([], [], color="grey", lw=0.9, alpha=0.45, label="setting to its isolated point"))
+    shared = [p for p in POINT_LABEL if p in points and p != "isolated"]
+    for p in shared + ["isolated"]:
+        label = "same session" if p != "isolated" and len(shared) == 1 else POINT_LABEL[p]
+        handles.append(Line2D([], [], color="grey", marker=MARKERS[p], ls="", markeredgewidth=0,
+                              markersize=9 if p == "isolated" else 6, label=label))
     ax.legend(handles=handles, fontsize=7, loc="center left", bbox_to_anchor=(1.0, 0.5), frameon=False)
     fig.tight_layout()
     fig.savefig(path, dpi=150)
@@ -250,12 +255,12 @@ def main(argv: list[str] | None = None) -> int:
     table = table[["model"] + [c for c in table.columns if c != "model"]]
     a.out.mkdir(parents=True, exist_ok=True)
     table.to_csv(a.out / "l0.csv", index=False)
-    plot(table, a.out / "l0.png")
+    plot(table, a.out / "l0.png", title="Cost Performance Frontier: all settings")
     # the same plot with one shared setting at a time against the isolated points: l0_<setting>.png
     shared = [pt for pt in dict.fromkeys(table["point"]) if not pt.startswith("isolated")]
     for pt in shared:
         sub = table[table["point"].isin([pt, "isolated", "isolated_capped"])]
-        plot(sub, a.out / f"l0_{pt}.png", title=f"L0: cost vs bugs fixed, {pt} vs isolated")
+        plot(sub, a.out / f"l0_{pt}.png", title=TITLE.get(pt, f"Cost Performance Frontier: {pt}"))
     print(table.to_string(index=False))
     print(f"[OK] {a.out / 'l0.csv'}, {a.out / 'l0.png'} and l0_<setting>.png for {', '.join(shared)}")
     return 0
