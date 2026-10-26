@@ -352,14 +352,19 @@ def orchestrator_time(t: dict[str, pd.DataFrame], models: list[str], out: Path) 
             ticks.append(x)
             labels.append(SETTING_SHORT[s])
             x += 1
-        ax.text(x - 1 - (len(SETTINGS) - 1) / 2, -0.1, mname, transform=ax.get_xaxis_transform(), ha="center",
+        ax.text(x - 1 - (len(SETTINGS) - 1) / 2, -0.14, mname, transform=ax.get_xaxis_transform(), ha="center",
                 fontsize=8, fontweight="bold")
         x += 0.5
     ax.set_xticks(ticks, labels, fontsize=7)
     ax.set_ylabel("share of the session")
     ax.set_ylim(0, 1)
-    fig.suptitle("Orchestrator: in model calls (solid), own tools (light), neither (faint)", fontsize=9)
-    _save(fig, out / "orchestrator_time.png")
+    from matplotlib.patches import Patch
+    handles = [Patch(color="dimgrey", alpha=a, label=l) for a, l in
+               ((1.0, "in model calls"), (0.55, "in its own tools"), (0.15, "neither (waiting)"))]
+    fig.suptitle("Where the orchestrator's time goes", fontsize=9)
+    fig.tight_layout(rect=(0, 0.1, 1, 1))
+    fig.legend(handles=handles, loc="lower center", ncol=3, fontsize=8, frameon=False)
+    _save(fig, out / "orchestrator_time.png", tight=False)
     return tab
 
 
@@ -399,9 +404,14 @@ def question_vs_bug(t: dict[str, pd.DataFrame], models: list[str], out: Path) ->
         ax.set_title(mname, fontsize=9)
         ax.set_ylim(lo, top * 1.6)
     axes[0][0].set_ylabel("median s to first reply (log)")
-    fig.suptitle("L2: median first reply to bugs (dark) and questions (light)\nseconds above each bar (with % replied when below 100%); hatched: never",
-                 fontsize=8)
-    _save(fig, out / "question_vs_bug.png")
+    from matplotlib.patches import Patch
+    handles = [Patch(color="dimgrey", label="bug"), Patch(color="dimgrey", alpha=0.5, label="question")]
+    if any(_never(float(r["median_sec"]), int(r["n"])) for _, r in tab.iterrows()):
+        handles.append(Patch(facecolor="white", edgecolor="dimgrey", hatch="//", label="never replied"))
+    fig.suptitle("L2: median time to first reply", fontsize=9)
+    fig.tight_layout(rect=(0, 0.07, 1, 1))
+    fig.legend(handles=handles, loc="lower center", ncol=len(handles), fontsize=8, frameon=False)
+    _save(fig, out / "question_vs_bug.png", tight=False)
     return tab
 
 
