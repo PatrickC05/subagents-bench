@@ -2,7 +2,7 @@
 # Run the whole final study of issue #23, model after model, then draw the cross-model figures.
 # Resumable: re-run the same command after any stop; finished jobs and grades are kept.
 #
-#   scripts/run_all_final.sh [--only STEM...] [--parallel] [--jobs-at-once N] [--dry-run]
+#   scripts/run_all_final.sh [--only STEM...] [--parallel] [--grade-only] [--jobs-at-once N] [--dry-run]
 #
 #   --only STEM...   run only these models (configs/prime/models/<STEM>.yaml), or `none` to only
 #                    draw the figures; the figures use every model whose tables exist
@@ -10,6 +10,8 @@
 #                    --parallel), logging to logs/final/<stem>.log: the sessions take about 30
 #                    minutes in all, plus preflight before and grading after (about 1 hour end to
 #                    end). Ctrl-C stops every run.
+#   --grade-only     run no session: grade and tabulate what each model's sweeps have (run_final.sh
+#                    --grade-only), e.g. after a run that ended with failed trials, which are not rerun
 #   --jobs-at-once N passed to scripts/run_final.sh, default 12
 #   --dry-run        list every model's jobs; run nothing
 #
@@ -47,6 +49,7 @@ while [ $# -gt 0 ]; do
     --jobs-at-once) PASS+=(--jobs-at-once "$2"); shift ;;
     --dry-run) DRY_RUN=1; PASS+=(--dry-run) ;;
     --parallel) PARALLEL=1 ;;
+    --grade-only) PASS+=(--grade-only) ;;
     *) echo "[FAIL] unknown option: $1 (see --help)" >&2; exit 2 ;;
   esac
   shift

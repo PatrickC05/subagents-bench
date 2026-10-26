@@ -105,3 +105,23 @@ def test_isolated_condition_names_are_checked(tmp_path, trials):
     write(iso, [ep("single", "i", 1.0)], [fx("single", "i", "b0", True)])
     with pytest.raises(SystemExit, match="single_bug"):
         l0_table(lv, iso)
+
+
+def test_a_provider_error_counts_as_a_failure(tmp_path, trials):
+    """A session that ended in a provider error stays in, with its bugs not fixed (even one whose
+    replayed state passed) and its cost counted; another invalid session is left out."""
+    states, asked = trials
+    lv, iso = tmp_path / "levels", tmp_path / "isolated"
+    failed = {**ep("manager_owner_baseline", "t1", 1.0, valid=False), "invalid_reason": "provider_error"}
+    crashed = {**ep("manager_owner_baseline", "t3", 1.0, task="c", valid=False), "invalid_reason": "agent_crash"}
+    write(lv, [failed, crashed], [fx("manager_owner_baseline", "t1", "b0", True),
+                                  fx("manager_owner_baseline", "t3", "b0", True, task="c")])
+    iso_failed = {**ep("single_bug0", "i0", 0.5, valid=False), "invalid_reason": "provider_error"}
+    write(iso, [iso_failed, ep("single_bug0", "i3", 0.2, task="c")],
+          [fx("single_bug0", "i0", "b0", None), fx("single_bug0", "i3", "b0", True, task="c")])
+    states.update({"i0": [(0.0, "pass")]})
+    t = l0_table(lv, iso).set_index("point")
+    assert (t["n_bugs"] == 1).all()  # (a, b0): task c's shared session crashed, so (c, b0) is not in every point
+    assert (t.loc["manager_owner", "n_fixed"], t.loc["manager_owner", "usd_per_bug"]) == (0, 1.0)
+    assert (t.loc["isolated", "n_fixed"], t.loc["isolated_capped", "n_fixed"]) == (0, 0)
+    assert t.loc["isolated", "usd_total"] == 0.5 and not any(name == "i0" for name, _ in asked)

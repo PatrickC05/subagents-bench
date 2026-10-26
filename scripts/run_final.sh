@@ -2,7 +2,7 @@
 # Run the final study (issue #23) for one model, end to end: the sessions, the grading and the
 # tables. Resumable: re-run the same command after any stop; finished jobs and grades are kept.
 #
-#   scripts/run_final.sh [--model FILE] [--l0-only] [--parallel] [--jobs-at-once N] [--dry-run]
+#   scripts/run_final.sh [--model FILE] [--l0-only] [--parallel] [--grade-only] [--jobs-at-once N] [--dry-run]
 #
 #   --model FILE     the model, a configs/prime/models/*.yaml file, default
 #                    configs/prime/models/deepseek-v4.1-flash-1017.yaml; the orchestrator and its
@@ -15,7 +15,14 @@
 #                    once, so the sessions take about 30 minutes in all
 #   --jobs-at-once N harbor jobs at once per sweep, default 12 (a job runs its 6 tasks at once;
 #                    12 runs the levels sweep's 9 jobs and the isolated sweep's 6 all at once)
+#   --grade-only     run no session: grade and tabulate the trials the sweeps have (after a run
+#                    that ended with failed trials, without rerunning them)
 #   --dry-run        print the jobs of both sweeps; run and grade nothing
+#
+# Trials that fail (a provider error past every retry) are not rerun: when a sweep ends with failed
+# trials (exit 1), the grading and tables still run, and the analysis counts a session that ended
+# in a provider error as a failure (its bugs not fixed, its unanswered requests never answered).
+# Rerunning the same command without --grade-only does rerun them.
 #
 # Steps: copy the fixed question sets (data/questions) into the levels sweep's own hints dir, which
 # every model's run reads, so every model is asked the same questions (a different file already
@@ -39,7 +46,7 @@ usage() { sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed -e '$d' -e 's/^# \{0
 LEVELS=configs/sweeps/final_levels.yaml
 ISOLATED=configs/sweeps/final_isolated.yaml
 MODEL=configs/prime/models/deepseek-v4.1-flash-1017.yaml
-L0_ONLY=0 DRY_RUN=0 PARALLEL=0 AT_ONCE=12
+L0_ONLY=0 DRY_RUN=0 PARALLEL=0 GRADE_ONLY=0 AT_ONCE=12
 while [ $# -gt 0 ]; do
   case "$1" in
     -h | --help) usage; exit 0 ;;
@@ -48,6 +55,7 @@ while [ $# -gt 0 ]; do
     --jobs-at-once) AT_ONCE="$2"; shift ;;
     --dry-run) DRY_RUN=1 ;;
     --parallel) PARALLEL=1 ;;
+    --grade-only) GRADE_ONLY=1 ;;
     *) echo "[FAIL] unknown option: $1 (see --help)" >&2; exit 2 ;;
   esac
   shift
@@ -87,7 +95,10 @@ for f in data/questions/*.questions.json; do
   fi
 done
 
-if [ "$PARALLEL" = 1 ] && [ "$DRY_RUN" = 0 ]; then
+rc=0
+if [ "$GRADE_ONLY" = 1 ]; then
+  echo "== $STEM: --grade-only: no session runs"
+elif [ "$PARALLEL" = 1 ] && [ "$DRY_RUN" = 0 ]; then
   if [ "${SKIP_PREFLIGHT:-0}" != 1 ]; then
     echo "== $STEM: preflight"
     "$BIN" preflight "$LEVELS" --oracle --model "$MODEL"
@@ -99,15 +110,26 @@ if [ "$PARALLEL" = 1 ] && [ "$DRY_RUN" = 0 ]; then
     ${ONLY[@]+"${ONLY[@]}"} --jobs-at-once "$AT_ONCE"
   par_start "logs/final/$STEM-isolated.log" env SKIP_PREFLIGHT=1 scripts/run_experiment.sh "$ISOLATED" --model "$MODEL" \
     --jobs-at-once "$AT_ONCE"
-  par_wait
+  par_wait || rc=$?
 else
   echo "== $STEM: levels sweep -> $LEVELS_JOBS"
   scripts/run_experiment.sh "$LEVELS" --model "$MODEL" ${ONLY[@]+"${ONLY[@]}"} --jobs-at-once "$AT_ONCE" \
-    ${DRY[@]+"${DRY[@]}"}
-  echo "== $STEM: isolated baseline -> $ISOLATED_JOBS"
-  SKIP_PREFLIGHT=1 scripts/run_experiment.sh "$ISOLATED" --model "$MODEL" --jobs-at-once "$AT_ONCE" ${DRY[@]+"${DRY[@]}"}
+    ${DRY[@]+"${DRY[@]}"} || rc=$?
+  if [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; then
+    echo "== $STEM: isolated baseline -> $ISOLATED_JOBS"
+    rc2=0
+    SKIP_PREFLIGHT=1 scripts/run_experiment.sh "$ISOLATED" --model "$MODEL" --jobs-at-once "$AT_ONCE" \
+      ${DRY[@]+"${DRY[@]}"} || rc2=$?
+    [ "$rc2" -eq 0 ] || [ "$rc" -ne 0 ] || rc=$rc2
+    [ "$rc2" -le 1 ] || rc=$rc2
+  fi
 fi
-[ "$DRY_RUN" = 1 ] && exit 0
+[ "$DRY_RUN" = 1 ] && exit "$rc"
+case "$rc" in
+  0) ;;
+  1) echo "[WARN] $STEM: some trials failed; grading what the sweeps have (a provider error counts as a failure)" ;;
+  *) exit "$rc" ;;  # interrupted, billing, config error, outage: stop
+esac
 
 echo "== $STEM: grading"
 "$BIN" fix-times "$LEVELS" --model "$MODEL"
@@ -117,9 +139,10 @@ echo "== $STEM: grading"
 echo "== $STEM: tables and figures"
 LV="$(basename "$LEVELS_JOBS")" ISO="$(basename "$ISOLATED_JOBS")"
 for d in "$LEVELS_JOBS" "$ISOLATED_JOBS"; do
-  rc=0
-  scripts/analyze.sh "$d" || rc=$?
-  [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ] || exit "$rc"  # 3: the delegation gate; the tables are written
+  arc=0
+  scripts/analyze.sh "$d" || arc=$?
+  [ "$arc" -eq 0 ] || [ "$arc" -eq 3 ] || exit "$arc"  # 3: the delegation gate; the tables are written
 done
 .venv/bin/python -m subagents_bench.analysis.final --model "$STEM=analysis/$LV:analysis/$ISO" --out "analysis/final_l0-$STEM"
 echo "[OK] analysis/$LV, analysis/$ISO and analysis/final_l0-$STEM (experiment 1: l0.csv, l0.png)"
+exit "$rc"  # 1 if trials failed: graded as failures, rerun the command (without --grade-only) to rerun them

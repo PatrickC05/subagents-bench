@@ -33,7 +33,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ..analysis.estimates import _flag, _valid
+from ..analysis.estimates import _flag
+from ..analysis.final import counted
 from ..analysis.interactivity import _median_censored
 from ..analysis.levels import setting_level
 
@@ -50,30 +51,40 @@ COLUMNS = {"messages": ["condition", "trial_name", "valid", "kind", "index", "us
                          "est_sec", "eta_min", "fixed_sec", "on_time", "weight"],
            "calls": ["condition", "trial_name", "valid", "role", "t_start", "t_end"],
            "tools": ["condition", "trial_name", "valid", "role", "name", "t_start", "t_end"],
-           "episodes": ["condition", "trial_name", "valid", "wall_clock_sec"]}
+           "episodes": ["condition", "trial_name", "valid", "invalid_reason", "wall_clock_sec"]}
 COLORS = {"background_hinted": "#3a6fb0", "manager_background": "#c4571f", "manager_owner": "#d9a634"}
 WALL = 1800.0
 
 
-def _read(d: Path, name: str, required: bool = True) -> pd.DataFrame:
+def _read(d: Path, name: str, keep: set[str] | None, required: bool = True) -> pd.DataFrame:
+    """A table's rows of the counted trials (``keep``; None: every row) in the plotted cells."""
     path = d / f"{name}.csv"
     if not path.is_file():
         if required:
             raise SystemExit(f"[FAIL] {path} not found: run scripts/analyze.sh on that sweep first")
         return pd.DataFrame(columns=COLUMNS[name])
-    df = _valid(pd.read_csv(path, usecols=lambda c: c in COLUMNS[name], low_memory=False))
+    df = pd.read_csv(path, usecols=lambda c: c in COLUMNS[name], low_memory=False)
+    if keep is not None:
+        df = df[df["trial_name"].isin(keep)]
     sl = df["condition"].map(setting_level)
     df = df.assign(setting=sl.str[0], level=sl.str[1])
     return df[df["setting"].isin(SETTINGS) & df["level"].isin(LEVELS)]
 
 
 def load(models: dict[str, Path]) -> dict[str, pd.DataFrame]:
-    """Every model's tables, concatenated with a ``model`` column."""
+    """Every model's tables, concatenated with a ``model`` column. The valid sessions and those that
+    ended in a provider error (``analysis.final.counted``), which count as failures: their bugs are
+    not fixed and the requests they never answered count as never answered."""
     out: dict[str, list[pd.DataFrame]] = {}
     for model, d in models.items():
-        for name, required in (("messages", True), ("estimates", False), ("calls", False), ("tools", False),
-                               ("episodes", True)):
-            out.setdefault(name, []).append(_read(d, name, required).assign(model=model))
+        ep = _read(d, "episodes", None)
+        keep, failed = counted(ep)
+        out.setdefault("episodes", []).append(ep[ep["trial_name"].isin(keep)].assign(model=model))
+        for name, required in (("messages", True), ("estimates", False), ("calls", False), ("tools", False)):
+            df = _read(d, name, keep, required).assign(model=model)
+            if name == "messages":
+                df["fixed"] = _flag(df, "fixed") & ~df["trial_name"].isin(failed)
+            out.setdefault(name, []).append(df)
     return {k: pd.concat(v, ignore_index=True) for k, v in out.items()}
 
 

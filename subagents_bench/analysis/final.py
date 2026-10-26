@@ -12,6 +12,10 @@ give the shared sessions' wall clock and the isolated sessions' replayed snapsho
 ``l0.csv`` (one row per model and point) and ``l0.png`` (dollars per bug, log scale, against the
 share fixed: a color per model, a marker per point).
 
+A session that ended in a provider error (``invalid_reason`` provider_error: the provider failed
+past every retry) counts as a failure, not as missing data: its bugs are not fixed, its cost
+counts. Other invalid sessions are left out.
+
 Every point of a model covers the same bugs: the (task, subtask) pairs that every L0 setting and
 the isolated sessions have a valid verdict for (``n_bugs``; ``n_dropped`` the bugs left out). The
 points:
@@ -34,7 +38,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .estimates import _flag, _valid
+from .estimates import _flag
 from .fixes import state_at
 from .load import load_trial
 
@@ -42,11 +46,29 @@ ISOLATED = re.compile(r"single_bug(\d+)$")
 BUG = ["task_name", "subtask_id"]
 
 
-def _load(d: Path, name: str) -> pd.DataFrame:
+def _read(d: Path, name: str) -> pd.DataFrame:
     path = d / name
     if not path.is_file():
         raise SystemExit(f"[FAIL] {path} not found: run scripts/analyze.sh on that sweep first")
-    return _valid(pd.read_csv(path, low_memory=False))
+    return pd.read_csv(path, low_memory=False)
+
+
+def counted(episodes: pd.DataFrame) -> tuple[set[str], set[str]]:
+    """(trials the analysis counts, those of them that are failures): the valid trials and those
+    that ended in a provider error, which count as failures."""
+    valid = _flag(episodes, "valid")
+    failed = episodes["invalid_reason"].eq("provider_error") if "invalid_reason" in episodes else valid & False
+    return set(episodes.loc[valid | failed, "trial_name"]), set(episodes.loc[failed & ~valid, "trial_name"])
+
+
+def _load(d: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """(episodes, fixes) of the counted trials; a failed trial's bugs are not fixed."""
+    ep, fx = _read(d, "episodes.csv"), _read(d, "fixes.csv")
+    keep, failed = counted(ep)
+    ep, fx = ep[ep["trial_name"].isin(keep)], fx[fx["trial_name"].isin(keep)].copy()
+    fx["fixed"] = _flag(fx, "fixed_end") & ~fx["trial_name"].isin(failed)
+    fx["failed"] = fx["trial_name"].isin(failed)
+    return ep, fx
 
 
 def _trial(root: Path, trial_dir: str):
@@ -68,17 +90,15 @@ def _bugs(d: pd.DataFrame) -> set[tuple]:
 
 
 def l0_table(levels: Path, isolated: Path, root: Path = Path(".")) -> pd.DataFrame:
-    ep, fx = _load(levels, "episodes.csv"), _load(levels, "fixes.csv")
+    ep, fx = _load(levels)
     shared_ep = ep[ep["condition"].str.endswith("_baseline")]
     shared = fx.merge(shared_ep[["trial_name", "cost_total", "trial_dir"]], on="trial_name")
     shared["usd"] = shared["cost_total"] / shared.groupby("trial_name")["subtask_id"].transform("count")
-    shared["fixed"] = _flag(shared, "fixed_end")
-    iep, ifx = _load(isolated, "episodes.csv"), _load(isolated, "fixes.csv")
+    iep, ifx = _load(isolated)
     iso = ifx.merge(iep[["trial_name", "cost_total", "trial_dir"]], on="trial_name")
     bad = sorted(c for c in iso["condition"].unique() if not ISOLATED.search(c))
     if bad:
         raise SystemExit(f"[FAIL] {isolated}: conditions {bad} are not single_bug<k>")
-    iso["fixed"] = _flag(iso, "fixed_end")
 
     # the bugs every point has: a verdict in each L0 setting and in the isolated sessions
     sets = [_bugs(g) for _, g in shared.groupby("condition")] + [_bugs(iso)]
@@ -97,6 +117,9 @@ def l0_table(levels: Path, isolated: Path, root: Path = Path(".")) -> pd.DataFra
            .groupby(BUG)["had"].median())
     capped = []
     for _, r in iso.iterrows():
+        if r["failed"]:  # a provider error: a failure at the cap too
+            capped.append({"fixed": False, "usd": r["cost_total"]})
+            continue
         status = state_at(_trial(root, r["trial_dir"]), float(had[(r["task_name"], r["subtask_id"])])).get(r["subtask_id"])
         if status is not None:  # {} when the replay is unusable: left out of this point
             capped.append({"fixed": status == "pass", "usd": r["cost_total"]})
