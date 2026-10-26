@@ -73,7 +73,7 @@ still unwinding after harbor's cancel) are dropped.
 | `group_id` | the spawn group (`group-<n>`) of subagent, judge and debate calls, else null |
 | `arbitration_id` | the arbitration of candidate, judge and debate calls, else null |
 | `step` | the agent's own step (1-based); judge and debate calls: the round (1, or 2 after a debate) |
-| `model` | model name sent to Sail |
+| `model` | model name sent to the provider (Prime Inference or Sail; the resolved config's `provider`) |
 | `t_start` | before the first attempt |
 | `t_first_chunk` | first stream chunk carrying content, reasoning or a tool call, in the successful attempt; null for a failed call |
 | `t_end` | reply complete, or the call failed |
@@ -368,7 +368,7 @@ Interactive episodes add:
 
 Written by `python -m subagents_bench.analysis JOBS_DIR... --out DIR`
 (`scripts/analyze.sh`). Costs are USD from `configs/pricing.yaml`
-(`--scheme`, default `sail_balanced`): (prompt - cached) x `in` + cached x
+(`--scheme`, default `default`: Sail's and Prime's prices): (prompt - cached) x `in` + cached x
 `cached` + completion x `out`, per 1M tokens; a model without a price costs
 NaN, never 0.
 
@@ -738,6 +738,6 @@ rest of `analysis`. The page names the jobs dir by its folder name only, never i
 
 | File | Contents |
 |---|---|
-| `index.html` | the page: per-condition requests table, controls against their twins, the comparison with `--compare` (when given), one card per session; costs from `configs/pricing.yaml`, `sail_balanced` |
+| `index.html` | the page: per-condition requests table, controls against their twins, the comparison with `--compare` (when given), one card per session; costs from `configs/pricing.yaml`, `default` |
 | `transcripts/<job>__<trial>.json` | one session's transcript for the page's viewer (not with `--no-transcripts`): `v` (format version), `job`, `trial`, `t0` (the episode's `session_t0`, else its `t_start`, else the first transcript row's `t`), `sys` (the orchestrator's system prompt), `msgs` (its thread: `t` seconds after `t0`, `r` role, `c` content, `k` reasoning, `tc` tool calls `[id, name, args]`, `tr` results `[call id, content, is_error]`), `subs` (each subagent run: `agent`, `dispatch`, `instruction`, `status`, `steps`, `t_start`, `t_end`, `files` changed without git/test side effects, `noise` their count, `after` the index in `msgs` of the spawn it follows, `msgs`), `urgent` (urgent message ids), `live`; a text over 30000 characters is cut with a marker |
 | `transcripts/manifest.json` | `files`: per transcript `file`, `job`, `trial`, `sig` (of its source records: an unchanged file is not rewritten), `bytes` |

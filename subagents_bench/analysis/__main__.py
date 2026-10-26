@@ -35,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("jobs_dirs", nargs="+", type=Path, help="sweep jobs dir(s), analyzed as one data set")
     p.add_argument("--out", required=True, type=Path, help="output dir for the CSV tables and summary.json")
     p.add_argument("--pricing", type=Path, default=DEFAULT_PRICING, help="price file (default configs/pricing.yaml)")
-    p.add_argument("--scheme", default="sail_balanced", help="price scheme in the price file")
+    p.add_argument("--scheme", default="default", help="price scheme in the price file (default: every provider's)")
     args = p.parse_args(argv)
     missing = [str(d) for d in args.jobs_dirs if not d.is_dir()]
     if missing:

@@ -968,7 +968,7 @@ def test_sweep_questions_and_grade_answers(tmp_path, monkeypatch, capsys):
             return Reply(json.dumps({"correct": ok, "why": "w"}) if "#6" not in messages[0].content else "unsure")
         return Reply(json.dumps([{"question": f"Q{next(counter)}?", "answer": "A"} for _ in range(2)]))
 
-    monkeypatch.setattr(sweep, "SailClient", lambda m: FakeFactory({m.model: model})(m))
+    monkeypatch.setattr(sweep, "ChatClient", lambda m: FakeFactory({m.model: model})(m))
     assert cli.main(["questions", str(path)]) == 0
     assert "[OK] task-1: 6 questions (6 new)" in capsys.readouterr().out
     assert len(load_questions(sweep.hints_dir(spec), "task-1")) == 6 and sweep.check_interactive(spec) == []

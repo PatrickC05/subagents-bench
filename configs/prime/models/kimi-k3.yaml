@@ -1,0 +1,13 @@
+# Kimi K3 on Prime Inference, for `--model` (README, *Models*).
+# Prices: USD per 1M tokens, from api.pinference.ai/api/v1/models on 2026-10-25.
+# Prime lists no cache-read price for gateway models; its bills charged cached
+# tokens at 10% of the input price (docs/DESIGN.md, *Providers*).
+# Its prefix cache hit 3 of 5 repeats of one prompt on Prime: only some calls are cached.
+model: moonshotai/kimi-k3
+provider: prime
+temperature: 0.7
+max_output_tokens: 32768
+reasoning_effort: high           # every model at high reasoning (issue #23)
+price_in: 3.45
+price_cache_read: 0.345
+price_out: 17.25

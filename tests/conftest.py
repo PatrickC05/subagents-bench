@@ -1,4 +1,4 @@
-"""Opt-in markers: ``live`` (real Sail requests, RUN_LIVE=1) and ``docker`` (RUN_DOCKER=1)."""
+"""Opt-in markers: ``live`` (real Prime and Sail requests, RUN_LIVE=1) and ``docker`` (RUN_DOCKER=1)."""
 
 from __future__ import annotations
 

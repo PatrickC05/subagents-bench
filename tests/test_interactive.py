@@ -562,7 +562,7 @@ def test_sweep_generates_reports_and_passes_the_hints_dir(tmp_path, monkeypatch,
     spec = sweep.load_spec(path)
     assert "no generated reports" in sweep.check_interactive(spec)[0]
     replies = iter(["Report A.", "Report B.", "Report C."])
-    monkeypatch.setattr(sweep, "SailClient", lambda m: FakeFactory({m.model: lambda s, ms, t: Reply(next(replies))})(m))
+    monkeypatch.setattr(sweep, "ChatClient", lambda m: FakeFactory({m.model: lambda s, ms, t: Reply(next(replies))})(m))
     assert cli.main(["hints", str(path)]) == 0
     assert "[OK] task-1: 3 reports (3 new)" in capsys.readouterr().out
     assert sorted(load_reports(sweep.hints_dir(spec), "task-1").values()) == ["Report A.", "Report B.", "Report C."]
@@ -632,7 +632,8 @@ def test_old_reports_and_reasoning_are_elided_too(tmp_path):
     def orch(system, messages, tools):  # one job at a time: each report is its own, older message
         n = sum(1 for m in messages if m.role == "assistant" and m.tool_calls[0].name == "spawn_subagents")
         if n < 4 and messages[-1].role == "user":
-            return Reply("", [tc("spawn_subagents", instructions=[f"job {n}"])], reasoning="r" * 3000)
+            return Reply("", [tc("spawn_subagents", instructions=[f"job {n}"])], reasoning="r" * 3000,
+                         reasoning_details=[{"type": "reasoning.text", "text": "r" * 3000, "signature": "s"}])
         return Reply("", [tc("wait")])
 
     sub = lambda system, messages, tools: Reply("", [tc("submit", report="R" * 5000)])  # noqa: E731
@@ -640,7 +641,20 @@ def test_old_reports_and_reasoning_are_elided_too(tmp_path):
                             interactive={"max_context_chars": 10000})
     users = [m.content for req in f[ORCH].requests for m in req["messages"][1:] if m.role == "user"]
     assert any("characters of an older report]" in u for u in users) and r["episode"]["n_elided_results"] >= 2
-    assert f[ORCH].requests[-1]["messages"][1].reasoning is None
+    first = f[ORCH].requests[-1]["messages"][1]
+    assert first.reasoning is None and first.reasoning_details is None
+    assert f[ORCH].requests[1]["messages"][1].reasoning_details[0]["signature"] == "s"  # kept until elided
+
+
+def test_model_flag_keeps_the_sweeps_hints_and_writer(tmp_path):
+    """Under --model every model gets the sweep's own questions and reports and the same judge."""
+    from subagents_bench import sweep
+    path = interactive_spec(tmp_path)
+    own = sweep.load_spec(path)
+    spec = sweep.load_spec(path, model=Path(__file__).resolve().parents[1] / "configs/prime/models/gpt-5.6-luna.yaml")
+    assert spec.jobs_dir != own.jobs_dir and sweep.hints_dir(spec) == sweep.hints_dir(own) == own.jobs_dir / "hints"
+    assert spec.configs["solo"].orchestrator.model == "openai/gpt-5.6-luna"
+    assert sweep.writer_model(spec) == sweep.writer_model(own) == own.configs["solo"].orchestrator
 
 
 def test_scope_all_keeps_the_task_goal_and_rounds_vary_the_order(tmp_path):

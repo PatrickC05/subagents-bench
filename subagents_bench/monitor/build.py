@@ -55,7 +55,7 @@ from ..analysis.validity import invalid_reason
 HERE = Path(__file__).parent
 TEMPLATE = (HERE / "template.html").read_text()  # str.format fields; literal braces doubled
 VIEWER = (HERE / "transcript_viewer.html").read_text()  # inserted verbatim (not formatted)
-SCHEME = "sail_balanced"  # configs/pricing.yaml scheme, as analysis' default
+SCHEME = "default"  # configs/pricing.yaml scheme, as analysis' default
 REQUESTS_SWEEP = "swe_interactive_requests"  # the sweep the "what changed" table describes
 LEVELS_SWEEP = "swe_interactive_levels"  # the levels sweep; its smoke and other variants start with this name
 LEVELS_ALL_ROUNDS = 2  # swe_interactive_levels.yaml's commands: rounds 1-2 run every level, later ones L2 and L3
