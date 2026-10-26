@@ -85,6 +85,7 @@ def load(models: dict[str, Path]) -> dict[str, pd.DataFrame]:
             df = _read(d, name, keep, required).assign(model=model)
             if name == "messages":
                 df["fixed"] = _flag(df, "fixed") & ~df["trial_name"].isin(failed)
+                df["lost"] = df["trial_name"].isin(failed)
             out.setdefault(name, []).append(df)
     return {k: pd.concat(v, ignore_index=True) for k, v in out.items()}
 
@@ -121,9 +122,11 @@ def _log_limits(values, pad: float = 1.6, floor: float = 1e-3) -> tuple[float, f
     return max(floor, min(v) / pad), max(v) * pad
 
 
-def _bars(ax, table: pd.DataFrame, value: str, models: list[str], ylabel: str, log: bool = False) -> None:
+def _bars(ax, table: pd.DataFrame, value: str, models: list[str], ylabel: str, log: bool = False,
+          extra: str | None = None) -> None:
     """Grouped bars: x = model x the levels it ran, one bar per setting. With ``log``, a log axis
-    fitted to the data, and a median that is never (NaN with rows) drawn hatched up to the top."""
+    fitted to the data, and a median that is never (NaN with rows) drawn hatched up to the top. With
+    ``extra``, a dashed outline of that column's height stacked on each bar."""
     width, x0 = 0.8 / len(SETTINGS), 0
     ticks, labels = [], []
     top = None
@@ -147,6 +150,9 @@ def _bars(ax, table: pd.DataFrame, value: str, models: list[str], ylabel: str, l
                     ax.annotate("never", (x, top), ha="center", va="top", fontsize=5, rotation=90)
                 else:
                     ax.bar(x, v - (lo if log else 0), width, bottom=lo if log else 0, color=COLORS[s])
+                    if extra and float(r[extra].iloc[0]) > 0:
+                        ax.bar(x, float(r[extra].iloc[0]), width, bottom=v, fill=False, edgecolor=COLORS[s],
+                               linestyle="--", linewidth=1)
             ticks.append(x0 + width * (len(SETTINGS) - 1) / 2)
             labels.append(lv)
             x0 += 1
@@ -158,12 +164,16 @@ def _bars(ax, table: pd.DataFrame, value: str, models: list[str], ylabel: str, l
     if log:
         ax.set_ylim(lo, top)
     ax.set_ylabel(ylabel)
-    _legend(ax)
+    _legend(ax, extra=extra is not None and bool((table[extra] > 0).any()))
 
 
-def _legend(ax) -> None:
-    ax.legend(handles=[_patch(s) for s in SETTINGS], fontsize=7, loc="lower center", bbox_to_anchor=(0.5, 1.0),
-              ncol=len(SETTINGS), frameon=False)
+def _legend(ax, extra: bool = False) -> None:
+    from matplotlib.patches import Patch
+    handles = [_patch(s) for s in SETTINGS]
+    if extra:
+        handles.append(Patch(fill=False, edgecolor="dimgrey", linestyle="--", label="bugs in lost sessions"))
+    ax.legend(handles=handles, fontsize=7, loc="lower center", bbox_to_anchor=(0.5, 1.0),
+              ncol=len(handles), frameon=False)
 
 
 def _patch(s: str):
@@ -187,12 +197,14 @@ def response_time(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> p
 def bugs_fixed(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> pd.DataFrame:
     m = t["messages"]
     bugs = m[m["kind"] == "bug"].assign(fixed=lambda d: _flag(d, "fixed"))  # no verdict: not fixed
-    tab = bugs.groupby(["model", "setting", "level"])["fixed"].agg(
-        fixed_frac="mean", n_fixed="sum", n="size").reset_index()
+    bugs = bugs.assign(lost=bugs["lost"].fillna(False).astype(bool))
+    tab = bugs.groupby(["model", "setting", "level"]).agg(
+        fixed_frac=("fixed", "mean"), n_fixed=("fixed", "sum"), n=("fixed", "size"),
+        lost_frac=("lost", "mean")).reset_index()
     plt = pyplot()
     fig, ax = plt.subplots(figsize=(max(6, 3 * len(models)), 4))
-    _bars(ax, tab, "fixed_frac", models, "share of bugs fixed")
-    ax.set_ylim(max(0.0, float(tab["fixed_frac"].min()) - 0.1), 1.02)
+    _bars(ax, tab, "fixed_frac", models, "share of bugs fixed", extra="lost_frac")
+    ax.set_ylim(max(0.0, float(tab["fixed_frac"].min()) - 0.1), max(1.02, float((tab["fixed_frac"] + tab["lost_frac"]).max()) + 0.02))
     fig.suptitle("Bugs fixed at the end of the session", fontsize=9)
     _save(fig, out / "bugs_fixed.png")
     return tab
