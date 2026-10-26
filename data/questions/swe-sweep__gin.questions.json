@@ -1,0 +1,79 @@
+{
+  "task": "swe-sweep__gin",
+  "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "generated_at": 1792138212.932129,
+  "questions": [
+    {
+      "id": "q1",
+      "file": "render/json.go",
+      "question": "In render/json.go, what does JSON.Render do if WriteJSON returns a non-nil error?",
+      "answer": "It panics with that error via panic(err)."
+    },
+    {
+      "id": "q2",
+      "file": "render/json.go",
+      "question": "In render/json.go, under what condition does SecureJSON.Render write the Prefix before the marshaled JSON data?",
+      "answer": "When the marshaled JSON bytes start with \"[\" and end with \"]\" (i.e., the data is a JSON array)."
+    },
+    {
+      "id": "q3",
+      "file": "binding/default_validator.go",
+      "question": "In binding/default_validator.go, what does defaultValidator.ValidateStruct return when obj is nil?",
+      "answer": "It returns nil."
+    },
+    {
+      "id": "q4",
+      "file": "binding/default_validator.go",
+      "question": "In binding/default_validator.go, what tag name does defaultValidator.lazyinit set on the validator?",
+      "answer": "\"binding\""
+    },
+    {
+      "id": "q5",
+      "file": "binding/multipart_form_mapping.go",
+      "question": "In binding/multipart_form_mapping.go, what does setByMultipartFormFile return when value.Kind() is not Ptr, Struct, Slice, or Array?",
+      "answer": "It returns false and ErrMultiFileHeader."
+    },
+    {
+      "id": "q6",
+      "file": "binding/multipart_form_mapping.go",
+      "question": "In binding/multipart_form_mapping.go, what does setArrayOfMultipartFormFiles return when value.Len() does not equal len(files)?",
+      "answer": "It returns false and ErrMultiFileHeaderLenInvalid."
+    },
+    {
+      "id": "q7",
+      "file": "recovery.go",
+      "question": "In recovery.go, what does defaultHandleRecovery do when it is called?",
+      "answer": "It calls c.AbortWithStatus(http.StatusInternalServerError)."
+    },
+    {
+      "id": "q8",
+      "file": "recovery.go",
+      "question": "In recovery.go, what does the source function return when n is less than 0 or n is greater than or equal to len(lines)?",
+      "answer": "It returns dunno, which is []byte(\"???\")."
+    },
+    {
+      "id": "q9",
+      "file": "mode.go",
+      "question": "In mode.go, what does SetMode do when passed an empty string and the \"test.v\" flag is not present?",
+      "answer": "It sets the mode to DebugMode (ginMode = debugCode and modeName = DebugMode)."
+    },
+    {
+      "id": "q10",
+      "file": "mode.go",
+      "question": "In mode.go, what does the Mode() function return?",
+      "answer": "It returns the current gin mode string (the value of modeName)."
+    },
+    {
+      "id": "q11",
+      "file": "binding/form_mapping.go",
+      "question": "In binding/form_mapping.go, what time format does setTimeField use when the field's time_format tag is empty?",
+      "answer": "It uses time.RFC3339."
+    },
+    {
+      "id": "q12",
+      "file": "binding/form_mapping.go",
+      "question": "In binding/form_mapping.go, when setFormMap handles a map[string]string and a form key has multiple values, which value does it store?",
+      "answer": "It stores the last value, v[len(v)-1]."
+    }
+  ]
+}

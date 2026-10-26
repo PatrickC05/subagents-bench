@@ -176,6 +176,13 @@ def schedule(cfg: InteractiveConfig, task_dir: str | Path, task_name: str, hints
     seed = order_seed(cfg, round_)
     subtasks = ordered(load_subtasks(task_dir), task_name, seed)
     b = cfg.bundle
+    if cfg.only_bug is not None:  # isolated baseline: the one bug at its position of the shared order
+        if cfg.only_bug >= len(subtasks):
+            raise HintError(f"{task_name}: only_bug {cfg.only_bug}, but the task has {len(subtasks)} bugs")
+        reports = load_reports(hints_dir, task_name, cfg.hint_detail) if cfg.hint_detail in GENERATED else {}
+        s = subtasks[cfg.only_bug]  # the records name it by subtask id, which pairs it with the shared sessions
+        return [Hint(0, 0.0, s, hint_text(s, cfg.hint_detail, reports.get(s.id)), items=(s,), positions=(0,),
+                     msg_id=1 if cfg.replies else None)]
     n = min(len(subtasks), n_slots(cfg) * b, cfg.max_hints or len(subtasks))  # bugs
     reports = load_reports(hints_dir, task_name, cfg.hint_detail) if cfg.hint_detail in GENERATED else {}
     texts = [hint_text(s, cfg.hint_detail, reports.get(s.id)) for s in subtasks[:n]]

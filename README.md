@@ -77,6 +77,38 @@ with `Setup OK`. `PRIME_TEAM_ID=...` bills a Prime team instead of the key's own
 prints a key. The task images are `linux/amd64`: on Apple Silicon they run
 emulated, which slows tool calls (tool time is measured separately).
 
+## Final study (issue #23)
+
+Two experiments on SWE-sweep, in 30-minute sessions where a user sends 6 bugs
+every 4 minutes on 6 repositories (click, echo, dateutil, gin, dayjs, luxon),
+1 round. The tasks are [facebookresearch/swe-sweep](https://github.com/facebookresearch/swe-sweep)
+at `5968c69`; the sessions run on Modal (`modal token new`) and call Sail.
+
+| Experiment | Spec | Conditions | Sessions per model |
+|---|---|---|---|
+| 1. Cost vs bugs fixed at L0 | `final_levels.yaml` (`*_baseline`) | `background_hinted`, `manager_background`, `manager_owner` at L0 | 18 |
+| 1b. Isolated baseline | `final_isolated.yaml` | `single_bug0`-`single_bug5`: each bug alone in a fresh session (`interactive.only_bug`) | 36 |
+| 2. Levels | `final_levels.yaml` | the three settings at L0-L3 (bugs; + ETAs; + questions; + an urgent bug) | 72 (L0 included) |
+
+```bash
+scripts/setup.sh                 # .venv, .env (put SAIL_API_KEY=... in it)
+scripts/get_tasks.sh             # SWE-sweep tasks at 5968c69 -> ../class-6-swe-sweep/swe-sweep
+scripts/run_final.sh --dry-run   # list the jobs of both sweeps
+scripts/run_final.sh             # experiments 1 and 2 for DeepSeek-V4.1-Flash, graded and tabulated
+scripts/run_final.sh --l0-only   # experiment 1 only
+```
+
+`run_final.sh` is resumable. It asks every model the same questions
+(`data/questions/`, generated once by DeepSeek-V4.1-Flash), replays each
+trial's snapshots to time every fix (`fix-times`), judges the answers
+(`grade-answers`), writes `analysis/final_levels/` and
+`analysis/final_isolated/` with `scripts/analyze.sh`, and experiment 1's
+`analysis/final_levels_l0/l0.csv` and `l0.png`: dollars per bug against the
+share fixed, per setting and for the isolated sessions, which are also graded
+at the time each bug had in the shared sessions (`isolated_capped`). Another
+model runs with specs that extend these two with their own `name` and `base`:
+`scripts/run_final.sh --levels SPEC --isolated SPEC`.
+
 ## The three scripts
 
 ```bash

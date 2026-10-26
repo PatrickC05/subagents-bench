@@ -311,6 +311,28 @@ def test_schedule_order_slots_and_texts(tmp_path):
         hint_text(b0, "report")
 
 
+def test_only_bug_sends_one_bug_of_the_shared_order(tmp_path):
+    task = make_task(tmp_path, 14, files=[[f"src/m{i}.py"] for i in range(14)])
+    shared = schedule(make_config(interactive={"max_hints": 6, "replies": True}).interactive, task, "task-1")
+    for k in range(6):
+        one = schedule(make_config(interactive={"max_hints": 1, "only_bug": k, "replies": True}).interactive,
+                       task, "task-1")
+        assert len(one) == 1 and one[0].subtask == shared[k].subtask and one[0].text == shared[k].text
+        assert (one[0].t_offset, one[0].index, one[0].positions, one[0].msg_id) == (0.0, 0, (0,), 1)
+    plain = schedule(make_config(interactive={"only_bug": 2}).interactive, task, "task-1")
+    assert plain[0].msg_id is None
+    with pytest.raises(HintError, match="only_bug 14"):
+        schedule(make_config(interactive={"only_bug": 14}).interactive, task, "task-1")
+
+
+@pytest.mark.parametrize("extra", [{"max_hints": 6}, {"replies": True, "questions_per_interval": 2},
+                                   {"replies": True, "status_every": 2}, {"replies": True, "bundle": 3},
+                                   {"only_bug": -1}, {"only_bug": True}])
+def test_only_bug_config_errors(extra):
+    with pytest.raises(ConfigError, match="only_bug"):
+        make_config(interactive={"only_bug": 0, **extra})
+
+
 def test_task_without_subtasks_is_a_hint_error(tmp_path):
     with pytest.raises(HintError, match="no SWE-sweep subtasks"):
         load_subtasks(tmp_path)

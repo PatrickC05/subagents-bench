@@ -1,0 +1,79 @@
+{
+  "task": "swe-sweep__echo",
+  "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "generated_at": 1792133033.427787,
+  "questions": [
+    {
+      "id": "q1",
+      "file": "middleware/decompress.go",
+      "question": "In middleware/decompress.go, what does DecompressWithConfig set config.Skipper to when config.Skipper is nil?",
+      "answer": "It sets config.Skipper to DefaultGzipConfig.Skipper."
+    },
+    {
+      "id": "q2",
+      "file": "middleware/decompress.go",
+      "question": "In the Decompress middleware in middleware/decompress.go, what does it return if the value obtained from the gzip decompress pool is not a *gzip.Reader?",
+      "answer": "It returns echo.NewHTTPError with http.StatusInternalServerError (500) and the error message from the pooled value cast to error."
+    },
+    {
+      "id": "q3",
+      "file": "middleware/redirect.go",
+      "question": "In middleware/redirect.go, what is the default value of RedirectConfig.Code?",
+      "answer": "http.StatusMovedPermanently."
+    },
+    {
+      "id": "q4",
+      "file": "middleware/redirect.go",
+      "question": "In the redirect function in middleware/redirect.go, what does it set config.Skipper to when config.Skipper is nil?",
+      "answer": "DefaultTrailingSlashConfig.Skipper."
+    },
+    {
+      "id": "q5",
+      "file": "middleware/body_dump.go",
+      "question": "In middleware/body_dump.go, what does BodyDumpWithConfig do if config.Handler is nil?",
+      "answer": "It panics with the message \"echo: body-dump middleware requires a handler function\"."
+    },
+    {
+      "id": "q6",
+      "file": "middleware/body_dump.go",
+      "question": "In middleware/body_dump.go, what is the default Skipper value in DefaultBodyDumpConfig?",
+      "answer": "DefaultSkipper."
+    },
+    {
+      "id": "q7",
+      "file": "middleware/logger.go",
+      "question": "In middleware/logger.go, what does the `bytes_in` tag write when the request has no Content-Length header?",
+      "answer": "It writes `0` \u2014 the code sets `cl` to `\"0\"` when the header is empty."
+    },
+    {
+      "id": "q8",
+      "file": "middleware/logger.go",
+      "question": "In `LoggerWithConfig` in middleware/logger.go, where is the log line written if `config.Output` is nil?",
+      "answer": "It writes to `c.Logger().Output()` instead of `config.Output`."
+    },
+    {
+      "id": "q9",
+      "file": "middleware/method_override.go",
+      "question": "In middleware/method_override.go, what does MethodOverride() return?",
+      "answer": "It returns MethodOverrideWithConfig(DefaultMethodOverrideConfig)."
+    },
+    {
+      "id": "q10",
+      "file": "middleware/method_override.go",
+      "question": "In middleware/method_override.go, what does MethodFromQuery return?",
+      "answer": "It returns a MethodOverrideGetter that returns c.QueryParam(param)."
+    },
+    {
+      "id": "q11",
+      "file": "middleware/body_limit.go",
+      "question": "In middleware/body_limit.go, what does BodyLimitWithConfig do if bytes.Parse fails on config.Limit?",
+      "answer": "It panics with fmt.Errorf(\"echo: invalid body-limit=%s\", config.Limit)."
+    },
+    {
+      "id": "q12",
+      "file": "middleware/body_limit.go",
+      "question": "In middleware/body_limit.go, what does limitedReader.Read return when the cumulative bytes read exceed the configured limit?",
+      "answer": "It returns n (the number of bytes read) and echo.ErrStatusRequestEntityTooLarge as the error."
+    }
+  ]
+}

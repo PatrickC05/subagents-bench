@@ -1,0 +1,79 @@
+{
+  "task": "swe-sweep__click",
+  "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "generated_at": 1792132951.278,
+  "questions": [
+    {
+      "id": "q1",
+      "file": "src/click/termui.py",
+      "question": "In click/termui.py, what exception does `prompt` raise if the user presses Ctrl+C or sends EOF while entering input?",
+      "answer": "It raises `click.exceptions.Abort`."
+    },
+    {
+      "id": "q2",
+      "file": "src/click/termui.py",
+      "question": "In click/termui.py, what exception does `style` raise if `fg` is a color name not present in `_ansi_colors`?",
+      "answer": "It raises `TypeError` with the message `Unknown color {fg!r}`."
+    },
+    {
+      "id": "q3",
+      "file": "src/click/_unicodefun.py",
+      "question": "In src/click/_unicodefun.py, what value is assigned to fs_enc if the locale.getpreferredencoding lookup raises an exception?",
+      "answer": "It is set to \"ascii\"."
+    },
+    {
+      "id": "q4",
+      "file": "src/click/_unicodefun.py",
+      "question": "In _verify_python_env (src/click/_unicodefun.py), what exception is raised when fs_enc is \"ascii\"?",
+      "answer": "RuntimeError is raised, with a message built by joining the extra list with two newlines."
+    },
+    {
+      "id": "q5",
+      "file": "src/click/exceptions.py",
+      "question": "In src/click/exceptions.py, what does `_join_param_hints` return when `param_hint` is a non-string sequence?",
+      "answer": "It returns `\" / \".join(repr(x) for x in param_hint)`, i.e. the repr of each item joined by \" / \"."
+    },
+    {
+      "id": "q6",
+      "file": "src/click/exceptions.py",
+      "question": "In `BadParameter.format_message` (src/click/exceptions.py), what message is returned when both `param_hint` and `param` are None?",
+      "answer": "It returns `_(\"Invalid value: {message}\").format(message=self.message)`."
+    },
+    {
+      "id": "q7",
+      "file": "src/click/parser.py",
+      "question": "In src/click/parser.py, what exception does `_unpack_args` raise if the nargs specification contains two values less than 0?",
+      "answer": "It raises `TypeError('Cannot have two nargs < 0')`."
+    },
+    {
+      "id": "q8",
+      "file": "src/click/parser.py",
+      "question": "In `OptionParser._get_value_from_state` in src/click/parser.py, what is returned when `len(state.rargs) < nargs` and `option.obj._flag_needs_value` is true?",
+      "answer": "It returns the sentinel `_flag_needs_value`."
+    },
+    {
+      "id": "q9",
+      "file": "src/click/__init__.py",
+      "question": "In src/click/__init__.py, what is the value of __version__?",
+      "answer": "8.0.1"
+    },
+    {
+      "id": "q10",
+      "file": "src/click/__init__.py",
+      "question": "In src/click/__init__.py, from which module is the `echo` function imported?",
+      "answer": ".utils"
+    },
+    {
+      "id": "q11",
+      "file": "src/click/globals.py",
+      "question": "In src/click/globals.py, what does get_current_context(silent=True) return when there is no active click context?",
+      "answer": "It returns None."
+    },
+    {
+      "id": "q12",
+      "file": "src/click/globals.py",
+      "question": "In src/click/globals.py, what does resolve_color_default return when its color argument is not None?",
+      "answer": "It returns the color argument unchanged."
+    }
+  ]
+}

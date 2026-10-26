@@ -1,0 +1,24 @@
+# Final study, experiment 1's baseline (issue #23): each bug alone, in a fresh session with a fresh
+# agent, instead of six bugs sent to the same agent every 4 minutes. The orchestrator works alone
+# (topology single), so its cost and fix rate are what one agent does with one bug.
+# Condition single_bug<k> sends the bug at position k of final_levels' fixed order at 0:00
+# (interactive.only_bug), so each session pairs, by subtask id, with the same bug in the L0 sessions.
+# Same 30-minute session, tools, replies, require_eta and snapshots as final_levels; the session ends
+# once the agent is done and waiting (end_when_idle). The snapshots let the analysis also grade each
+# bug at the time it had in L0 (30:00 minus its send time, 4:00 * k), so the gap between the shared
+# and isolated sessions is not only extra time.
+# 6 positions = 6 jobs of 6 sessions (36). Another model: extend it with its own `name` and `base`.
+extends: configs/sweeps/final_levels.yaml
+inherit_conditions: false
+name: final_isolated
+overrides:
+  interactive:
+    max_hints: 1
+
+conditions:
+  single_bug0: {topology: single, interactive: {only_bug: 0}}
+  single_bug1: {topology: single, interactive: {only_bug: 1}}
+  single_bug2: {topology: single, interactive: {only_bug: 2}}
+  single_bug3: {topology: single, interactive: {only_bug: 3}}
+  single_bug4: {topology: single, interactive: {only_bug: 4}}
+  single_bug5: {topology: single, interactive: {only_bug: 5}}
