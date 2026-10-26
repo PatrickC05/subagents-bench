@@ -234,7 +234,7 @@ def pareto(points: pd.DataFrame) -> list[tuple[float, float]]:
 def plot(table: pd.DataFrame, path: Path, title: str = "", levels: pd.DataFrame | None = None,
          frontiers: bool = True) -> None:
     """``levels`` (``levels_table`` rows with a ``model`` column): each model's L1 and L2 points for the
-    settings in ``table``, joined to its L0 point by a dotted line. With ``frontiers``, the Pareto
+    settings in ``table``. With ``frontiers``, the Pareto
     frontier of the independent sessions (before) and of the same-session L0 points (after)."""
     from matplotlib.lines import Line2D
 
@@ -245,23 +245,16 @@ def plot(table: pd.DataFrame, path: Path, title: str = "", levels: pd.DataFrame 
     models = list(dict.fromkeys(table["model"]))
     colors = {m: plt.get_cmap("tab10")(i % 10) for i, m in enumerate(models)}
     labels = []  # (model, x, y) of each isolated point, labelled once the axes are final
-    for m, g in table.groupby("model", sort=False):  # each shared setting joined to the model's isolated point
+    for m, g in table.groupby("model", sort=False):
         iso = g[g["point"] == "isolated"]
-        if iso.empty:
-            continue
-        x0, y0 = float(iso["usd_per_bug"].iloc[0]), float(iso["fixed_frac"].iloc[0])
-        for _, r in g[~g["point"].str.startswith("isolated")].iterrows():
-            ax.plot([x0, r["usd_per_bug"]], [y0, r["fixed_frac"]], color=colors[m], lw=0.9, alpha=0.45, zorder=1)
-        labels.append((m, x0, y0))
+        if not iso.empty:
+            labels.append((m, float(iso["usd_per_bug"].iloc[0]), float(iso["fixed_frac"].iloc[0])))
     for _, r in table.iterrows():
         ax.scatter(r["usd_per_bug"], r["fixed_frac"], marker=MARKERS.get(r["point"], "x"),
                    s=130 if r["point"] == "isolated" else 45, color=colors[r["model"]], linewidths=0, zorder=2)
     lv = pd.DataFrame() if levels is None else levels[levels["model"].isin(models) & levels["point"].isin(set(table["point"]))
                                                       & levels["level"].isin(LEVEL_STYLE)]
     for (m, pt), g in (lv.groupby(["model", "point"], sort=False) if not lv.empty else []):
-        l0 = table[(table["model"] == m) & (table["point"] == pt)]
-        path_pts = l0[["usd_per_bug", "fixed_frac"]].values.tolist() + g.sort_values("level")[["usd_per_bug", "fixed_frac"]].values.tolist()
-        ax.plot(*zip(*path_pts), color=colors[m], lw=0.8, ls=":", alpha=0.8, zorder=1)
         for _, r in g.iterrows():
             style = LEVEL_STYLE[r["level"]]
             ax.scatter(r["usd_per_bug"], r["fixed_frac"], marker=MARKERS[pt], s=45, zorder=2,
@@ -308,9 +301,9 @@ def plot(table: pd.DataFrame, path: Path, title: str = "", levels: pd.DataFrame 
     if not lv.empty:
         mk = MARKERS[shared[0]] if len(shared) == 1 else "o"
         handles += [Line2D([], [], color="grey", marker=mk, ls="", markeredgewidth=0, markersize=6, label="L0"),
-                    Line2D([], [], color="grey", marker=mk, ls=":", alpha=0.5, markeredgewidth=0, markersize=6,
+                    Line2D([], [], color="grey", marker=mk, ls="", alpha=0.5, markeredgewidth=0, markersize=6,
                            label="L1 (+ ETA requests)"),
-                    Line2D([], [], color="grey", marker=mk, ls=":", markerfacecolor="white", markersize=6,
+                    Line2D([], [], color="grey", marker=mk, ls="", markerfacecolor="white", markersize=6,
                            label="L2 (+ questions)")]
     handles += fronts
     ax.legend(handles=handles, fontsize=7, loc="center left", bbox_to_anchor=(1.0, 0.5), frameon=False)
