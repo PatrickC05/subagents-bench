@@ -278,7 +278,9 @@ def plot(table: pd.DataFrame, path: Path, title: str = "", levels: pd.DataFrame 
                 continue
             color, ls = styles[name]
             fx, fy = zip(*pareto(pts))
-            ax.step(list(fx) + [right], list(fy) + [fy[-1]], where="post", color=color, lw=1.2, ls=ls, zorder=0)
+            # closed on both sides: up from below the axes at the cheapest point, flat to the right edge
+            ax.step([fx[0]] + list(fx) + [right], [-1.0] + list(fy) + [fy[-1]], where="post", color=color, lw=1.2,
+                    ls=ls, zorder=0)
             label = "independent sessions" if name == "isolated" else name
             fronts.append(Line2D([], [], color=color, lw=1.2, ls=ls, label=f"frontier: {label}"))
         if not lv.empty and len(fm) < len(models):
