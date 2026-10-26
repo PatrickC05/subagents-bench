@@ -356,7 +356,7 @@ def test_reasoning_details_are_merged_and_sent_back_instead_of_reasoning_content
     server = Server(sse(
         chunk({"role": "assistant"}),
         *(chunk({"reasoning": d[0].get("text"), "reasoning_details": d}) for d in DETAILS[:3]),
-        chunk({"reasoning_details": DETAILS[3]}),  # no reasoning text: Terra and Argon stream only these
+        chunk({"reasoning_details": DETAILS[3]}),  # no reasoning text, as Terra and Argon sometimes stream
         chunk(call(0, args='{"command": "ls"}', call_id="c1")),
         chunk({}, "tool_calls"),
     ), ok())

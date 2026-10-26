@@ -624,7 +624,8 @@ def _log(spec: Spec, event: str, **fields: Any) -> None:
 
 def _write_status(spec: Spec, status: str, t_start: float) -> None:
     doc = {"name": spec.name, "status": status, "git_commit": git_commit(), "argv": sys.argv, "t_start": t_start,
-           "t_update": time.time(), "spec": spec.raw, "configs": {c: cfg.to_dict() for c, cfg in spec.configs.items()}}
+           "t_update": time.time(), "spec": spec.raw, "configs": {c: cfg.to_dict() for c, cfg in spec.configs.items()},
+           "model": str(spec.model) if spec.model else None, "hints_dir": str(hints_dir(spec))}
     (spec.jobs_dir / "sweep.json").write_text(json.dumps(doc, indent=2) + "\n")
 
 

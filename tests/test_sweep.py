@@ -1110,6 +1110,8 @@ def test_prime_model_files_load_and_match_the_prices(model):
     spec = sweep.load_spec(REPO / "configs/sweeps/swe_interactive_levels.yaml", model=model)
     m = spec.configs["single_baseline"].orchestrator
     assert m.provider == "prime" and m.max_output_tokens == 32768 and spec.configs["single_eta"].subagent_model == m
+    # silent reasoning (32768 tokens at ~65/s) is not a stall, and a stalled attempt is still retried
+    assert m.request_timeout_sec >= 900 and m.retry_budget_sec > m.request_timeout_sec
     prices = yaml.safe_load((REPO / "configs/pricing.yaml").read_text())
     assert prices["prime"][m.model] == prices["default"][m.model] == {
         "in": m.price_in, "cached": m.price_cache_read, "out": m.price_out}
