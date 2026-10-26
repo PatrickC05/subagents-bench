@@ -668,6 +668,19 @@ def test_old_reports_and_reasoning_are_elided_too(tmp_path):
     assert f[ORCH].requests[1]["messages"][1].reasoning_details[0]["signature"] == "s"  # kept until elided
 
 
+def test_elision_keeps_the_current_turns_reasoning(tmp_path):
+    """Even when everything older is elided, the assistant turn the newest tool result answers keeps
+    its reasoning: Anthropic and Gemini reject a tool loop whose current turn lost its signature."""
+    details = [{"type": "reasoning.text", "text": "r" * 20000, "signature": "s"}]
+    orch = [Reply("", [tc("list_dir", path=".")], reasoning="r" * 20000, reasoning_details=details),
+            Reply("", [tc("wait")])]
+    _, _, f, _, _ = session(tmp_path, {ORCH: orch}, n_hints=1, topology="single",
+                            interactive={"max_context_chars": 10000})
+    msgs = f[ORCH].requests[1]["messages"]
+    assert msgs[-1].role == "tool" and msgs[-2].role == "assistant"
+    assert msgs[-2].reasoning_details == details and msgs[-2].reasoning == "r" * 20000
+
+
 def test_model_flag_keeps_the_sweeps_hints_and_writer(tmp_path):
     """Under --model every model gets the sweep's own questions and reports and the same judge."""
     from subagents_bench import sweep

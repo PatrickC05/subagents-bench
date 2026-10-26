@@ -33,8 +33,12 @@ def test_l0_table(tmp_path):
     assert (t.loc["manager_owner", "n_fixed"], t.loc["manager_owner", "usd_per_bug"]) == (1, 0.5)
     assert (t.loc["isolated", "n_fixed"], t.loc["isolated", "usd_per_bug"]) == (2, pytest.approx(0.3))
     assert t.loc["isolated_capped", "n_fixed"] == 1 and t.loc["isolated", "usd_per_repo"] == pytest.approx(0.6)
-    assert main([str(lv), str(iso), "--out", str(tmp_path / "out")]) == 0
-    assert (tmp_path / "out" / "l0.png").is_file()
+    out = tmp_path / "out"
+    assert main(["--model", f"A={lv}:{iso}", "--model", f"B={lv}:{iso}", "--out", str(out)]) == 0
+    both = pd.read_csv(out / "l0.csv")
+    assert (out / "l0.png").is_file() and list(both["model"].unique()) == ["A", "B"] and len(both) == 6
+    with pytest.raises(SystemExit):
+        main(["--model", f"A={lv}", "--out", str(out)])
 
 
 def test_isolated_condition_names_are_checked(tmp_path):

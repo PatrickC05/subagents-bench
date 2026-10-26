@@ -26,7 +26,7 @@ about subagents (the subagents are the same model, with every tool):
 | `manager_owner` (subagents only, owner) | read-only | stay available; put one subagent in charge of each bug (it may start helpers) |
 | `single_bug<k>` (isolated baseline) | all five, no subagents | one bug per fresh session |
 
-To reproduce the final study, see [Setup](#setup) and [Final study](#final-study-issue-23).
+To reproduce the final study, see [Final study](#final-study-issue-23).
 
 ## Setup
 
@@ -51,46 +51,56 @@ emulated, which slows tool calls (tool time is measured separately).
 Two experiments on SWE-sweep, in 30-minute sessions where a user sends 6 bugs
 every 4 minutes on 6 repositories (click, echo, dateutil, gin, dayjs, luxon),
 1 round. The tasks are [facebookresearch/swe-sweep](https://github.com/facebookresearch/swe-sweep)
-at `5968c69`; the sessions run on Modal (`modal token new`) and call Sail.
+at `5968c69`. The sessions run on Modal; the models run on
+[Prime Inference](https://docs.primeintellect.ai/inference/overview) at high
+reasoning effort (`configs/prime/models/`, see *Models* below); the questions'
+judge is DeepSeek-V4.1-Flash on Sail for every model.
 
-| Experiment | Spec | Conditions | Sessions per model |
-|---|---|---|---|
-| 1. Cost vs bugs fixed at L0 | `final_levels.yaml` (`*_baseline`) | `background_hinted`, `manager_background`, `manager_owner` at L0 | 18 |
-| 1b. Isolated baseline | `final_isolated.yaml` | `single_bug0`-`single_bug5`: each bug alone in a fresh session (`interactive.only_bug`) | 36 |
-| 2. Levels | `final_levels.yaml` | the three settings at L0-L3 (bugs; + ETAs; + questions; + an urgent bug) | 72 (L0 included) |
+| Experiment | Spec | Conditions | Models | Sessions per model |
+|---|---|---|---|---|
+| 1. Cost vs bugs fixed at L0 | `final_levels.yaml` (`*_baseline`) | `background_hinted`, `manager_background`, `manager_owner` at L0 | all 8 | 18 |
+| 1b. Isolated baseline | `final_isolated.yaml` | `single_bug0`-`single_bug5`: each bug alone in a fresh session (`interactive.only_bug`) | all 8 | 36 |
+| 2. Levels | `final_levels.yaml` | the three settings at L0-L3 (bugs; + ETAs; + questions; + an urgent bug) | Opus 5.5, GPT-5.6 Luna, DeepSeek-V4.1-Flash-1017 | 72 (L0 included) |
+
+The 8 models: GPT-5.6 Luna, Terra and Sol, Claude Opus 5.5 and Sonnet 5.5,
+Gemini 4 Argon, Kimi K3 and DeepSeek-V4.1-Flash-1017. Claude Haiku 5.5 and MiMo
+V2.6 are not on Prime and are left out.
 
 ```bash
-scripts/setup.sh --final         # .venv, .env (put SAIL_API_KEY=... in it), the SWE-sweep tasks at
-                                 # 5968c69 (scripts/get_tasks.sh), a Modal token check; no Docker needed
-scripts/run_final.sh --dry-run   # list the jobs of both sweeps
-scripts/run_final.sh             # experiments 1 and 2 for DeepSeek-V4.1-Flash-1017, graded and tabulated
-scripts/run_final.sh --l0-only   # experiment 1 only
+scripts/setup.sh --final            # .venv, .env (PRIME_API_KEY, PRIME_TEAM_ID to bill a team, SAIL_API_KEY),
+                                    # the SWE-sweep tasks (scripts/get_tasks.sh), a Modal token check; no Docker
+scripts/run_all_final.sh --dry-run  # every model's jobs
+scripts/run_all_final.sh            # the whole study, model after model, then the cross-model figures
+scripts/run_final.sh --model configs/prime/models/gpt-5.6-luna.yaml            # one model, experiments 1 and 2
+scripts/run_final.sh --model configs/prime/models/kimi-k3.yaml --l0-only       # one model, experiment 1 only
 ```
 
-`run_final.sh` is resumable. It asks every model the same questions
-(`data/questions/`, generated once by DeepSeek-V4.1-Flash), replays each
+Both are resumable. `run_final.sh` asks every model the same questions
+(`data/questions/`, generated once by DeepSeek-V4.1-Flash), runs the two sweeps
+in `jobs/final_levels-<model>` and `jobs/final_isolated-<model>`, replays each
 trial's snapshots to time every fix (`fix-times`), judges the answers
-(`grade-answers`), writes `analysis/final_levels/` and
-`analysis/final_isolated/` with `scripts/analyze.sh`, and experiment 1's
-`analysis/final_levels_l0/l0.csv` and `l0.png`: dollars per bug against the
-share fixed, per setting and for the isolated sessions, which are also graded
-at the time each bug had in the shared sessions (`isolated_capped`). Another
-model runs with specs that extend these two with their own `name` and `base`:
-`scripts/run_final.sh --levels SPEC --isolated SPEC`.
+(`grade-answers`), writes `analysis/final_levels-<model>/` and
+`analysis/final_isolated-<model>/` with `scripts/analyze.sh`, and the model's
+experiment 1 table, `analysis/final_l0-<model>/l0.csv`.
 
 ### Plots
 
-Experiment 2 compares models: give each model's levels-sweep tables (written by
-`run_final.sh`) a name, in plotting order:
+`run_all_final.sh` draws both from whatever models' tables exist; to draw them
+by hand:
 
 ```bash
+# experiment 1: dollars per bug against the share fixed, every model and setting, and the
+# isolated sessions, also graded at the time each bug had in the shared sessions (isolated_capped)
+.venv/bin/python -m subagents_bench.analysis.final \
+  --model "Opus 5.5"=analysis/final_levels-claude-opus-5.5:analysis/final_isolated-claude-opus-5.5 \
+  --model "Kimi K3"=analysis/final_levels-kimi-k3:analysis/final_isolated-kimi-k3 --out analysis/final_l0
+# experiment 2: the levels across models
 .venv/bin/python -m subagents_bench.plots.final \
-  --model "DeepSeek-V4.1-Flash"=analysis/final_levels \
-  --model "Opus 5.5"=analysis/final_levels_opus --model "Luna"=analysis/final_levels_luna \
-  --out figures/final
+  --model "Opus 5.5"=analysis/final_levels-claude-opus-5.5 --model "GPT-5.6 Luna"=analysis/final_levels-gpt-5.6-luna \
+  --model "DeepSeek-V4.1-Flash"=analysis/final_levels-deepseek-v4.1-flash-1017 --out figures/final
 ```
 
-It writes six figures to `figures/final/`, each with the table it draws:
+Experiment 2 gives six figures in `figures/final/`, each with the table it draws:
 `response_time` (median time to the first reply the user saw, per model, level
 and setting; a bug never replied to counts as never), `bugs_fixed`, `eta`
 (estimate against the real time to fix), `response_cdf`, `orchestrator_time`

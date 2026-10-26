@@ -6,8 +6,10 @@
 #   manager_owner       read-only, told to stay available and to put one subagent in charge of each bug
 #                       (which may start up to 10 helpers)
 # 3 settings x 4 levels = 12 jobs of 6 sessions (72). Experiment 1 runs only the L0 jobs (*_baseline).
-# Another model: a spec with `extends: configs/sweeps/final_levels.yaml`, its own `name` and `base`.
-# scripts/run_final.sh runs it end to end.
+# Each model runs it with `--model configs/prime/models/<model>.yaml` (in jobs/final_levels-<model>),
+# which replaces the orchestrator and so the subagents (subagent.model: null); without --model it runs
+# the base config's DeepSeek-V4.1-Flash on Sail, which is also every model's question judge.
+# scripts/run_final.sh runs one model end to end, scripts/run_all_final.sh every model of issue #23.
 extends: configs/sweeps/swe_interactive_levels.yaml
 inherit_conditions: false
 name: final_levels
@@ -20,9 +22,6 @@ tasks:                               # language, bugs (the first 6 of the fixed 
   - swe-sweep__luxon                 # JavaScript, 14
 harbor:
   n_concurrent: 6                    # a job's six sessions at once
-overrides:
-  orchestrator:                      # subagents run the same model (base: subagent.model null)
-    model: deepseek-ai/DeepSeek-V4.1-Flash-1017
 
 conditions:
   # L0: bugs only

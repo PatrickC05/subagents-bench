@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-SCRIPTS = ["setup.sh", "run_experiment.sh", "run_final.sh"]
+SCRIPTS = ["setup.sh", "run_experiment.sh", "run_final.sh", "run_all_final.sh"]
 
 
 @pytest.mark.parametrize("name", SCRIPTS)

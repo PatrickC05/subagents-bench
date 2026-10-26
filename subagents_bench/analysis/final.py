@@ -1,12 +1,14 @@
 """Experiment 1 of the final study (issue #23): cost against bugs fixed at L0, each setting's shared
 sessions next to the isolated baseline (each bug alone in a fresh session).
 
-    python -m subagents_bench.analysis.final analysis/final_levels analysis/final_isolated \
-        --out analysis/final_l0 [--interval 240] [--wall 1800]
+    python -m subagents_bench.analysis.final \
+        --model Opus=analysis/final_levels-claude-opus-5.5:analysis/final_isolated-claude-opus-5.5 \
+        --model Luna=... --out analysis/final_l0 [--interval 240] [--wall 1800]
 
-Reads the two sweeps' tables (``scripts/analyze.sh`` writes them): ``episodes.csv`` for cost and
-``fixes.csv`` for each bug's replayed fix time. Writes ``l0.csv`` (one row per point) and
-``l0.png`` (dollars per bug against the share fixed). The points:
+Each ``--model NAME=LEVELS:ISOLATED`` is one model's two sweeps' tables (``scripts/analyze.sh``
+writes them): ``episodes.csv`` for cost and ``fixes.csv`` for each bug's replayed fix time. Writes
+``l0.csv`` (one row per model and point) and ``l0.png`` (dollars per bug, log scale, against the
+share fixed: a color per model, a marker per point). The points:
 
 - a setting at L0 (``*_baseline``): every bug sent in its sessions; fixed means passing at the end
   (``fixed_end``); a bug's cost is its session's cost over the bugs the session was sent;
@@ -67,35 +69,56 @@ def l0_table(levels: Path, isolated: Path, interval: float = 240.0, wall: float 
     return pd.DataFrame(rows)
 
 
+MARKERS = {"background_hinted": "o", "manager_background": "s", "manager_owner": "D", "isolated": "*",
+           "isolated_capped": "*"}
+
+
 def plot(table: pd.DataFrame, path: Path, title: str = "") -> None:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    fig, ax = plt.subplots(figsize=(5.5, 4))
+    from matplotlib.lines import Line2D
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    models = list(dict.fromkeys(table["model"]))
+    colors = {m: plt.get_cmap("tab10")(i % 10) for i, m in enumerate(models)}
     for _, r in table.iterrows():
-        iso = r["point"].startswith("isolated")
-        ax.scatter(r["usd_per_bug"], r["fixed_frac"], marker="s" if iso else "o", s=50,
-                   facecolors="none" if r["point"] == "isolated_capped" else None)
-        ax.annotate(r["point"], (r["usd_per_bug"], r["fixed_frac"]), textcoords="offset points", xytext=(5, 4),
-                    fontsize=8)
-    ax.set_xlabel("USD per bug")
+        capped = r["point"] == "isolated_capped"
+        ax.scatter(r["usd_per_bug"], r["fixed_frac"], marker=MARKERS.get(r["point"], "x"),
+                   s=110 if r["point"].startswith("isolated") else 45, color=colors[r["model"]],
+                   facecolors="none" if capped else colors[r["model"]])
+    ax.set_xscale("log")
+    ax.set_xlabel("USD per bug (log)")
     ax.set_ylabel("share of bugs fixed")
     ax.set_ylim(0, 1)
     ax.set_title(title or "L0: cost vs bugs fixed")
+    handles = [Line2D([], [], color=colors[m], marker="o", ls="", label=m) for m in models]
+    handles += [Line2D([], [], color="grey", marker=MARKERS[p], ls="", label=p,
+                       markerfacecolor="none" if p == "isolated_capped" else "grey") for p in MARKERS]
+    ax.legend(handles=handles, fontsize=7, loc="center left", bbox_to_anchor=(1.0, 0.5), frameon=False)
     fig.tight_layout()
     fig.savefig(path, dpi=150)
     plt.close(fig)
 
 
+def _model_arg(text: str) -> tuple[str, Path, Path]:
+    name, sep, dirs = text.partition("=")
+    levels, sep2, isolated = dirs.partition(":")
+    if not (sep and sep2 and name and levels and isolated):
+        raise argparse.ArgumentTypeError(f"expected NAME=LEVELS_DIR:ISOLATED_DIR, got {text!r}")
+    return name, Path(levels), Path(isolated)
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("levels", type=Path, help="the levels sweep's analysis dir")
-    p.add_argument("isolated", type=Path, help="the isolated sweep's analysis dir")
+    p.add_argument("--model", type=_model_arg, action="append", required=True, metavar="NAME=LEVELS:ISOLATED",
+                   help="a model's levels and isolated analysis dirs; repeat per model")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--interval", type=float, default=240.0, help="seconds between bugs in the shared sessions")
     p.add_argument("--wall", type=float, default=1800.0, help="the shared sessions' wall clock in seconds")
     a = p.parse_args(argv)
-    table = l0_table(a.levels, a.isolated, a.interval, a.wall)
+    table = pd.concat([l0_table(lv, iso, a.interval, a.wall).assign(model=name) for name, lv, iso in a.model],
+                      ignore_index=True)
+    table = table[["model"] + [c for c in table.columns if c != "model"]]
     a.out.mkdir(parents=True, exist_ok=True)
     table.to_csv(a.out / "l0.csv", index=False)
     plot(table, a.out / "l0.png")
