@@ -160,8 +160,9 @@ def plot(table: pd.DataFrame, path: Path, title: str = "") -> None:
     ax.set_xlim(lo / 2.6, hi * 1.4)  # room on the left for the model labels
     ax.set_title(title or "L0: cost vs bugs fixed")
     handles = [Line2D([], [], color=colors[m], marker="o", ls="", label=m) for m in models]
+    points = set(table["point"])
     handles += [Line2D([], [], color="grey", marker=MARKERS[p], ls="", label=p,
-                       markerfacecolor="none" if p == "isolated_capped" else "grey") for p in MARKERS]
+                       markerfacecolor="none" if p == "isolated_capped" else "grey") for p in MARKERS if p in points]
     handles.append(Line2D([], [], color="grey", lw=0.9, alpha=0.45, label="setting to its isolated point"))
     ax.legend(handles=handles, fontsize=7, loc="center left", bbox_to_anchor=(1.0, 0.5), frameon=False)
     fig.tight_layout()
@@ -189,8 +190,13 @@ def main(argv: list[str] | None = None) -> int:
     a.out.mkdir(parents=True, exist_ok=True)
     table.to_csv(a.out / "l0.csv", index=False)
     plot(table, a.out / "l0.png")
+    # the same plot with one shared setting at a time against the isolated points: l0_<setting>.png
+    shared = [pt for pt in dict.fromkeys(table["point"]) if not pt.startswith("isolated")]
+    for pt in shared:
+        sub = table[table["point"].isin([pt, "isolated", "isolated_capped"])]
+        plot(sub, a.out / f"l0_{pt}.png", title=f"L0: cost vs bugs fixed, {pt} vs isolated")
     print(table.to_string(index=False))
-    print(f"[OK] {a.out / 'l0.csv'}, {a.out / 'l0.png'}")
+    print(f"[OK] {a.out / 'l0.csv'}, {a.out / 'l0.png'} and l0_<setting>.png for {', '.join(shared)}")
     return 0
 
 
