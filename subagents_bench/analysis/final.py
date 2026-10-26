@@ -139,21 +139,30 @@ def plot(table: pd.DataFrame, path: Path, title: str = "") -> None:
     fig, ax = plt.subplots(figsize=(7, 4.5))
     models = list(dict.fromkeys(table["model"]))
     colors = {m: plt.get_cmap("tab10")(i % 10) for i, m in enumerate(models)}
+    for m, g in table.groupby("model", sort=False):  # each shared setting joined to the model's isolated point
+        iso = g[g["point"] == "isolated"]
+        if iso.empty:
+            continue
+        x0, y0 = float(iso["usd_per_bug"].iloc[0]), float(iso["fixed_frac"].iloc[0])
+        for _, r in g[~g["point"].str.startswith("isolated")].iterrows():
+            ax.plot([x0, r["usd_per_bug"]], [y0, r["fixed_frac"]], color=colors[m], lw=0.9, alpha=0.45, zorder=1)
+        ax.annotate(m, (x0, y0), xytext=(-6, 7), textcoords="offset points", ha="right", fontsize=6.5, color=colors[m])
     for _, r in table.iterrows():
-        capped = r["point"] == "isolated_capped"
+        capped = r["point"] == "isolated_capped"  # a hollow ring around the isolated star, visible when they coincide
         ax.scatter(r["usd_per_bug"], r["fixed_frac"], marker=MARKERS.get(r["point"], "x"),
-                   s=110 if r["point"].startswith("isolated") else 45, color=colors[r["model"]],
-                   facecolors="none" if capped else colors[r["model"]])
+                   s=260 if capped else 110 if r["point"] == "isolated" else 45, color=colors[r["model"]],
+                   facecolors="none" if capped else colors[r["model"]], linewidths=1.1 if capped else None, zorder=2)
     ax.set_xscale("log")
     ax.set_xlabel("USD per bug (log)")
     ax.set_ylabel("share of bugs fixed")
     ax.set_ylim(max(0.0, float(table["fixed_frac"].min()) - 0.08), min(1.0, float(table["fixed_frac"].max()) + 0.05))
     lo, hi = float(table["usd_per_bug"].min()), float(table["usd_per_bug"].max())
-    ax.set_xlim(lo / 1.4, hi * 1.4)
+    ax.set_xlim(lo / 2.6, hi * 1.4)  # room on the left for the model labels
     ax.set_title(title or "L0: cost vs bugs fixed")
     handles = [Line2D([], [], color=colors[m], marker="o", ls="", label=m) for m in models]
     handles += [Line2D([], [], color="grey", marker=MARKERS[p], ls="", label=p,
                        markerfacecolor="none" if p == "isolated_capped" else "grey") for p in MARKERS]
+    handles.append(Line2D([], [], color="grey", lw=0.9, alpha=0.45, label="setting to its isolated point"))
     ax.legend(handles=handles, fontsize=7, loc="center left", bbox_to_anchor=(1.0, 0.5), frameon=False)
     fig.tight_layout()
     fig.savefig(path, dpi=150)
