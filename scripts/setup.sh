@@ -60,5 +60,9 @@ else
   printf '[INFO] %s\n' "SAIL_API_KEY not set: the sweeps on configs/sail/base.yaml (and their questions and judge, under --model too) need it"
 fi
 
-if [ "$failed" = 0 ]; then echo "Setup OK. Next: scripts/run_experiment.sh configs/sweeps/smoke.yaml"; fi
+if [ "$failed" = 0 ]; then
+  echo "Setup OK. Next: a sweep on a Prime model (README, *Models*), e.g."
+  echo "  scripts/run_experiment.sh configs/sweeps/swe_interactive_levels_smoke.yaml --model configs/prime/models/gpt-5.6-luna.yaml --job 1:single_baseline"
+  echo "(the sweeps without --model, like configs/sweeps/smoke.yaml, run on Sail: SAIL_API_KEY)"
+fi
 exit "$failed"

@@ -151,6 +151,7 @@ class Sweep:
     configs: dict[str, dict] = field(default_factory=dict)  # condition -> its whole resolved config (models)
     raw: dict = field(default_factory=dict)  # the spec after ``extends`` (``harbor.environment``)
     plan: dict[str, tuple[int, ...]] | None = None  # condition -> the rounds it runs in (``planned_rounds``)
+    hints: Path | None = None  # its questions' dir (sweep.hints_dir: the sweep's own under --model); None: <jobs>/hints
 
     def __post_init__(self) -> None:
         if self.plan is None:
@@ -211,9 +212,10 @@ def load_sweep(jobs: Path | None = None, spec: Path | None = None) -> Sweep:
     ValueError for a malformed sweep.json or a sweep with no interactive condition (its message names
     no path: the page shows it)."""
     if spec is not None:
-        from ..sweep import load_spec
+        from ..sweep import hints_dir, load_spec
         s = load_spec(spec)
         raw, configs = s.raw, {c: cfg.to_dict() for c, cfg in s.configs.items()}
+        name, hints = s.name, hints_dir(s)
     else:
         p = Path(jobs) / "sweep.json"
         if not p.is_file():
@@ -221,6 +223,8 @@ def load_sweep(jobs: Path | None = None, spec: Path | None = None) -> Sweep:
         try:
             doc = json.loads(p.read_text())
             raw, configs = doc["spec"], doc.get("configs") or {}
+            name = doc.get("name") or raw["name"]  # under --model, <sweep>-<model file stem>
+            hints = Path(doc["hints_dir"]) if doc.get("hints_dir") else None
         except (ValueError, KeyError, TypeError, AttributeError) as e:
             raise ValueError(f"sweep.json is malformed ({type(e).__name__}: {e})") from e
     try:
@@ -228,9 +232,9 @@ def load_sweep(jobs: Path | None = None, spec: Path | None = None) -> Sweep:
         inter = {c: v for c, v in inter.items() if v}
         if not inter:
             raise ValueError(f"sweep {raw['name']} has no interactive condition")
-        return Sweep(raw["name"], tuple(raw["tasks"]), int(raw["rounds"]),
+        return Sweep(name, tuple(raw["tasks"]), int(raw["rounds"]),
                      {c: v or {} for c, v in raw["conditions"].items()}, inter,
-                     {c: v for c, v in configs.items() if isinstance(v, dict)}, raw)
+                     {c: v for c, v in configs.items() if isinstance(v, dict)}, raw, hints=hints)
     except (KeyError, TypeError, AttributeError) as e:
         raise ValueError(f"sweep.json is malformed: its spec has no valid {e}") from e
 
@@ -546,10 +550,10 @@ class Monitor:
         return [s for s in map(self.session, trial_dirs(self.jobs)) if s]
 
     def questions_ready(self) -> list[tuple[str, int | None]]:
-        """Per task, the questions in ``<jobs>/hints/<task>.questions.json`` (None: not written yet)."""
+        """Per task, the questions in ``<hints>/<task>.questions.json`` (None: not written yet)."""
         out = []
         for task in self.sw.tasks:
-            d = _json(self.jobs / "hints" / f"{task}.questions.json")
+            d = _json((self.sw.hints or self.jobs / "hints") / f"{task}.questions.json")
             qs = d.get("questions") if isinstance(d, dict) else None
             out.append((task.replace("swe-sweep__", ""), len(qs) if isinstance(qs, list) else None))
         return out

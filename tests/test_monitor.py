@@ -504,3 +504,20 @@ def test_levels_smoke_sends_the_bugs_that_fit(tmp_path):
     assert "<span>Questions ready: demo 8/8 · other 8/8</span>" in page
     assert "it checks that every kind of message and the reply rule work." in page
     assert "sending the same 4 bugs at the same times at every level, one every 30 s" in page
+
+
+def test_model_flag_sweep_reads_the_sweeps_own_questions(tmp_path):
+    """A --model run's sweep.json names its hints dir: the monitor counts the questions there."""
+    from subagents_bench import sweep
+    from test_interactive import interactive_spec
+    path = interactive_spec(tmp_path, overrides={"interactive": {
+        "wall_clock_sec": 3600, "interval_sec": 300, "max_hints": 3, "replies": True, "questions_per_interval": 2}})
+    spec = sweep.load_spec(path, model=Path(__file__).resolve().parents[1] / "configs/prime/models/gpt-5.6-luna.yaml")
+    spec.jobs_dir.mkdir(parents=True)
+    sweep._write_status(spec, "running", 0.0)
+    hints = sweep.hints_dir(spec)
+    hints.mkdir(parents=True)
+    (hints / "task-1.questions.json").write_text(json.dumps({"questions": [{"id": "q1"}, {"id": "q2"}]}))
+    sw = load_sweep(spec.jobs_dir)
+    assert sw.name == "t-gpt-5.6-luna" and sw.hints == hints
+    assert Monitor(spec.jobs_dir, sw, prices={}).questions_ready() == [("task-1", 2)]
