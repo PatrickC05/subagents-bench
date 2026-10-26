@@ -9,8 +9,8 @@ free to answer.
 
 A session is 30 minutes on one [SWE-sweep](https://github.com/facebookresearch/swe-sweep)
 repository: a simulated user sends 6 bugs, one every 4 minutes, and, depending
-on the level, status checks asking for ETAs, questions about the code, and an
-urgent bug. The agent answers with a `reply` tool; the user sees nothing else.
+on the level, status checks asking for ETAs and questions about the code. The
+agent answers with a `reply` tool; the user sees nothing else.
 Every LLM and tool call is logged, workspace snapshots are replayed to time
 each fix, and the hidden tests grade every bug, so we measure, per request:
 time to the first reply, bugs fixed, ETA error, questions answered (judged
@@ -60,17 +60,17 @@ judge is DeepSeek-V4.1-Flash on Sail for every model.
 |---|---|---|---|---|
 | 1. Cost vs bugs fixed at L0 | `final_levels.yaml` (`*_baseline`) | `background_hinted`, `manager_background`, `manager_owner` at L0 | all 6 | 18 |
 | 1b. Isolated baseline | `final_isolated.yaml` | `single_bug0`-`single_bug5`: each bug alone in a fresh session (`interactive.only_bug`) | all 6 | 36 |
-| 2. Levels | `final_levels.yaml` | the three settings at L0-L3 (bugs; + ETAs; + questions; + an urgent bug) | Opus 5.5, GPT-5.6 Luna, DeepSeek-V4.1-Flash-1017 | 72 (L0 included) |
+| 2. Levels | `final_levels.yaml` | the three settings at L0-L2 (bugs; + ETAs; + questions; no urgent tier) | Opus 5.5, GPT-5.6 Luna, DeepSeek-V4.1-Flash-1017 | 54 (L0 included) |
 
 The 6 models: GPT-5.6 Luna, Terra and Sol, Claude Opus 5.5 and Sonnet 5.5, and
-DeepSeek-V4.1-Flash-1017 (486 sessions, about $1.5k). Gemini 4 Argon and Kimi K3
+DeepSeek-V4.1-Flash-1017 (432 sessions, about $1.35k). Gemini 4 Argon and Kimi K3
 are left out (no access), and Claude Haiku 5.5 and MiMo V2.6 are not on Prime.
 
 ```bash
 scripts/setup.sh --final            # .venv, .env (PRIME_API_KEY, PRIME_TEAM_ID to bill a team, SAIL_API_KEY),
                                     # the SWE-sweep tasks (scripts/get_tasks.sh), a Modal token check; no Docker
-scripts/run_final_patrick.sh        # Luna, DeepSeek (exp. 1 + 2), Sonnet (exp. 1): 270 sessions, ~$220
-scripts/run_final_jonathan.sh       # Opus (exp. 1 + 2), Sol, Terra (exp. 1): 216 sessions, ~$1.3k
+scripts/run_final_patrick.sh        # Luna, DeepSeek (exp. 1 + 2), Sonnet (exp. 1): 234 sessions, ~$200
+scripts/run_final_jonathan.sh       # Opus (exp. 1 + 2), Sol, Terra (exp. 1): 198 sessions, ~$1.15k
 scripts/run_all_final.sh --dry-run  # every model's jobs
 scripts/run_all_final.sh --parallel # the whole study on one machine, then the cross-model figures
 scripts/run_final.sh --model configs/prime/models/gpt-5.6-luna.yaml            # one model, experiments 1 and 2
@@ -113,7 +113,7 @@ Experiment 2 gives six figures in `figures/final/`, each with the table it draws
 and setting; a bug never replied to counts as never), `bugs_fixed`, `eta`
 (estimate against the real time to fix), `response_cdf`, `orchestrator_time`
 (share of the session in model calls, own tools, or waiting) and
-`question_vs_bug` (L2-L3).
+`question_vs_bug` (L2).
 
 ## Earlier study: orchestrator and subagents on Terminal-Bench
 

@@ -8,13 +8,13 @@
 #                    configs/prime/models/deepseek-v4.1-flash-1017.yaml; the orchestrator and its
 #                    subagents run it, in jobs/final_levels-<stem> and jobs/final_isolated-<stem>
 #   --l0-only        experiment 1 only: the three settings at L0 (18 sessions) and the isolated
-#                    baseline (36). Without it, experiment 2 as well: the three settings at every
-#                    level, L0-L3 (72 sessions, L0 included), and the isolated baseline.
+#                    baseline (36). Without it, experiment 2 as well: the three settings at
+#                    L0-L2 (54 sessions, L0 included), and the isolated baseline.
 #   --parallel       run the two sweeps at the same time (after preflight), each logging to
 #                    logs/final/<stem>-levels.log and -isolated.log: every session of the model at
 #                    once, so the sessions take about 30 minutes in all
 #   --jobs-at-once N harbor jobs at once per sweep, default 12 (a job runs its 6 tasks at once;
-#                    12 runs the levels sweep's 12 jobs and the isolated sweep's 6 all at once)
+#                    12 runs the levels sweep's 9 jobs and the isolated sweep's 6 all at once)
 #   --dry-run        print the jobs of both sweeps; run and grade nothing
 #
 # Steps: copy the fixed question sets (data/questions) into the levels sweep's own hints dir, which
@@ -73,7 +73,7 @@ DRY=()
 [ "$DRY_RUN" = 1 ] && DRY=(--dry-run)
 
 # Every model must be asked data/questions: a different file already in the hints dir is an error
-# (preflight checks every condition of the levels sweep, L2-L3 included, so --l0-only needs them too).
+# (preflight checks every condition of the levels sweep, L2 included, so --l0-only needs them too).
 for f in data/questions/*.questions.json; do
   dest="$HINTS/$(basename "$f")"
   if [ -e "$dest" ]; then

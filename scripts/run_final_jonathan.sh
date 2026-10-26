@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Jonathan's share of the final study (issue #23), every model at once:
-#   Claude Opus 5.5: experiments 1 and 2 (108 sessions)
+#   Claude Opus 5.5: experiments 1 and 2 (90 sessions)
 #   GPT-5.6 Sol, GPT-5.6 Terra: experiment 1 (54 sessions each)
-# 216 sessions, about $1.3k on Prime. The sessions take about 30 minutes (every model and both
+# 198 sessions, about $1.15k on Prime. The sessions take about 30 minutes (every model and both
 # its sweeps at once: scripts/run_all_final.sh --parallel), about 1 hour with preflight and
 # grading. Logs: logs/final/<model>.log (tail -f logs/final/*.log). Ctrl-C stops every run.
 # The other share is scripts/run_final_patrick.sh, on another machine, at the same time (each

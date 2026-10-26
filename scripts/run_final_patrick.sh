@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Patrick's share of the final study (issue #23), every model at once:
-#   GPT-5.6 Luna, DeepSeek-V4.1-Flash-1017: experiments 1 and 2 (108 sessions each)
+#   GPT-5.6 Luna, DeepSeek-V4.1-Flash-1017: experiments 1 and 2 (90 sessions each)
 #   Claude Sonnet 5.5: experiment 1 (54 sessions)
-# 270 sessions, about $220 on Prime. The sessions take about 30 minutes (every model and both
+# 234 sessions, about $200 on Prime. The sessions take about 30 minutes (every model and both
 # its sweeps at once: scripts/run_all_final.sh --parallel), about 1 hour with preflight and
 # grading. Logs: logs/final/<model>.log (tail -f logs/final/*.log). Ctrl-C stops every run.
 # The other share is scripts/run_final_jonathan.sh, on another machine, at the same time (each

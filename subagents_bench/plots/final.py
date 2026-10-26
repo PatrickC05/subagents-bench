@@ -1,4 +1,4 @@
-"""Experiment 2 of the final study (issue #23): the three settings at L0-L3, compared across models.
+"""Experiment 2 of the final study (issue #23): the three settings at L0-L2, compared across models.
 
     python -m subagents_bench.plots.final --model DeepSeek=analysis/final_levels \
         --model "Opus 5.5"=analysis/final_levels_opus ... --out figures/final
@@ -21,7 +21,7 @@ figures, each with the table it draws (``<name>.csv``):
    own tool calls (``wait`` excluded), and neither (waiting for the user or subagents), per model
    and setting.
 6. ``question_vs_bug``: median time to the first reply to a question (``reply_sec``) and to a bug
-   (``user_reply_sec``) at L2-L3, censored as in 1, with the share replied to above each bar.
+   (``user_reply_sec``) at L2, censored as in 1, with the share replied to above each bar.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ from ..analysis.levels import setting_level
 SETTINGS = ["background_hinted", "manager_background", "manager_owner"]
 SETTING_LABEL = {"background_hinted": "Orchestrator + subagents", "manager_background": "Subagents only",
                  "manager_owner": "Subagents only (owner)"}
-LEVELS = {"L0": "L0 bugs", "L1": "L1 + ETA", "L2": "L2 + questions", "L3": "L3 + urgent"}  # levels.setting_level's
+LEVELS = {"L0": "L0 bugs", "L1": "L1 + ETA", "L2": "L2 + questions"}  # levels.setting_level's; no urgent tier (L3)
 SETTING_SHORT = {"background_hinted": "Orch + sub", "manager_background": "Sub only", "manager_owner": "Owner"}
 MARKERS = {"background_hinted": "o", "manager_background": "s", "manager_owner": "D", "isolated": "*",
            "isolated_capped": "*"}  # experiment 1's points (analysis.final)
@@ -144,7 +144,7 @@ def response_time(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> p
     plt = pyplot()
     fig, ax = plt.subplots(figsize=(max(6, 3 * len(models)), 4))
     _bars(ax, tab, "median_sec", models, "median s to first reply (hatched: never)", cap=WALL)
-    fig.suptitle("Time to the first reply the user saw, bugs (L0 bugs, L1 + ETA, L2 + questions, L3 + urgent)", fontsize=9)
+    fig.suptitle("Time to the first reply the user saw, bugs (L0 bugs, L1 + ETA, L2 + questions)", fontsize=9)
     _save(fig, out / "response_time.png")
     return tab
 
@@ -281,7 +281,7 @@ def orchestrator_time(t: dict[str, pd.DataFrame], models: list[str], out: Path) 
 
 def question_vs_bug(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> pd.DataFrame:
     m = t["messages"]
-    m = m[m["level"].isin(["L2", "L3"])]
+    m = m[m["level"] == "L2"]
     q = m[m["kind"] == "question"].assign(kind="question", sec=lambda d: d["reply_sec"])
     b = m[(m["kind"] == "bug") & (m["index"] > 0)].assign(kind="bug", sec=lambda d: d["user_reply_sec"])
     both = pd.concat([q, b])
@@ -303,7 +303,7 @@ def question_vs_bug(t: dict[str, pd.DataFrame], models: list[str], out: Path) ->
                 ax.annotate(f"{frac:.0%}", (xpos, (WALL if never else v) / 60), ha="center", va="bottom", fontsize=6)
         ax.set_xticks(range(len(SETTINGS)), [SETTING_SHORT[s] for s in SETTINGS], fontsize=7)
         ax.set_title(f"{mname} (dark: bugs, light: questions)", fontsize=8)
-    axes[0][0].set_ylabel("median minutes to first reply (L2-L3; % replied)")
+    axes[0][0].set_ylabel("median minutes to first reply (L2; % replied)")
     _save(fig, out / "question_vs_bug.png")
     return tab
 

@@ -14,7 +14,7 @@
 #   --dry-run        list every model's jobs; run nothing
 #
 # What runs (issue #23 is the source of truth):
-#   experiments 1 and 2 (L0-L3 + isolated, 108 sessions each): Opus 5.5, Luna, DeepSeek-V4.1-Flash-1017
+#   experiments 1 and 2 (L0-L2 + isolated, 90 sessions each):  Opus 5.5, Luna, DeepSeek-V4.1-Flash-1017
 #   experiment 1 only (L0 + isolated, 54 sessions each):        Terra, Sol, Sonnet 5.5
 # Gemini 4 Argon and Kimi K3 are left out (we have no access to them), and Claude Haiku 5.5 and
 # MiMo V2.6 are not on Prime. scripts/run_final_patrick.sh and scripts/run_final_jonathan.sh split
