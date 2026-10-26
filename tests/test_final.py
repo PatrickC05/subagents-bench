@@ -143,3 +143,8 @@ def test_an_agent_crash_counts_as_a_failure(tmp_path, trials):
     t = l0_table(lv, iso).set_index("point")
     assert (t.loc["manager_owner", "n_bugs"], t.loc["manager_owner", "n_fixed"]) == (2, 0)
     assert t.loc["manager_owner", "usd_total"] == 2.0
+
+
+def test_pareto_keeps_cheaper_or_better_points():
+    pts = pd.DataFrame({"usd_per_bug": [0.02, 0.05, 0.06, 0.1, 0.3], "fixed_frac": [0.72, 0.83, 0.8, 0.92, 0.75]})
+    assert final.pareto(pts) == [(0.02, 0.72), (0.05, 0.83), (0.1, 0.92)]
