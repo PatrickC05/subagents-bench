@@ -131,6 +131,65 @@ def l0_table(levels: Path, isolated: Path, root: Path = Path(".")) -> pd.DataFra
     return pd.DataFrame(rows)
 
 
+SHORT = {"claude-opus-5.5": "Opus 5.5", "claude-sonnet-5.5": "Sonnet 5.5", "gpt-5.6-sol": "GPT-5.6 Sol",
+         "gpt-5.6-terra": "GPT-5.6 Terra", "gpt-5.6-luna": "GPT-5.6 Luna", "kimi-k3": "Kimi K3",
+         "deepseek-v4.1-flash-1017": "DeepSeek V4.1 Flash"}  # display names for the legend
+TAG = {"claude-opus-5.5": "Opus", "claude-sonnet-5.5": "Sonnet", "gpt-5.6-sol": "Sol", "gpt-5.6-terra": "Terra",
+       "gpt-5.6-luna": "Luna", "kimi-k3": "Kimi", "deepseek-v4.1-flash-1017": "DeepSeek"}  # and on the points
+
+
+def _place_labels(fig, ax, labels, table, colors) -> None:
+    """Label each model's isolated point at the nearby spot (a ring of candidate offsets) that overlaps the
+    fewest earlier labels and markers and stays inside the axes, nearest first; a label set further off
+    gets a thin leader line to its point."""
+    import math
+
+    from matplotlib.transforms import Bbox
+
+    fig.canvas.draw()
+    rend = fig.canvas.get_renderer()
+    inside = ax.get_window_extent(rend)
+    pts = ax.transData.transform(table[["usd_per_bug", "fixed_frac"]].to_numpy(dtype=float))
+    marks = [Bbox.from_extents(px - 8, py - 8, px + 8, py + 8) for px, py in pts]
+    scale = fig.dpi / 72  # offset points -> pixels
+    cands = [(r * math.cos(a), r * math.sin(a)) for r in (12, 20, 30, 42, 56)
+             for a in [math.radians(d) for d in (90, 270, 30, 150, 210, 330, 0, 180, 60, 120, 240, 300)]]
+    stars = [(m, *ax.transData.transform((x, y))) for m, x, y in labels]
+    taken = []
+    for m, x, y in sorted(labels, key=lambda t: -t[2]):
+        best = None
+        sx, sy = ax.transData.transform((x, y))
+        for i, (dx, dy) in enumerate(cands):
+            ha = "left" if dx > 3 else "right" if dx < -3 else "center"
+            va = "bottom" if dy > 3 else "top" if dy < -3 else "center"
+            t = ax.annotate(TAG.get(m, m), (x, y), xytext=(dx, dy), textcoords="offset points", ha=ha, va=va,
+                            fontsize=6.5, color=colors[m], zorder=3)
+            bb = t.get_window_extent(rend).padded(4 * scale)
+            def gap(st):  # pixels from the label's box to a star
+                return math.hypot(max(bb.x0 - st[1], 0, st[1] - bb.x1), max(bb.y0 - st[2], 0, st[2] - bb.y1))
+            own = gap(next(st for st in stars if st[0] == m))
+            near = m if all(gap(st) > own + 12 for st in stars if st[0] != m) else None  # unambiguous?
+            outside = not (inside.x0 <= bb.x0 and bb.x1 <= inside.x1 and inside.y0 <= bb.y0 and bb.y1 <= inside.y1)
+            score = (100 * sum(bb.overlaps(o) for o in taken)
+                     + 30 * sum(bb.overlaps(mk) for mk, (px, py) in zip(marks, pts)
+                                if math.hypot(px - sx, py - sy) > 2)  # its own star(s) don't count
+                     + 1000 * outside + 150 * (near != m) + i * 0.5)
+            if best is None or score < best[0]:
+                if best is not None:
+                    best[1].remove()
+                best = (score, t, bb, math.hypot(dx, dy))
+            else:
+                t.remove()
+        _, t, bb, dist = best
+        if dist > 14:
+            t.arrow_patch = None
+            t.set_annotation_clip(False)
+            ax.annotate("", (x, y), xytext=t.get_position(), textcoords="offset points",
+                        arrowprops={"arrowstyle": "-", "color": colors[m], "lw": 0.6, "alpha": 0.7,
+                                    "shrinkA": 0, "shrinkB": 5}, zorder=2)
+        taken.append(bb)
+
+
 def plot(table: pd.DataFrame, path: Path, title: str = "") -> None:
     from matplotlib.lines import Line2D
 
@@ -139,6 +198,7 @@ def plot(table: pd.DataFrame, path: Path, title: str = "") -> None:
     fig, ax = plt.subplots(figsize=(7, 4.5))
     models = list(dict.fromkeys(table["model"]))
     colors = {m: plt.get_cmap("tab10")(i % 10) for i, m in enumerate(models)}
+    labels = []  # (model, x, y) of each isolated point, labelled once the axes are final
     for m, g in table.groupby("model", sort=False):  # each shared setting joined to the model's isolated point
         iso = g[g["point"] == "isolated"]
         if iso.empty:
@@ -146,7 +206,7 @@ def plot(table: pd.DataFrame, path: Path, title: str = "") -> None:
         x0, y0 = float(iso["usd_per_bug"].iloc[0]), float(iso["fixed_frac"].iloc[0])
         for _, r in g[~g["point"].str.startswith("isolated")].iterrows():
             ax.plot([x0, r["usd_per_bug"]], [y0, r["fixed_frac"]], color=colors[m], lw=0.9, alpha=0.45, zorder=1)
-        ax.annotate(m, (x0, y0), xytext=(-6, 7), textcoords="offset points", ha="right", fontsize=6.5, color=colors[m])
+        labels.append((m, x0, y0))
     for _, r in table.iterrows():
         capped = r["point"] == "isolated_capped"  # a hollow ring around the isolated star, visible when they coincide
         ax.scatter(r["usd_per_bug"], r["fixed_frac"], marker=MARKERS.get(r["point"], "x"),
@@ -159,7 +219,8 @@ def plot(table: pd.DataFrame, path: Path, title: str = "") -> None:
     lo, hi = float(table["usd_per_bug"].min()), float(table["usd_per_bug"].max())
     ax.set_xlim(lo / 2.6, hi * 1.4)  # room on the left for the model labels
     ax.set_title(title or "L0: cost vs bugs fixed")
-    handles = [Line2D([], [], color=colors[m], marker="o", ls="", label=m) for m in models]
+    _place_labels(fig, ax, labels, table, colors)
+    handles = [Line2D([], [], color=colors[m], marker="o", ls="", label=SHORT.get(m, m)) for m in models]
     points = set(table["point"])
     handles += [Line2D([], [], color="grey", marker=MARKERS[p], ls="", label=p,
                        markerfacecolor="none" if p == "isolated_capped" else "grey") for p in MARKERS if p in points]
