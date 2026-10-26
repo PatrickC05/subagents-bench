@@ -17,15 +17,18 @@ attempts), run with the earlier, larger version of this harness.
   timeout (x2, `agent_timeout_multiplier`: 30 min for most pilot tasks) is
   its only time limit, so provider latency never changes a trajectory unless
   it is extreme.
-- **One provider.** Both models are on Sail's `balanced` tier, through one
-  OpenAI-compatible client.
+- **Two providers, one client.** The DeepSeek runs (DeepSeek-V4.1-Flash
+  orchestrator, Gemma-4-31B subagents) are on Sail's `balanced` tier. The
+  cross-model reruns (issue #23) are on Prime Inference, since Sail serves
+  few of those models. Both are OpenAI-compatible and go through one client;
+  a model's `provider` picks the URL and key (*Providers*, below).
 - **An invalid trial is rerun, never scored.** A trial that a provider or
   infrastructure failure shaped does not measure its condition: the runtime
   stops it at once, the sweep reruns its job and the analysis leaves it out.
 - **Lean.** No context trimming, no token budgets, no schema versions, no
   provenance fingerprints or source snapshots, no cost or latency simulation
-  at run time, no other providers or benchmarks. The records keep what the
-  analysis reads.
+  at run time, no providers or benchmarks beyond these. The records keep what
+  the analysis reads.
 
 ## Configuration
 
@@ -35,7 +38,9 @@ a different condition. `configs/sail/base.yaml` is the base of every
 condition, and a sweep spec deep-merges each condition's overrides onto it
 (mappings merge; lists, scalars and null replace) and names it after its key.
 The sweep writes each resolved config to `jobs/<sweep>/configs/`, and the
-harbor agent reads it from `SUBAGENTS_BENCH_CONFIG`.
+harbor agent reads it from `SUBAGENTS_BENCH_CONFIG`. `--model FILE` (a file of
+`configs/prime/models/`) replaces every condition's orchestrator (*Sweep*,
+*Models*).
 
 Sampling temperature is 0.7 for both models, so repeated rounds are
 independent samples (`grade-answers` judges at 0: a verdict is not a
@@ -45,12 +50,62 @@ same model) hit the limit in 2 of 5 calls. Gemma keeps 4096.
 
 ## LLM client (`llm.py`)
 
-One request per call: `model`, `messages`, `tools`, `temperature`,
-`max_tokens`, `stream: true` with `stream_options.include_usage`, the header
-`X-Sail-Completion-Window: balanced`, and the key from `SAIL_API_KEY`
-(loaded from `.env`, never printed). An assistant message's reasoning goes
-back as `reasoning_content` on later turns (Sail currently ignores it: the
-prompt token counts do not change).
+One request per call to the model's `provider`: Prime Inference
+(`https://api.pinference.ai/api/v1/chat/completions`, the key from
+`PRIME_API_KEY`, and `X-Prime-Team-ID` from `PRIME_TEAM_ID` when set, to
+bill a team) or Sail (the key from `SAIL_API_KEY` and
+`X-Sail-Completion-Window: balanced`). Keys are loaded from `.env` and never
+printed. The body: `model`, `messages`, `tools`, `temperature`, `max_tokens`,
+`stream: true` with `stream_options.include_usage`, and `reasoning: {effort}`
+when the model sets `reasoning_effort`. An assistant message's reasoning goes
+back on later turns, as `reasoning_details` when the reply streamed them
+(Prime's gateway models, below), else as `reasoning_content` (Sail currently
+ignores it: the prompt token counts do not change).
+
+**Providers.** Prime Inference serves 7 of the 9 models of issue #23, probed
+on 2026-10-25 (about $1 of calls): GPT-5.6 Luna, Terra and Sol, Claude Opus
+5.5 and Sonnet 5.5, Gemini 4 Argon and Kimi K3, and DeepSeek-V4.1-Flash-1017
+besides. Claude Haiku 5.5 and MiMo V2.6 answer 404 `model_not_found` (Prime
+has Haiku 4.5 and MiMo V2.5 and V2.5-pro, and all three made tool calls).
+Each model took the harness's requests unchanged: streamed tool calls, two
+in one reply, temperature 0.7 and 0, and the interactive system prompt with
+every tool its sessions send, then the tools' results back
+(`tests/test_llm_live.py`). What differs from Sail:
+- **Reasoning.** The gateway models stream OpenRouter-style
+  `reasoning_details`: Anthropic's signed thinking, OpenAI's encrypted
+  reasoning and summaries, Gemini's thought signatures, Kimi's text; Terra
+  and Argon send no reasoning text at all. Sent back as `reasoning_content`,
+  the reasoning is ignored by Opus, Sonnet, Argon and Luna: the next prompt
+  has as many tokens as one without it. Sent back as `reasoning_details`, the
+  model gets it (Sonnet's next prompt: 8270 tokens against 8079), and Luna
+  went on reasoning (410 tokens against 0). So the client merges the streamed
+  pieces per index and type and sends them back. Requests without them are
+  accepted too.
+- **Effort.** Sent as `reasoning: {effort}`, Prime's form. Every model took
+  every level tried (low and high; Kimi max and xhigh too). On one prompt
+  Argon reasoned 0, 246 and 498 tokens at low, its default and high (sent as
+  a top-level `reasoning_effort`, which the gateway models also take); on
+  short prompts the others' counts did not separate the levels. Prime serves
+  DeepSeek without thinking unless the request sets an effort (on one
+  prompt: 0 reasoning tokens by default, 253 at high). Every model file sets
+  high: issue #23 compares the models at high reasoning.
+- **Caching.** OpenAI's, Gemini's and DeepSeek's prefixes are cached on their
+  own (the same prompt sent twice, 5568, 6967 and 5973 tokens to each: 5565,
+  4913 and 5888 cached the second time).
+  Anthropic's models cache nothing unless the request marks breakpoints (0
+  of 7750 without, 7653 with). `cache_control: true` marks the system prompt
+  and the newest message, so each call reads the prefix the call before it
+  wrote (the live test: 3177 of 3179 tokens). Kimi K3's cache hit 3 of 5
+  repeats of one prompt.
+- **Cached-token price.** Prime lists none for its gateway models. Its bills
+  (one line per model, 2026-10-25) matched cached tokens at 10% of the input
+  price with no charge for cache writes: Opus $0.1321, against $0.1333 at
+  10% and $0.1608 at full price; Sonnet $0.0652, against $0.0658 and $0.0795;
+  Sol $0.0460, against $0.0471 and $0.0721. The model files and the `prime`
+  price scheme price cached tokens at 10% of input.
+- **Errors.** An empty account answers `insufficient_funds` (type
+  `insufficient_quota`), a `BillingError`; an unknown model 404
+  `model_not_found`, a `ProviderError`, never retried.
 
 **Usage and timings.** Tokens come from the final usage chunk: prompt
 (cached included), cached, completion (reasoning included) and reasoning.
@@ -86,9 +141,9 @@ the connection was reset, while the host's network was failing. 180 s is
 chunk; DeepSeek's longest was 11 s). It is also httpx's connect and read
 timeout.
 
-**Errors.** `BillingError`: HTTP 402, a 4xx naming balance, billing, credit
-or payment, or a 429 only with `insufficient_quota`/billing (any other 429
-is a rate limit and retried). `ContextLengthError`: 400 or 413 with an
+**Errors.** `BillingError`: HTTP 402, a 4xx naming balance, billing, credit,
+payment or `insufficient_funds`, or a 429 only with `insufficient_quota`,
+`insufficient_funds` or billing (any other 429 is a rate limit and retried). `ContextLengthError`: 400 or 413 with an
 explicit context-length phrase, vLLM's "maximum model length" included.
 Neither is retried. Anything else that survives the retries is a
 `ProviderError`.
@@ -1251,10 +1306,22 @@ without this package importable. On macOS, `run_experiment.sh` runs the
 sweep under `caffeinate -i`: a sleeping laptop drops the network and every
 running call with it.
 
-`preflight` checks Docker, harbor, `SAIL_API_KEY` and one request per model,
+`preflight` checks Docker, harbor, each provider's API key and one request per model,
 and with `--oracle` runs harbor's oracle agent on every task (reused while
 it still solves them all), so a broken task image is found before the
 sweep spends money on it.
+
+**Models (`--model`).** `--model FILE`, on every command that takes a spec
+and on `run_experiment.sh`, replaces every condition's orchestrator with the
+model config in FILE (`configs/prime/models/`), and with it the subagents'
+model wherever the spec leaves that null: the same sweep on another model.
+The sweep is then `<name>-<file stem>`, in its own jobs dir, so each model's
+jobs, lock and analysis stay apart. Two things stay the sweep's own. The
+hints dir is `jobs/<name>/hints`, so every model gets the sweep's bug reports
+and questions. The writer, the first interactive condition's own
+orchestrator, writes them and judges the answers (`grade-answers`), so every
+model is graded by the same judge. A subagent model the spec sets (Gemma, in
+the older sweeps) stays too.
 
 **A second benchmark is a spec, not a code path.** Four spec keys cover
 what differs: `dataset_path`, a local directory of harbor task dirs passed as
@@ -1346,9 +1413,11 @@ this benchmark; read `bug_fix_rate`. Terminal-Bench
 trials leave the bug columns empty.
 
 **Cost.** Tokens times per-model prices from `configs/pricing.yaml`, per role
-(scheme `sail_balanced`, USD per 1M tokens: DeepSeek-V4.1-Flash in 0.07,
-cached 0.005, out 0.22; Gemma-4-31B in 0.11, cached 0.06, out 0.32). Another
-scheme in the file reprices every run without rerunning it.
+(scheme `default`: `sail_balanced`, USD per 1M tokens DeepSeek-V4.1-Flash in
+0.07, cached 0.005, out 0.22 and Gemma-4-31B in 0.11, cached 0.06, out 0.32,
+and `prime`, each Prime model's list price with cached tokens at 10% of
+input, *Providers*; Sail's and Prime's model ids differ). Another scheme in
+the file reprices every run without rerunning it.
 
 **Latency.** The critical path of each episode, from the records: the
 orchestrator's calls and tools in series; a `spawn_subagents` tool counts
@@ -1428,4 +1497,5 @@ writes harbor-0.24.0-shaped job dirs. The analysis and figure tests run the
 real runtime with fake models and wrap each episode in a harbor-like trial,
 so no synthetic data generator stands in for the records. `RUN_DOCKER=1`
 adds container tests (tools in Ubuntu and Debian images, arbiter isolation,
-the cancel kill), `RUN_LIVE=1` one tool-calling request to each Sail model.
+the cancel kill), `RUN_LIVE=1` a tool-calling request to each model, and for
+each Prime model the interactive prompt and tools with a round trip.

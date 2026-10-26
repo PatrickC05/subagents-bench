@@ -10,7 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PRICING = REPO_ROOT / "configs" / "pricing.yaml"
 
 
-def load_prices(path: str | Path = DEFAULT_PRICING, scheme: str = "sail_balanced") -> dict[str, dict]:
+def load_prices(path: str | Path = DEFAULT_PRICING, scheme: str = "default") -> dict[str, dict]:
     """``{model: {in, cached, out}}`` (USD per 1M tokens) of one scheme."""
     return yaml.safe_load(Path(path).read_text())[scheme]
 

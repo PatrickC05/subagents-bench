@@ -221,7 +221,7 @@ def test_grade_replies_lets_judge_errors_through():
 @pytest.fixture
 def graded_spec(tmp_path, monkeypatch):
     """A sweep with questions, and its judges: ``clients`` lists (model config, fake client) per
-    SailClient made."""
+    ChatClient made."""
     path = interactive_spec(tmp_path, overrides={"interactive": {
         "wall_clock_sec": 3600, "interval_sec": 300, "max_hints": 3, "replies": True, "questions_per_interval": 2}})
     spec = sweep.load_spec(path)
@@ -232,7 +232,7 @@ def graded_spec(tmp_path, monkeypatch):
         clients.append((m, c))
         return c
 
-    monkeypatch.setattr(sweep, "SailClient", make)
+    monkeypatch.setattr(sweep, "ChatClient", make)
     return path, spec, clients
 
 

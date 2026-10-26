@@ -1,4 +1,5 @@
-"""Sail chat-completions client (OpenAI-compatible, streamed SSE) and the message types."""
+"""Chat-completions client for Prime Inference and Sail (OpenAI-compatible, streamed SSE) and the
+message types."""
 
 from __future__ import annotations
 
@@ -15,12 +16,17 @@ import httpx
 
 from .config import ModelConfig
 
-SAIL_URL = "https://api.sailresearch.com/v1/chat/completions"
+# provider -> (chat-completions URL, API key variable). Prime Inference's optional PRIME_TEAM_ID bills a
+# team (X-Prime-Team-ID) instead of the key owner's account.
+PROVIDERS = {
+    "prime": ("https://api.pinference.ai/api/v1/chat/completions", "PRIME_API_KEY"),
+    "sail": ("https://api.sailresearch.com/v1/chat/completions", "SAIL_API_KEY"),
+}
 RETRYABLE_STATUS = frozenset({408, 409, 425, 429})
 BACKOFF_BASE_SEC = 2.0
 BACKOFF_MAX_SEC = 15.0
-_BILLING_WORDS = ("balance", "billing", "credit", "payment")
-_BILLING_WORDS_429 = ("insufficient_quota", "billing")
+_BILLING_WORDS = ("balance", "billing", "credit", "payment", "insufficient_funds")
+_BILLING_WORDS_429 = ("insufficient_quota", "insufficient_funds", "billing")
 # Matched after "_" -> " " (so "context_length_exceeded" counts); vLLM says "maximum model length".
 _CONTEXT_PHRASES = ("context length", "context window", "maximum context", "too long", "reduce the length",
                     "maximum model length")
@@ -53,7 +59,10 @@ class Message:
     content: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
     tool_results: list[ToolResult] = field(default_factory=list)
-    reasoning: str | None = None  # sent back as reasoning_content on later turns
+    reasoning: str | None = None  # sent back as reasoning_content on later turns, unless reasoning_details
+    # Prime's gateway models: the reply's reasoning blocks (signed thinking, encrypted reasoning, Gemini's
+    # thought signatures), sent back instead of reasoning_content, which those models ignore
+    reasoning_details: list[dict[str, Any]] | None = None
 
 
 @dataclass
@@ -62,6 +71,7 @@ class LLMResponse:
     tool_calls: list[ToolCall]
     finish_reason: str
     reasoning: str = ""
+    reasoning_details: list[dict[str, Any]] = field(default_factory=list)
     prompt_tokens: int = 0  # includes cached_tokens
     cached_tokens: int = 0
     completion_tokens: int = 0  # includes reasoning_tokens
@@ -210,6 +220,7 @@ class _Accumulator:
     def __init__(self) -> None:
         self.text: list[str] = []
         self.reasoning: list[str] = []
+        self.details: dict[tuple[Any, Any], dict[str, Any]] = {}  # reasoning_details by (index, type)
         self.slots: dict[int, _Slot] = {}
         self.by_id: dict[str, int] = {}
         self.finish_reason: str | None = None
@@ -231,6 +242,9 @@ class _Accumulator:
             if reasoning:
                 self.reasoning.append(reasoning)
                 carried = thinking = True
+            if isinstance(delta.get("reasoning_details"), list) and delta["reasoning_details"]:
+                self._details(delta["reasoning_details"])
+                carried = thinking = True
             if delta.get("content"):
                 self.text.append(delta["content"])
                 carried = True
@@ -243,6 +257,19 @@ class _Accumulator:
             self.n_chunks += 1
             self.n_reasoning_chunks += thinking
         return carried
+
+    def _details(self, items: list[Any]) -> None:
+        """Merge reasoning_details deltas per (index, type): ``text`` and ``summary`` stream in pieces,
+        the other fields (``signature``, encrypted ``data``, ``id``, ``format``) arrive whole."""
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            cur = self.details.setdefault((item.get("index", 0), item.get("type")), {})
+            for k, v in item.items():
+                if k in ("text", "summary") and isinstance(v, str):
+                    cur[k] = cur.get(k, "") + v
+                elif v is not None:
+                    cur[k] = v
 
     def _tool_delta(self, tc: dict[str, Any], pos: int) -> None:
         idx = tc.get("index", pos)
@@ -291,14 +318,23 @@ def _wire(m: Message) -> list[dict[str, Any]]:
             {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": json.dumps(c.arguments)}}
             for c in m.tool_calls
         ]
-    if m.reasoning:
+    if m.reasoning_details:
+        msg["reasoning_details"] = m.reasoning_details
+    elif m.reasoning:
         msg["reasoning_content"] = m.reasoning
     return [msg]
 
 
-class SailClient:
-    """One Sail model; thread-safe (one pooled httpx client). Tests inject ``transport``,
-    ``sleep`` and ``rng``."""
+def _cached(content: Any) -> Any:
+    """Text as one content part carrying a prompt-cache breakpoint (an empty text cannot carry one)."""
+    if not isinstance(content, str) or not content:
+        return content
+    return [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
+
+
+class ChatClient:
+    """One model of a provider (``PROVIDERS``); thread-safe (one pooled httpx client). Tests inject
+    ``transport``, ``sleep`` and ``rng``."""
 
     def __init__(
         self,
@@ -309,6 +345,7 @@ class SailClient:
         rng: random.Random | None = None,
     ):
         self.cfg = cfg
+        self._url, self._key_var = PROVIDERS[cfg.provider]
         self._http = httpx.Client(timeout=httpx.Timeout(cfg.request_timeout_sec), transport=transport)
         self._sleep = sleep
         self._rng = rng or random.Random()
@@ -317,14 +354,25 @@ class SailClient:
         self._http.close()
 
     def _body(self, system: str, messages: list[Message], tools: list[ToolSpec]) -> dict[str, Any]:
+        """The request. With ``cache_control``, the system prompt and the newest message carry a
+        prompt-cache breakpoint: Anthropic's models on Prime cache nothing without them, and each call
+        reads the prefix the previous call's breakpoint wrote."""
+        wire = [w for m in messages for w in _wire(m)]
+        system_msg: dict[str, Any] = {"role": "system", "content": system}
+        if self.cfg.cache_control:
+            system_msg["content"] = _cached(system)
+            if wire:
+                wire[-1] = {**wire[-1], "content": _cached(wire[-1]["content"])}
         body: dict[str, Any] = {
             "model": self.cfg.model,
-            "messages": [{"role": "system", "content": system}] + [w for m in messages for w in _wire(m)],
+            "messages": [system_msg] + wire,
             "max_tokens": self.cfg.max_output_tokens,
             "temperature": self.cfg.temperature,
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        if self.cfg.reasoning_effort is not None:  # Prime's form: also turns DeepSeek's thinking on
+            body["reasoning"] = {"effort": self.cfg.reasoning_effort}
         if tools:
             body["tools"] = [
                 {"type": "function", "function": {"name": t.name, "description": t.description, "parameters": t.parameters}}
@@ -347,7 +395,7 @@ class SailClient:
             if cancel.is_set():
                 raise CallInterrupted("interrupted before the request")
         try:
-            with self._http.stream("POST", SAIL_URL, json=body, headers=headers) as resp:
+            with self._http.stream("POST", self._url, json=body, headers=headers) as resp:
                 if resp.status_code >= 300:
                     text = resp.read().decode("utf-8", "replace")
                     raise _classify(resp.status_code, text) or _Retry(f"HTTP {resp.status_code}: {text[:300]}", resp.status_code)
@@ -386,10 +434,14 @@ class SailClient:
                  cancel: CallCancel | None = None) -> LLMResponse:
         """One call with retries (full-jitter backoff; no retry starts past ``retry_budget_sec``).
         ``cancel`` (interactive interrupts) aborts it: CallInterrupted, never retried."""
-        key = os.environ.get("SAIL_API_KEY")
+        key = os.environ.get(self._key_var)
         if not key:
-            raise ProviderError("SAIL_API_KEY is not set", n_attempts=0)
-        headers = {"Authorization": f"Bearer {key}", "X-Sail-Completion-Window": self.cfg.completion_window}
+            raise ProviderError(f"{self._key_var} is not set", n_attempts=0)
+        headers = {"Authorization": f"Bearer {key}"}
+        if self.cfg.provider == "sail":
+            headers["X-Sail-Completion-Window"] = self.cfg.completion_window or "balanced"
+        elif os.environ.get("PRIME_TEAM_ID"):
+            headers["X-Prime-Team-ID"] = os.environ["PRIME_TEAM_ID"]
         body = self._body(system, messages, tools)
         t_start = time.time()
         attempts, backoff, one_call = 0, 0.0, False
@@ -429,6 +481,7 @@ class SailClient:
             tool_calls=calls,
             finish_reason=acc.finish_reason or "unknown",
             reasoning="".join(acc.reasoning),
+            reasoning_details=list(acc.details.values()),
             prompt_tokens=usage.get("prompt_tokens") or 0,
             cached_tokens=(usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0,
             completion_tokens=usage.get("completion_tokens") or 0,

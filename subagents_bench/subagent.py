@@ -122,7 +122,7 @@ def run_dispatch(rt: Runtime, d: Dispatch) -> DispatchResult:
             r, call_id = rec.llm(who, rt.sub_client, system, messages, specs, step)
             cut_off = not r.tool_calls and r.finish_reason == "length"
             add(Message("assistant", r.text or (LENGTH_CUTOFF_REPLY if cut_off else ""), r.tool_calls,
-                        reasoning=r.reasoning or None), call_id)
+                        reasoning=r.reasoning or None, reasoning_details=r.reasoning_details or None), call_id)
             if r.text.strip():
                 last_text = r.text
             warn = step == s.max_steps - 1

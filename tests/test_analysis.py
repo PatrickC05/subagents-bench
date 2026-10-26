@@ -353,10 +353,12 @@ def test_condition_order():
 
 
 def test_pricing_config_matches_the_base_config():
-    prices = yaml.safe_load((ROOT / "configs/pricing.yaml").read_text())["sail_balanced"]
+    schemes = yaml.safe_load((ROOT / "configs/pricing.yaml").read_text())
     base = yaml.safe_load((ROOT / "configs/sail/base.yaml").read_text())
     for m in (base["orchestrator"], base["subagent"]["model"]):
-        assert prices[m["model"]] == {"in": m["price_in"], "cached": m["price_cache_read"], "out": m["price_out"]}
+        price = {"in": m["price_in"], "cached": m["price_cache_read"], "out": m["price_out"]}
+        assert schemes["sail_balanced"][m["model"]] == schemes["default"][m["model"]] == price
+    assert schemes["default"] == {**schemes["sail_balanced"], **schemes["prime"]}  # the default: every provider's
 
 
 def test_all_figures_render(analysis, tmp_path):

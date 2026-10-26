@@ -19,6 +19,7 @@ HINT_DETAILS = ("files", "tests", "report", "symptom")
 SESSION_SCOPES = ("reported", "all")
 CHANGE_KINDS = ("cancel", "undo")  # interactive.change_of_plan
 TOOL_NAMES = ("bash", "edit_file", "read_file", "list_dir", "search")
+PROVIDERS = ("prime", "sail")  # subagents_bench.llm.PROVIDERS
 
 
 class ConfigError(ValueError):
@@ -27,12 +28,15 @@ class ConfigError(ValueError):
 
 @dataclass
 class ModelConfig:
-    """A Sail model. Prices (USD per 1M tokens) only feed harbor's AgentContext cost."""
+    """A model on Prime Inference or Sail. Prices (USD per 1M tokens) only feed harbor's AgentContext cost."""
 
     model: str
-    completion_window: str = "balanced"
+    provider: str = "prime"  # prime (PRIME_API_KEY) | sail (SAIL_API_KEY)
+    completion_window: str | None = None  # Sail's tier (X-Sail-Completion-Window; None: balanced)
     temperature: float = 0.7
     max_output_tokens: int = 4096
+    reasoning_effort: str | None = None  # sent as reasoning: {effort: ...}; None: the provider's default
+    cache_control: bool = False  # prompt-cache breakpoints on the system prompt and newest message (Anthropic)
     max_retries: int = 4
     retry_budget_sec: float = 120.0
     request_timeout_sec: float = 180.0
@@ -188,6 +192,9 @@ def from_dict(raw: Any) -> ExperimentConfig:
     ):
         if value not in choices:
             raise ConfigError(f"{where}: {value!r} is not one of {', '.join(choices)}")
+    _check_model("orchestrator", cfg.orchestrator)
+    if cfg.subagent.model is not None:
+        _check_model("subagent.model", cfg.subagent.model)
     if not isinstance(cfg.subagent.delegation_hint, bool):
         raise ConfigError(f"subagent.delegation_hint: expected true or false, got {cfg.subagent.delegation_hint!r}")
     if not isinstance(cfg.subagent.owner_hint, bool):
@@ -215,6 +222,15 @@ def from_dict(raw: Any) -> ExperimentConfig:
         raise ConfigError("subagent.stop_tool: it stops background subagents, so it needs interactive, topology "
                           "subagents and spawn_mode background")
     return cfg
+
+
+def _check_model(where: str, m: ModelConfig) -> None:
+    if m.provider not in PROVIDERS:
+        raise ConfigError(f"{where}.provider: {m.provider!r} is not one of {', '.join(PROVIDERS)}")
+    if m.reasoning_effort is not None and not (isinstance(m.reasoning_effort, str) and m.reasoning_effort):
+        raise ConfigError(f"{where}.reasoning_effort: expected null or a level like medium, got {m.reasoning_effort!r}")
+    if not isinstance(m.cache_control, bool):
+        raise ConfigError(f"{where}.cache_control: expected true or false, got {m.cache_control!r}")
 
 
 def _check_interactive(cfg: ExperimentConfig) -> None:

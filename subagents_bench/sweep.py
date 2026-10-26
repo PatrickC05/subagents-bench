@@ -40,7 +40,7 @@ from .config import ConfigError, ExperimentConfig, ModelConfig, from_dict
 from .hints import (ANSWERS_VERSION, GENERATED, HINTS_DIR_ENV, HintError, fetch_source, generate_questions, generate_reports,
                     grade_replies, load_questions, load_reports, load_subtasks, n_slots, schedule, write_questions,
                     write_reports)
-from .llm import BillingError, Message, SailClient
+from .llm import PROVIDERS, BillingError, ChatClient, Message
 from .records import git_commit
 
 AGENT = "subagents_bench.harness.harbor_agent:OrchestratorAgent"
@@ -80,6 +80,9 @@ class Spec:
     configs: dict[str, ExperimentConfig]  # condition -> resolved config
     raw: dict[str, Any]  # the spec after `extends`
     environment: str = "docker"  # harbor's -e: the local Docker, or Modal sandboxes
+    model: Path | None = None  # `--model`: the file whose model replaced every condition's orchestrator
+    hints: Path | None = None  # the hints dir; under `--model`, the sweep's own (hints_dir)
+    writer: ModelConfig | None = None  # writes reports and questions, judges answers (writer_model)
 
 
 def deep_merge(base: Any, over: Any) -> Any:
@@ -116,8 +119,11 @@ def _read_spec(path: Path, root: Path) -> dict[str, Any]:
     return out
 
 
-def load_spec(path: str | os.PathLike) -> Spec:
-    """Read and check a sweep spec; every condition must load as an ExperimentConfig."""
+def load_spec(path: str | os.PathLike, model: str | os.PathLike | None = None) -> Spec:
+    """Read and check a sweep spec; every condition must load as an ExperimentConfig. ``model``
+    (``--model``, a model config like configs/prime/models/*.yaml) replaces every condition's
+    orchestrator, and so the subagents' model where it is null; the sweep is then named
+    ``<name>-<model file stem>``, with its own jobs dir but the sweep's own hints and writer."""
     path = Path(path).resolve()
     root = next((d for d in path.parents if (d / "pyproject.toml").is_file()), Path.cwd())
     raw = _read_spec(path, root)
@@ -125,14 +131,28 @@ def load_spec(path: str | os.PathLike) -> Spec:
     unknown = sorted(set(raw) - SPEC_KEYS) + sorted(f"harbor.{k}" for k in set(harbor) - HARBOR_KEYS)
     if unknown:
         raise ConfigError(f"{path}: unknown key(s): {', '.join(unknown)}")
+    orchestrator, model_path = None, None
+    if model is not None:
+        model_path = Path(model)
+        if not model_path.is_absolute() and not model_path.exists():
+            model_path = root / model_path  # as for the spec in scripts/run_experiment.sh
+        model_path = model_path.resolve()
+        try:
+            orchestrator = _yaml(model_path)
+        except OSError as e:
+            raise ConfigError(f"--model: {e}") from None
     try:
         name, conditions, tasks, rounds = raw["name"], raw["conditions"], raw["tasks"], raw["rounds"]
         base = deep_merge(_yaml(root / raw["base"]), raw.get("overrides") or {})
         dataset, dataset_path, platform = raw.get("dataset"), raw.get("dataset_path"), raw.get("platform")
         extra_args = harbor.get("extra_args") or []
+        own_jobs = root / raw.get("jobs_dir", f"jobs/{name}")
+        if model_path is not None:
+            name = f"{name}-{model_path.stem}"
         spec = Spec(name, root, dataset, root / dataset_path if dataset_path else None, platform, tasks, rounds,
                     raw["order_seed"], harbor["n_concurrent"], harbor["agent_timeout_multiplier"], extra_args,
-                    root / raw.get("jobs_dir", f"jobs/{name}"), {}, raw)
+                    own_jobs.with_name(f"{own_jobs.name}-{model_path.stem}") if model_path else own_jobs, {}, raw,
+                    model=model_path, hints=own_jobs / "hints")
     except KeyError as e:
         raise ConfigError(f"{path}: missing key {e}") from None
     if not (isinstance(tasks, list) and tasks and isinstance(conditions, dict) and conditions
@@ -151,10 +171,17 @@ def load_spec(path: str | os.PathLike) -> Spec:
     if bad:
         raise ConfigError(f"{path}: invalid name(s) {bad}: use letters, digits, '_', '.', '-' but not '__'")
     for cond, over in conditions.items():
+        merged = {**deep_merge(base, over or {}), "name": cond}
         try:
-            spec.configs[cond] = from_dict({**deep_merge(base, over or {}), "name": cond})
+            own = from_dict(merged)
         except ConfigError as e:
             raise ConfigError(f"{path}: condition {cond}: {e}") from None
+        try:
+            spec.configs[cond] = own if orchestrator is None else from_dict({**merged, "orchestrator": orchestrator})
+        except ConfigError as e:
+            raise ConfigError(f"--model {model_path}: {e}") from None
+        if spec.writer is None and own.interactive is not None:
+            spec.writer = own.orchestrator
     if interactive(spec) and not dataset_path:
         raise ConfigError(f"{path}: interactive conditions take their hints from SWE-sweep task dirs: set dataset_path")
     return spec
@@ -166,8 +193,17 @@ def interactive(spec: Spec) -> dict[str, ExperimentConfig]:
 
 
 def hints_dir(spec: Spec) -> Path:
-    """Generated bug reports for ``hint_detail: report`` (``subagents-bench hints``)."""
-    return spec.jobs_dir / "hints"
+    """Generated bug reports for ``hint_detail: report`` (``subagents-bench hints``) and code questions
+    (``subagents-bench questions``): ``<jobs_dir>/hints`` of the sweep without ``--model``, so every
+    model's sessions get the same ones."""
+    return spec.hints or spec.jobs_dir / "hints"
+
+
+def writer_model(spec: Spec) -> ModelConfig:
+    """The model that writes a sweep's bug reports and questions and judges the answers: the first
+    interactive condition's orchestrator, as the spec has it (``--model`` does not change it, so
+    every model is graded by the same judge)."""
+    return spec.writer or next(iter(interactive(spec).values())).orchestrator
 
 
 def check_interactive(spec: Spec) -> list[str]:
@@ -219,8 +255,8 @@ def make_questions(spec: Spec, per_task: int | None = None, force: bool = False)
     if not need:
         say(f"sweep {spec.name!r} asks no questions (interactive.questions_per_interval): nothing to generate")
         return 0
-    model = next(iter(interactive(spec).values())).orchestrator
-    client, failed = SailClient(model), 0
+    model = writer_model(spec)
+    client, failed = ChatClient(model), 0
     try:
         for t in spec.tasks:
             try:
@@ -262,8 +298,8 @@ def grade_answers(spec: Spec, force: bool = False) -> int:
     if not conds:
         say(f"sweep {spec.name!r} has no interactive condition: nothing to grade")
         return 0
-    judge = dataclasses.replace(next(iter(conds.values())).orchestrator, temperature=0.0)
-    client, unread, failed = SailClient(judge), 0, 0
+    judge = dataclasses.replace(writer_model(spec), temperature=0.0)
+    client, unread, failed = ChatClient(judge), 0, 0
 
     def records(trial: Path, kind: str) -> list[dict[str, Any]]:
         path = trial / f"{kind}.jsonl"
@@ -326,8 +362,8 @@ def make_hints(spec: Spec, force: bool = False, details: list[str] | None = None
         return 0
     used = [d for d in GENERATED if any(c.interactive.hint_detail == d for c in conds.values())]
     details = list(dict.fromkeys(details or used or ["report"]))
-    model = next(iter(conds.values())).orchestrator
-    client, failed = SailClient(model), 0
+    model = writer_model(spec)
+    client, failed = ChatClient(model), 0
     try:
         for detail in details:
             for t in spec.tasks:
@@ -507,17 +543,17 @@ def move_aside(job_dir: Path, jobs_dir: Path) -> Path:
 
 
 def sweep_models(spec: Spec) -> list[ModelConfig]:
-    """Every distinct model the conditions call (the judge runs the orchestrator's model)."""
-    out: dict[tuple[str, str], ModelConfig] = {}
+    """Every distinct model the conditions call (the writer's run before and after the sweep)."""
+    out: dict[tuple[str, str, str | None], ModelConfig] = {}
     for cfg in spec.configs.values():
         for m in [cfg.orchestrator] + ([cfg.subagent_model] if cfg.topology == "subagents" else []):
-            out.setdefault((m.model, m.completion_window), m)
+            out.setdefault((m.provider, m.model, m.completion_window), m)
     return list(out.values())
 
 
 def ping(m: ModelConfig) -> str | None:
     """One tiny request (1 retry, 60 s stall limit, 30 s retry budget); the error, or None."""
-    client = SailClient(dataclasses.replace(m, max_output_tokens=256, max_retries=1, request_timeout_sec=60.0,
+    client = ChatClient(dataclasses.replace(m, max_output_tokens=256, max_retries=1, request_timeout_sec=60.0,
                                             retry_budget_sec=30.0))
     try:
         client.complete("You are a connectivity check.", [Message("user", "Reply with the single word OK.")], [])
@@ -725,7 +761,8 @@ def _run(spec: Spec, jobs: list[tuple[int, str]], jobs_at_once: int) -> int:
                 watcher.abort = f"harbor could not start {job}; models failing too: {'; '.join(failing)}"
         code = reason = None
         if any(retry_reason(t) == "billing" for t in _trials(job_dir)):
-            code, reason = 3, f"billing error in {job}: top up the Sail account"
+            accounts = " and ".join(sorted({m.provider.capitalize() for m in models}))
+            code, reason = 3, f"billing error in {job}: top up the {accounts} account"
         elif watcher.abort is not None:
             code, reason = 4, watcher.abort
         if code is not None:
@@ -798,7 +835,7 @@ def modal_ready() -> tuple[bool, str]:
 
 
 def preflight(spec: Spec, oracle: bool = False) -> int:
-    """Docker, harbor, SAIL_API_KEY, one request per model and (``oracle``) harbor's oracle agent
+    """Docker, harbor, each provider's API key, one request per model and (``oracle``) harbor's oracle agent
     on every task, reusing an earlier oracle job that solved them all. 0 if all passed, else 1.
     The oracle job writes into the jobs dir: with ``oracle``, preflight holds it like a sweep
     (:func:`lock_jobs_dir`) and exits 2 at once while another process does."""
@@ -831,8 +868,9 @@ def _preflight(spec: Spec, oracle: bool) -> int:
     harbor = harbor_bin()
     check("harbor", harbor is not None, f"{harbor} {_output([harbor, '--version'])}" if harbor
           else "not found: run scripts/setup.sh")
-    check("SAIL_API_KEY", bool(os.environ.get("SAIL_API_KEY")), "set" if os.environ.get("SAIL_API_KEY")
-          else "missing: add it to .env")
+    for provider in sorted({m.provider for m in sweep_models(spec)}):
+        var = PROVIDERS[provider][1]
+        check(var, bool(os.environ.get(var)), "set" if os.environ.get(var) else "missing: add it to .env")
     if spec.dataset_path is not None:  # a registry dataset is resolved by harbor itself
         missing = [t for t in spec.tasks if not (spec.dataset_path / t / "task.toml").is_file()]
         check("dataset_path", not missing, f"{len(spec.tasks)} tasks under {spec.dataset_path}" if not missing

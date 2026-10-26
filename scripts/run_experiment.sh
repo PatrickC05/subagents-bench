@@ -8,7 +8,9 @@
 #                    not exist in the current directory is taken from the repository root)
 #   sweep options    passed to `subagents-bench sweep`: --dry-run (print the jobs, skip
 #                    preflight), --only COND..., --rounds 1,2, --job ROUND:COND (one more
-#                    job; repeatable; alone: only these jobs), --jobs-at-once N
+#                    job; repeatable; alone: only these jobs), --jobs-at-once N, --model FILE
+#                    (every orchestrator on this model, e.g. configs/prime/models/gpt-5.6-luna.yaml,
+#                    in jobs/<sweep>-<file stem>; preflight gets it too)
 #
 # SKIP_PREFLIGHT=1 skips preflight. On macOS the sweep runs under `caffeinate -i` so the
 # machine does not sleep (and drop the network); SB_NO_CAFFEINATE=1 turns that off.
@@ -35,11 +37,16 @@ case "$SPEC" in
 esac
 
 DRY_RUN=0
+MODEL=()
+prev=""
 for arg in "$@"; do
   case "$arg" in
     -h | --help) usage; exit 0 ;;
     --dry-run) DRY_RUN=1 ;;
+    --model=*) MODEL=("$arg") ;;
   esac
+  [ "$prev" = --model ] && MODEL=(--model "$arg")
+  prev="$arg"
 done
 
 BIN="$ROOT/.venv/bin/subagents-bench"
@@ -49,7 +56,7 @@ if [ ! -x "$BIN" ]; then
 fi
 
 if [ "$DRY_RUN" = 0 ] && [ "${SKIP_PREFLIGHT:-0}" != 1 ]; then
-  "$BIN" preflight "$SPEC" --oracle || exit $?
+  "$BIN" preflight "$SPEC" --oracle ${MODEL[@]+"${MODEL[@]}"} || exit $?
 fi
 
 AWAKE=()

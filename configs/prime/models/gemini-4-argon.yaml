@@ -1,0 +1,13 @@
+# Gemini 4 Argon on Prime Inference, for `--model` (README, *Models*).
+# Prices: USD per 1M tokens, from api.pinference.ai/api/v1/models on 2026-10-25.
+# Prime lists no cache-read price for gateway models; its bills charged cached
+# tokens at 10% of the input price (docs/DESIGN.md, *Providers*).
+# $2 / $10 is Google's launch price; from 2026-12-01 it is $4 / $20.
+model: google/gemini-4-argon
+provider: prime
+temperature: 0.7
+max_output_tokens: 32768
+reasoning_effort: high           # every model at high reasoning (issue #23)
+price_in: 2
+price_cache_read: 0.2
+price_out: 10

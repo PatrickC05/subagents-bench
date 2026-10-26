@@ -63,14 +63,16 @@ round runs the conditions in its own shuffled order.
 
 You need macOS or Linux, [Docker](https://docs.docker.com/get-docker/) running
 (4 task containers at once: give it about 6 CPUs and 12 GB), [uv](https://docs.astral.sh/uv/),
-network access and a Sail API key.
+network access and a [Prime Inference](https://docs.primeintellect.ai/inference/overview) API key
+(and a Sail key for the DeepSeek sweeps on `configs/sail/base.yaml`).
 
 ```bash
 scripts/setup.sh        # .venv from uv.lock (harbor 0.24.0 included), Docker check,
                         # Terminal-Bench 2.0 download, creates .env from .env.example
 ```
 
-Put `SAIL_API_KEY=...` in `.env` and run it again; it ends with `Setup OK`.
+Put `PRIME_API_KEY=...` (and `SAIL_API_KEY=...`) in `.env` and run it again; it ends
+with `Setup OK`. `PRIME_TEAM_ID=...` bills a Prime team instead of the key's owner.
 `.env` never overrides a variable already set in your shell, and no script
 prints a key. The task images are `linux/amd64`: on Apple Silicon they run
 emulated, which slows tool calls (tool time is measured separately).
@@ -420,7 +422,7 @@ fixed, a second round would only repeat the same sessions.
 sandbox and the separate verifier) in Modal sandboxes, built from the tasks'
 Dockerfiles on x86-64 machines, instead of the local Docker: no emulation, and
 sessions don't share one machine, so more run at once. The agent loop stays
-here and calls Sail. It needs the `modal` extra (`scripts/setup.sh` installs
+here and calls the model's provider. It needs the `modal` extra (`scripts/setup.sh` installs
 it) and a Modal token (`modal token new`); the sweep sets Modal's 2025.06 image
 builder, since the legacy one fails on images without pip (echo's).
 [`swe_interactive_baseline_modal.yaml`](configs/sweeps/swe_interactive_baseline_modal.yaml)
@@ -623,6 +625,43 @@ The smoke,
   smoke recorded one token a chunk; the code now uses 16 tokens a chunk,
   which puts them at about $0.021.
 
+### Models: the same sweeps on Prime Inference
+
+The DeepSeek runs used Sail, which serves few of the models issue #23 compares;
+those run on [Prime Inference](https://docs.primeintellect.ai/inference/overview).
+`--model FILE` runs any sweep's orchestrators, and its subagents where the spec
+sets them to the orchestrator's model (`subagent.model: null`, as in every
+interactive sweep since the baseline), on one model, in
+`jobs/<sweep>-<file stem>`. Every model gets the sweep's own questions and bug
+reports (`jobs/<sweep>/hints`), and `grade-answers` judges every model's
+answers with the sweep's own model, so the judge stays the same.
+
+| Model | `--model configs/prime/models/...` | Prime id | USD per 1M tokens in / out |
+|---|---|---|---|
+| GPT-5.6 Luna | `gpt-5.6-luna.yaml` | `openai/gpt-5.6-luna` | 0.20 / 1.20 |
+| GPT-5.6 Terra | `gpt-5.6-terra.yaml` | `openai/gpt-5.6-terra` | 2.50 / 15 |
+| GPT-5.6 Sol | `gpt-5.6-sol.yaml` | `openai/gpt-5.6-sol` | 5 / 30 |
+| Claude Opus 5.5 | `claude-opus-5.5.yaml` | `anthropic/claude-opus-5.5` | 4 / 20 |
+| Claude Sonnet 5.5 | `claude-sonnet-5.5.yaml` | `anthropic/claude-sonnet-5.5` | 2 / 10 |
+| Gemini 4 Argon | `gemini-4-argon.yaml` | `google/gemini-4-argon` | 2 / 10 (launch price) |
+| Kimi K3 | `kimi-k3.yaml` | `moonshotai/kimi-k3` | 3.45 / 17.25 |
+| DeepSeek-V4.1-Flash | `deepseek-v4.1-flash-1017.yaml` | `deepseek/deepseek-v4.1-flash-1017` | 0.30 / 1.20 |
+
+Claude Haiku 5.5 and MiMo V2.6 are not on Prime (404 `model_not_found` on
+2026-10-25). Every file sets `reasoning_effort: high`. Cached prompt tokens
+cost 10% of the input price (DeepSeek: 0.006), as Prime billed them; the
+Anthropic models set `cache_control`, without which they cache nothing.
+docs/DESIGN.md, *Providers*, has what the probes of every model found.
+
+```bash
+RUN_LIVE=1 .venv/bin/python -m pytest -q tests/test_llm_live.py -k harness   # each model: prompt, tools, round trip
+scripts/run_experiment.sh configs/sweeps/swe_interactive_levels_smoke.yaml --model configs/prime/models/gpt-5.6-luna.yaml \
+  --job 1:single_baseline
+scripts/run_experiment.sh configs/sweeps/swe_interactive_levels.yaml --model configs/prime/models/claude-opus-5.5.yaml \
+  --only single_baseline manager_background_baseline background_hinted_baseline --jobs-at-once 3
+scripts/analyze.sh jobs/swe_interactive_levels-claude-opus-5.5
+```
+
 ## Where data and figures land
 
 ```
@@ -748,7 +787,7 @@ To keep track of:
 ```
 subagents_bench/
   config.py           ExperimentConfig: one condition, loaded strictly from YAML
-  llm.py              Sail client: streamed SSE, tool-call repair, fail-fast retries
+  llm.py              Prime Inference and Sail client: streamed SSE, reasoning_details, tool-call repair, retries
   environment.py      harbor's container or the host shell, with a shared stop event
   tools.py            bash, edit_file, read_file, list_dir, search via a per-agent shell
   prompts.py          orchestrator, subagent, judge and debate prompts
@@ -768,11 +807,13 @@ subagents_bench/
                       levels.py (the levels: fix times, estimates against them, urgency, main numbers)
   monitor/            the HTML monitor of an interactive sweep (python -m subagents_bench.monitor)
   plots/              the nine figures
-configs/              sail/base.yaml, sweeps/{pilot,smoke,swe_sweep,swe_interactive*}.yaml, pricing.yaml
+configs/              sail/base.yaml, prime/models/*.yaml (--model), sweeps/{pilot,smoke,swe_sweep,swe_interactive*}.yaml,
+                      pricing.yaml
 scripts/              setup.sh, run_experiment.sh, analyze.sh
 tests/                offline tests (fake models, fake harbor); RUN_DOCKER=1, RUN_LIVE=1 opt in
 ```
 
 Tests: `.venv/bin/python -m pytest -q` (offline, under a minute).
-`RUN_DOCKER=1` adds the container tests, `RUN_LIVE=1` one tool-calling request
-to each Sail model.
+`RUN_DOCKER=1` adds the container tests, `RUN_LIVE=1` a tool-calling request
+to each model, and for each Prime model the interactive prompt and every tool
+with a round trip (a few cents).

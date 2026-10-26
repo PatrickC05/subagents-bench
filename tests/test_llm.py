@@ -1,5 +1,5 @@
-"""The Sail client through httpx.MockTransport (real SSE parsing, retries, errors) and the
-captured Sail tool-call re-send chunks."""
+"""The chat client through httpx.MockTransport (real SSE parsing, retries, errors, Prime and Sail
+requests), the captured Sail tool-call re-send chunks and Prime's reasoning_details."""
 
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ from subagents_bench.llm import (
     BillingError,
     ContextLengthError,
     Message,
+    ChatClient,
     ProviderError,
-    SailClient,
     ToolCall,
     ToolResult,
     ToolSpec,
@@ -154,13 +154,15 @@ class MaxRng:
 
 
 @pytest.fixture(autouse=True)
-def sail_key(monkeypatch):
+def api_keys(monkeypatch):
     monkeypatch.setenv("SAIL_API_KEY", "sk-test")
+    monkeypatch.setenv("PRIME_API_KEY", "pit-test")
+    monkeypatch.delenv("PRIME_TEAM_ID", raising=False)
 
 
-def client(server: Server, sleeps: list | None = None, **kw) -> SailClient:
-    cfg = ModelConfig(model="deepseek-ai/DeepSeek-V4.1-Flash", **kw)
-    return SailClient(cfg, transport=httpx.MockTransport(server), sleep=(sleeps if sleeps is not None else []).append, rng=MaxRng())
+def client(server: Server, sleeps: list | None = None, **kw) -> ChatClient:
+    cfg = ModelConfig(model=kw.pop("model", "deepseek-ai/DeepSeek-V4.1-Flash"), **{"provider": "sail", **kw})
+    return ChatClient(cfg, transport=httpx.MockTransport(server), sleep=(sleeps if sleeps is not None else []).append, rng=MaxRng())
 
 
 def test_request_body_headers_and_reasoning_passback():
@@ -173,7 +175,9 @@ def test_request_body_headers_and_reasoning_passback():
     client(server, max_output_tokens=321, temperature=0.7).complete("SYS", history, [BASH])
     req = server.requests[0]
     body = json.loads(req.content)
+    assert str(req.url) == "https://api.sailresearch.com/v1/chat/completions"
     assert req.headers["authorization"] == "Bearer sk-test" and req.headers["x-sail-completion-window"] == "balanced"
+    assert "reasoning" not in body and "x-prime-team-id" not in req.headers
     assert (body["model"], body["max_tokens"], body["temperature"]) == ("deepseek-ai/DeepSeek-V4.1-Flash", 321, 0.7)
     assert body["stream"] is True and body["stream_options"] == {"include_usage": True}
     assert body["tools"][0]["function"]["name"] == "bash"
@@ -263,11 +267,20 @@ def test_no_retry_starts_past_the_retry_budget(monkeypatch):
     assert clock[0] == 1002.0  # waited 2 s; the next wait (4 s) would start attempt 3 at 6 s
 
 
+# Prime Inference's answer to a call billed to an empty account (docs: inference/troubleshooting)
+PRIME_FUNDS = ('{"error": {"message": "Insufficient balance (including overdraft). Please add funds to continue.", '
+               '"type": "insufficient_quota", "code": "insufficient_funds"}}')
+
+
 @pytest.mark.parametrize("status,message,kind", [
     (402, "payment required", BillingError),
     (400, "Insufficient account balance", BillingError),
     (403, "credit limit reached", BillingError),
     (429, "insufficient_quota", BillingError),
+    (402, PRIME_FUNDS, BillingError),
+    (429, PRIME_FUNDS, BillingError),
+    (404, '{"error":{"message":"The model \'x/y\' does not exist","type":"server_error","code":"model_not_found"}}',
+     ProviderError),
     (400, "The decoder prompt (length 9000) is longer than the maximum model length of 8192.", ContextLengthError),
     (413, "context_length_exceeded", ContextLengthError),
     (400, "invalid value for temperature", ProviderError),
@@ -280,11 +293,12 @@ def test_error_classification_never_retries(status, message, kind):
     assert type(ei.value) is kind and ei.value.status == status and ei.value.n_attempts == 1 and len(server.requests) == 1
 
 
-def test_missing_key_fails_before_any_request(monkeypatch):
-    monkeypatch.delenv("SAIL_API_KEY")
+@pytest.mark.parametrize("provider,var", [("sail", "SAIL_API_KEY"), ("prime", "PRIME_API_KEY")])
+def test_missing_key_fails_before_any_request(monkeypatch, provider, var):
+    monkeypatch.delenv(var)
     server = Server()
-    with pytest.raises(ProviderError, match="SAIL_API_KEY"):
-        client(server).complete("s", USER, [])
+    with pytest.raises(ProviderError, match=var):
+        client(server, provider=provider).complete("s", USER, [])
     assert server.requests == []
 
 
@@ -310,3 +324,83 @@ def test_a_slow_stream_that_keeps_sending_data_is_not_cut():
     pieces = [b"data: " + json.dumps(e).encode() + b"\n\n" for e in events] + [b"data: [DONE]\n\n"]
     r = client(Server(paced(pieces, 0.1)), request_timeout_sec=0.5).complete("s", USER, [])
     assert r.text.startswith("w0 w1") and r.n_attempts == 1
+
+
+# --- Prime Inference ----------------------------------------------------------------------
+
+
+def test_prime_url_key_and_team_header(monkeypatch):
+    server = Server(ok(), ok())
+    c = client(server, provider="prime", model="openai/gpt-5.6-luna")
+    c.complete("s", USER, [])
+    monkeypatch.setenv("PRIME_TEAM_ID", "team-7")
+    c.complete("s", USER, [])
+    first, second = server.requests
+    assert str(first.url) == "https://api.pinference.ai/api/v1/chat/completions"
+    assert first.headers["authorization"] == "Bearer pit-test" and "x-sail-completion-window" not in first.headers
+    assert "x-prime-team-id" not in first.headers and second.headers["x-prime-team-id"] == "team-7"
+
+
+# captured from anthropic/claude-sonnet-5.5 and openai/gpt-5.6-luna on Prime (2026-10-25), shortened: text
+# and summaries stream in pieces, a signature or encrypted blob arrives whole
+DETAILS = [
+    [{"type": "reasoning.text", "text": "From", "format": "anthropic-claude-v1", "index": 0}],
+    [{"type": "reasoning.text", "text": " the notes", "format": "anthropic-claude-v1", "index": 0}],
+    [{"type": "reasoning.text", "signature": "CAQS7QYK", "format": "anthropic-claude-v1", "index": 0}],
+    [{"type": "reasoning.encrypted", "data": "gAAAAABq", "id": "rs_02", "format": "azure-openai-responses-v1",
+      "index": 1}],
+]
+
+
+def test_reasoning_details_are_merged_and_sent_back_instead_of_reasoning_content():
+    server = Server(sse(
+        chunk({"role": "assistant"}),
+        *(chunk({"reasoning": d[0].get("text"), "reasoning_details": d}) for d in DETAILS[:3]),
+        chunk({"reasoning_details": DETAILS[3]}),  # no reasoning text: Terra and Argon stream only these
+        chunk(call(0, args='{"command": "ls"}', call_id="c1")),
+        chunk({}, "tool_calls"),
+    ), ok())
+    c = client(server, provider="prime", model="anthropic/claude-sonnet-5.5")
+    r = c.complete("s", USER, [BASH])
+    assert r.reasoning == "From the notes"
+    assert r.reasoning_details == [
+        {"type": "reasoning.text", "text": "From the notes", "signature": "CAQS7QYK", "format": "anthropic-claude-v1",
+         "index": 0},
+        {"type": "reasoning.encrypted", "data": "gAAAAABq", "id": "rs_02", "format": "azure-openai-responses-v1",
+         "index": 1},
+    ]
+    history = [*USER, Message("assistant", r.text, r.tool_calls, reasoning=r.reasoning,
+                              reasoning_details=r.reasoning_details),
+               Message("tool", tool_results=[ToolResult("c1", "a.txt")])]
+    c.complete("s", history, [BASH])
+    asst = json.loads(server.requests[1].content)["messages"][2]
+    assert asst["reasoning_details"] == r.reasoning_details and "reasoning_content" not in asst
+
+
+def test_reasoning_details_only_chunk_is_data_not_a_stall():
+    server = Server(paced([b"data: " + json.dumps(chunk({"reasoning_details": DETAILS[3]})).encode() + b"\n\n"] * 12
+                          + [b"data: " + json.dumps(chunk({"content": "ok"}, "stop")).encode() + b"\n\ndata: [DONE]\n\n"],
+                          0.05))
+    r = client(server, provider="prime", request_timeout_sec=0.3).complete("s", USER, [])
+    assert r.text == "ok" and r.n_attempts == 1 and r.t_first_chunk is not None
+
+
+def test_effort_and_cache_breakpoints():
+    server = Server(ok(), ok())
+    history = [
+        Message("user", "fix it"),
+        Message("assistant", "", [ToolCall("c1", "bash", {"command": "ls"})]),
+        Message("tool", tool_results=[ToolResult("c1", "a.txt"), ToolResult("c2", "b.txt")]),
+    ]
+    c = client(server, provider="prime", model="anthropic/claude-opus-5.5", reasoning_effort="high", cache_control=True)
+    c.complete("SYS", history, [BASH])
+    body = json.loads(server.requests[0].content)
+    assert body["reasoning"] == {"effort": "high"} and "reasoning_effort" not in body
+    mark = {"type": "ephemeral"}
+    sys_msg, user, asst, tool1, tool2 = body["messages"]
+    assert sys_msg["content"] == [{"type": "text", "text": "SYS", "cache_control": mark}]
+    assert user["content"] == "fix it" and asst["content"] == "" and tool1["content"] == "a.txt"
+    assert tool2["content"] == [{"type": "text", "text": "b.txt", "cache_control": mark}]  # only the newest
+    assert history[2].tool_results[1].content == "b.txt"  # the history itself is unchanged
+    c.complete("SYS", [*history, Message("assistant", "")], [])  # an empty text cannot carry a breakpoint
+    assert json.loads(server.requests[1].content)["messages"][-1]["content"] == ""
