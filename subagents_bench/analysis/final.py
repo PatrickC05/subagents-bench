@@ -161,12 +161,19 @@ def plot(table: pd.DataFrame, path: Path, title: str = "") -> None:
 def main(argv: list[str] | None = None) -> int:
     from ..plots.final import named_dirs
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--model", type=named_dirs(2), action="append", required=True, metavar="NAME=LEVELS:ISOLATED",
+    p.add_argument("--model", type=named_dirs(2), action="append", default=[], metavar="NAME=LEVELS:ISOLATED",
                    help="a model's levels and isolated analysis dirs; repeat per model")
+    p.add_argument("--table", type=named_dirs(1), action="append", default=[], metavar="NAME=L0_CSV",
+                   help="a model's l0.csv computed elsewhere (e.g. on the machine that ran it, whose jobs dirs "
+                        "the capped point needs); repeat per model")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--root", type=Path, default=Path("."), help="the dir the tables' trial_dir paths are relative to")
     a = p.parse_args(argv)
-    table = pd.concat([l0_table(lv, iso, a.root).assign(model=name) for name, (lv, iso) in a.model], ignore_index=True)
+    if not a.model and not a.table:
+        p.error("give at least one --model or --table")
+    parts = [l0_table(lv, iso, a.root).assign(model=name) for name, (lv, iso) in a.model]
+    parts += [pd.read_csv(path).drop(columns="model", errors="ignore").assign(model=name) for name, path in a.table]
+    table = pd.concat(parts, ignore_index=True)
     table = table[["model"] + [c for c in table.columns if c != "model"]]
     a.out.mkdir(parents=True, exist_ok=True)
     table.to_csv(a.out / "l0.csv", index=False)

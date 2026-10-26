@@ -78,6 +78,10 @@ def test_l0_table(tmp_path, trials):
     assert (out / "l0.png").is_file() and list(both["model"].unique()) == ["A", "B"] and len(both) == 6
     with pytest.raises(SystemExit):
         main(["--model", f"A={lv}", "--out", str(out)])
+    # a table computed elsewhere joins the chart as it is
+    assert main(["--model", f"A={lv}:{iso}", "--table", f"C={out / 'l0.csv'}", "--out", str(tmp_path / "out2")]) == 0
+    mixed = pd.read_csv(tmp_path / "out2" / "l0.csv")
+    assert list(mixed["model"].unique()) == ["A", "C"] and len(mixed) == 3 + 6
 
 
 def test_points_cover_the_same_bugs_and_no_verdict_is_not_fixed(tmp_path, trials):
