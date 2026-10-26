@@ -94,7 +94,7 @@ at `5968c69`; the sessions run on Modal (`modal token new`) and call Sail.
 scripts/setup.sh                 # .venv, .env (put SAIL_API_KEY=... in it)
 scripts/get_tasks.sh             # SWE-sweep tasks at 5968c69 -> ../class-6-swe-sweep/swe-sweep
 scripts/run_final.sh --dry-run   # list the jobs of both sweeps
-scripts/run_final.sh             # experiments 1 and 2 for DeepSeek-V4.1-Flash, graded and tabulated
+scripts/run_final.sh             # experiments 1 and 2 for DeepSeek-V4.1-Flash-1017, graded and tabulated
 scripts/run_final.sh --l0-only   # experiment 1 only
 ```
 

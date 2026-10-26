@@ -7,7 +7,7 @@
 #   --l0-only        experiment 1 only: the three settings at L0 (18 sessions) and the isolated
 #                    baseline (36). Without it, experiment 2 as well: the three settings at every
 #                    level, L0-L3 (72 sessions, L0 included), and the isolated baseline.
-#   --levels SPEC    the levels sweep, default configs/sweeps/final_levels.yaml (DeepSeek-V4.1-Flash
+#   --levels SPEC    the levels sweep, default configs/sweeps/final_levels.yaml (DeepSeek-V4.1-Flash-1017
 #                    on Sail); another model's spec extends it with its own `name` and `base`
 #   --isolated SPEC  the isolated baseline, default configs/sweeps/final_isolated.yaml
 #   --jobs-at-once N harbor jobs at once per sweep, default 12 (a job runs its 6 tasks at once)

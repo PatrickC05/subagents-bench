@@ -20,6 +20,9 @@ tasks:                               # language, bugs (the first 6 of the fixed 
   - swe-sweep__luxon                 # JavaScript, 14
 harbor:
   n_concurrent: 6                    # a job's six sessions at once
+overrides:
+  orchestrator:                      # subagents run the same model (base: subagent.model null)
+    model: deepseek-ai/DeepSeek-V4.1-Flash-1017
 
 conditions:
   # L0: bugs only

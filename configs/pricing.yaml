@@ -4,6 +4,8 @@
 # A model without a price in the scheme costs NaN, never 0.
 sail_balanced: &sail_balanced    # Sail `balanced` tier, retrieved 2026-10-11
   deepseek-ai/DeepSeek-V4.1-Flash: {in: 0.07, cached: 0.005, out: 0.22}
+  # 1017 checkpoint: assumed the same balanced-tier price as V4.1-Flash (not yet confirmed on Sail)
+  deepseek-ai/DeepSeek-V4.1-Flash-1017: {in: 0.07, cached: 0.005, out: 0.22}
   nvidia/Gemma-4-31B-IT-NVFP4: {in: 0.11, cached: 0.06, out: 0.32}
 # Prime Inference (api.pinference.ai/api/v1/models), retrieved 2026-10-25. Prime lists no cache-read
 # price for its gateway models; its bills charged cached tokens at 10% of the input price
