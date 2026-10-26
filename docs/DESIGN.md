@@ -73,8 +73,9 @@ every tool its sessions send, then the tools' results back
 (`tests/test_llm_live.py`). What differs from Sail:
 - **Reasoning.** The gateway models stream OpenRouter-style
   `reasoning_details`: Anthropic's signed thinking, OpenAI's encrypted
-  reasoning and summaries, Gemini's thought signatures, Kimi's text; Terra
-  and Argon send no reasoning text at all. Sent back as `reasoning_content`,
+  reasoning and summaries, Gemini's thought signatures, Kimi's text. Some
+  replies carry no reasoning text, only the encrypted blob (Terra's
+  tool-call turn, Argon's follow-ups). Sent back as `reasoning_content`,
   the reasoning is ignored by Opus, Sonnet, Argon and Luna: the next prompt
   has as many tokens as one without it. Sent back as `reasoning_details`, the
   model gets it (Sonnet's next prompt: 8270 tokens against 8079), and Luna
@@ -102,7 +103,8 @@ every tool its sessions send, then the tools' results back
   price with no charge for cache writes: Opus $0.1321, against $0.1333 at
   10% and $0.1608 at full price; Sonnet $0.0652, against $0.0658 and $0.0795;
   Sol $0.0460, against $0.0471 and $0.0721. The model files and the `prime`
-  price scheme price cached tokens at 10% of input.
+  price scheme price the gateway models' cached tokens at 10% of input, and
+  DeepSeek's, a hosted model, at its listed 0.006.
 - **Errors.** An empty account answers `insufficient_funds` (type
   `insufficient_quota`), a `BillingError`; an unknown model 404
   `model_not_found`, a `ProviderError`, never retried.
@@ -139,7 +141,13 @@ attempts got HTTP 200 and then no data for 468 s, 600 s and 2015 s, until
 the connection was reset, while the host's network was failing. 180 s is
 2.5 times the longest wait for data seen (73 s, a Gemma reply sent as one
 chunk; DeepSeek's longest was 11 s). It is also httpx's connect and read
-timeout.
+timeout. On Prime, OpenAI's models often stream nothing while they reason
+(Terra's first data came 8.3 s into an 8.8 s call), so a long reasoning step
+is silent for as long as it lasts: 32768 tokens at the 60-77 tokens/s
+measured is 7-9 minutes. The Prime model files set `request_timeout_sec`
+900 and `retry_budget_sec` 1200, so such a step is not cut off and a
+stalled attempt is still retried once; a hung connection then takes 15
+minutes to notice.
 
 **Errors.** `BillingError`: HTTP 402, a 4xx naming balance, billing, credit,
 payment or `insufficient_funds`, or a 429 only with `insufficient_quota`,
@@ -1415,8 +1423,9 @@ trials leave the bug columns empty.
 **Cost.** Tokens times per-model prices from `configs/pricing.yaml`, per role
 (scheme `default`: `sail_balanced`, USD per 1M tokens DeepSeek-V4.1-Flash in
 0.07, cached 0.005, out 0.22 and Gemma-4-31B in 0.11, cached 0.06, out 0.32,
-and `prime`, each Prime model's list price with cached tokens at 10% of
-input, *Providers*; Sail's and Prime's model ids differ). Another scheme in
+and `prime`, each Prime model's list price with the gateway models' cached
+tokens at 10% of input and DeepSeek's at its listed 0.006, *Providers*;
+Sail's and Prime's model ids differ). Another scheme in
 the file reprices every run without rerunning it.
 
 **Latency.** The critical path of each episode, from the records: the
