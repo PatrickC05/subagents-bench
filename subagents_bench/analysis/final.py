@@ -165,7 +165,7 @@ def levels_table(levels: Path) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _place_labels(fig, ax, labels, table, colors) -> None:
+def _place_labels(fig, ax, labels, table, colors, fontsize: float = 6.5) -> None:
     """Label each model's isolated point at the nearby spot (a ring of candidate offsets) that overlaps the
     fewest earlier labels and markers and stays inside the axes, nearest first; a label set further off
     gets a thin leader line to its point."""
@@ -182,6 +182,14 @@ def _place_labels(fig, ax, labels, table, colors) -> None:
     cands = [(r * math.cos(a), r * math.sin(a)) for r in (12, 20, 30, 42, 56)
              for a in [math.radians(d) for d in (90, 270, 30, 150, 210, 330, 0, 180, 60, 120, 240, 300)]]
     stars = [(m, *ax.transData.transform((x, y))) for m, x, y in labels]
+    from matplotlib import cbook
+    from matplotlib.path import Path as MPath
+    lines = []  # the drawn lines (frontiers) in pixels, stepped as drawn
+    for ln in ax.lines:
+        x, y = ln.get_xdata(), ln.get_ydata()
+        if ln.get_drawstyle() == "steps-post":
+            x, y = cbook.pts_to_poststep(x, y)
+        lines.append(MPath(ax.transData.transform(list(zip(x, y)))))
     taken = []
     for m, x, y in sorted(labels, key=lambda t: -t[2]):
         best = None
@@ -190,7 +198,7 @@ def _place_labels(fig, ax, labels, table, colors) -> None:
             ha = "left" if dx > 3 else "right" if dx < -3 else "center"
             va = "bottom" if dy > 3 else "top" if dy < -3 else "center"
             t = ax.annotate(TAG.get(m, m), (x, y), xytext=(dx, dy), textcoords="offset points", ha=ha, va=va,
-                            fontsize=6.5, color=colors[m], zorder=3)
+                            fontsize=fontsize, color=colors[m], zorder=3)
             bb = t.get_window_extent(rend).padded(4 * scale)
             def gap(st):  # pixels from the label's box to a star
                 return math.hypot(max(bb.x0 - st[1], 0, st[1] - bb.x1), max(bb.y0 - st[2], 0, st[2] - bb.y1))
@@ -200,6 +208,7 @@ def _place_labels(fig, ax, labels, table, colors) -> None:
             score = (100 * sum(bb.overlaps(o) for o in taken)
                      + 30 * sum(bb.overlaps(mk) for mk, (px, py) in zip(marks, pts)
                                 if math.hypot(px - sx, py - sy) > 2)  # its own star(s) don't count
+                     + 60 * sum(ln.intersects_bbox(bb, filled=False) for ln in lines)
                      + 1000 * outside + 150 * (near != m) + i * 0.5)
             if best is None or score < best[0]:
                 if best is not None:
@@ -295,8 +304,12 @@ def plot(table: pd.DataFrame, path: Path, title: str = "", levels: pd.DataFrame 
     ax.set_ylim(max(0.0, float(every["fixed_frac"].min()) - 0.08), min(1.0, float(every["fixed_frac"].max()) + 0.05))
     lo, hi = float(every["usd_per_bug"].min()), float(every["usd_per_bug"].max())
     ax.set_xlim(lo / 2.6, right)  # room on the left for the model labels
-    ax.set_title(title or "Cost Performance Frontier")
-    _place_labels(fig, ax, labels, every, colors)
+    ax.set_title(title or "Cost Performance Frontier", fontsize=14 if joint else None)
+    if joint:  # a full-width figure in the paper: larger text
+        ax.xaxis.label.set_fontsize(12)
+        ax.yaxis.label.set_fontsize(12)
+        ax.tick_params(labelsize=10)
+    _place_labels(fig, ax, labels, every, colors, fontsize=9.5 if joint else 6.5)
     handles = [Line2D([], [], color=colors[m], marker="o", ls="", label=SHORT.get(m, m)) for m in models]
     points = set(table["point"])
     shared = [p for p in POINT_LABEL if p in points and p != "isolated"]
@@ -313,7 +326,7 @@ def plot(table: pd.DataFrame, path: Path, title: str = "", levels: pd.DataFrame 
                            label="L2 (+ questions)")]
     handles += fronts
     if joint:
-        ax.legend(handles=handles, fontsize=7.5, loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=6,
+        ax.legend(handles=handles, fontsize=10, loc="upper center", bbox_to_anchor=(0.5, -0.22), ncol=6,
                   frameon=False)
     else:
         ax.legend(handles=handles, fontsize=7, loc="center left", bbox_to_anchor=(1.0, 0.5), frameon=False)

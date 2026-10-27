@@ -288,8 +288,68 @@ def eta(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> pd.DataFram
     fig.legend(handles=[_patch(s) for s in SETTINGS], fontsize=7, loc="lower center", ncol=len(SETTINGS), frameon=False)
     fig.subplots_adjust(bottom=0.22, wspace=0.35)
     _save(fig, out / "eta_scatter.png", tight=False)
+    eta_vs_fix(e, models, out)
     return e[["model", "setting", "level", "task_name", "subtask_id", "predicted_min", "actual_min", "ratio",
               "never_fixed", "on_time", "weight"]]
+
+
+def eta_vs_fix(e: pd.DataFrame, models: list[str], out: Path) -> None:
+    """``eta_scatter_all.png``: each estimate's predicted fix (when it was given + its ETA) against when the
+    bug was fixed, both in minutes after the bug was sent, every setting and level pooled; one panel per
+    model (log axes, the same on every panel), bugs never fixed in a band at the top."""
+    from matplotlib.lines import Line2D
+    plt = pyplot()
+    rng = np.random.default_rng(0)
+    pred = e["est_sec"] / 60 + e["eta_min"]
+    fixed = pd.to_numeric(e["fixed_sec"], errors="coerce") / 60
+    d = e.assign(pred=pred, fix=fixed)
+    lo, hi, never_y = 0.2, 40.0, 70.0
+    ncol = 4
+    nrow = math.ceil((len(models) + 1) / ncol)  # one cell left for the legend
+    fig, axes = plt.subplots(nrow, ncol, figsize=(12, 3.3 * nrow), sharex=True, sharey=True, squeeze=False)
+    late_c, ok_c = COLORS["manager_background"], COLORS["background_hinted"]
+    for ax, mname in zip(axes.flat, models):
+        g = d[d["model"] == mname]
+        nv = g[g["never_fixed"]]
+        ok = g[~g["never_fixed"] & (g["fix"] <= g["pred"])]
+        late = g[~g["never_fixed"] & (g["fix"] > g["pred"])]
+        ax.axhspan(hi, never_y * 1.4, color="0.94", zorder=0)
+        ax.plot([lo, hi], [lo, hi], color="grey", lw=1, ls="--", zorder=1)
+        ax.scatter(ok["pred"], ok["fix"].clip(lower=lo), s=16, color=ok_c, alpha=0.6, linewidths=0, zorder=2)
+        ax.scatter(late["pred"], late["fix"].clip(lower=lo), s=22, color=late_c, alpha=0.9, linewidths=0, zorder=3)
+        ax.scatter(nv["pred"], never_y * np.exp(rng.uniform(-0.15, 0.15, len(nv))), s=16, facecolors="none",
+                   edgecolors="grey", linewidths=0.8, zorder=2)
+        n = len(g) - len(nv)
+        ax.set_title(f"{mname}\n{len(ok)}/{n} fixed by their ETA" if n else mname, fontsize=11)
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.set_xlim(lo * 5, hi)
+        ax.set_ylim(lo, never_y * 1.4)
+        ticks = [1, 2, 5, 10, 20]
+        ax.set_xticks(ticks, [str(t) for t in ticks])
+        ax.set_yticks([0.5] + ticks + [never_y], ["0.5"] + [str(t) for t in ticks] + ["never"])
+        ax.minorticks_off()
+        ax.tick_params(labelsize=10)
+        ax.grid(True, color="0.9", lw=0.6)
+    for ax in axes.flat[len(models):]:
+        ax.axis("off")
+    for i, ax in enumerate(axes.flat[:len(models)]):
+        if i + ncol >= len(models):  # nothing below it: label its x axis
+            ax.set_xlabel("predicted fix (min after bug sent)", fontsize=11)
+            ax.xaxis.set_tick_params(labelbottom=True)
+    for row in axes:
+        row[0].set_ylabel("actual fix (min, log)", fontsize=11)
+    handles = [Line2D([], [], color=ok_c, marker="o", ls="", markeredgewidth=0, label="fixed by its ETA"),
+               Line2D([], [], color=late_c, marker="o", ls="", markeredgewidth=0, label="fixed after its ETA"),
+               Line2D([], [], color="grey", marker="o", ls="", markerfacecolor="none", label="never fixed"),
+               Line2D([], [], color="grey", ls="--", label="ETA exact")]
+    spare = axes.flat[len(models)] if len(models) < axes.size else None
+    if spare is not None:
+        spare.legend(handles=handles, fontsize=11, loc="center", frameon=False)
+    else:
+        fig.legend(handles=handles, fontsize=11, loc="lower center", ncol=4, frameon=False)
+    fig.suptitle("Predicted vs actual fix time for each estimate", fontsize=14)
+    _save(fig, out / "eta_scatter_all.png")
 
 
 def response_cdf(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> pd.DataFrame:
