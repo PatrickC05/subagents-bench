@@ -312,6 +312,7 @@ def eta(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> pd.DataFram
     fig.subplots_adjust(bottom=0.22, wspace=0.35)
     _save(fig, out / "eta_scatter.png", tight=False)
     eta_vs_fix(e, models, out)
+    eta_hist(e, models, out)
     return e[["model", "setting", "level", "task_name", "subtask_id", "predicted_min", "actual_min", "ratio",
               "never_fixed", "on_time", "weight"]]
 
@@ -373,6 +374,66 @@ def eta_vs_fix(e: pd.DataFrame, models: list[str], out: Path) -> None:
         fig.legend(handles=handles, fontsize=11, loc="lower center", ncol=4, frameon=False)
     fig.suptitle("Predicted vs actual fix time for each estimate (L0)", fontsize=14)
     _save(fig, out / "eta_scatter_all.png")
+
+
+def eta_hist(e: pd.DataFrame, models: list[str], out: Path) -> None:
+    """``eta_hist.png``: per model at L0, the distribution of predicted fix times (when the first ETA was
+    given + the ETA) and of actual fix times, minutes after the bug was sent (1-minute bars and a smoothed
+    curve), with the bugs never fixed as a bar on the right."""
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+    plt = pyplot()
+    d = e[e["level"] == "L0"].sort_values("est_sec").groupby(["model", "setting", "task_name", "subtask_id"],
+                                                              as_index=False).first()  # each bug's first ETA
+    d = d.assign(pred=d["est_sec"] / 60 + d["eta_min"], fix=pd.to_numeric(d["fixed_sec"], errors="coerce") / 60)
+    pred_c, fix_c, never_c = COLORS["background_hinted"], COLORS["manager_background"], "#8a90a0"
+    bins, grid = np.arange(0, 31), np.linspace(0, 30, 300)
+
+    def smooth(v):  # a Gaussian kernel density scaled to bugs per minute
+        v = np.asarray(v, dtype=float)
+        if len(v) < 2:
+            return np.zeros_like(grid)
+        bw = 1.06 * max(v.std(), 0.5) * len(v) ** -0.2
+        return np.exp(-0.5 * ((grid[:, None] - v[None, :]) / bw) ** 2).sum(axis=1) / (bw * math.sqrt(2 * math.pi))
+
+    ncol = 4
+    nrow = math.ceil((len(models) + 1) / ncol)
+    fig, axes = plt.subplots(nrow, ncol, figsize=(13, 3.3 * nrow), squeeze=False)
+    for ax, mname in zip(axes.flat, models):
+        g = d[d["model"] == mname]
+        fixed = g.loc[~g["never_fixed"], "fix"].clip(upper=29.99)
+        pred = g["pred"].dropna().clip(upper=29.99)
+        hp, _ = np.histogram(pred, bins)
+        hf, _ = np.histogram(fixed, bins)
+        ax.bar(bins[:-1] + 0.3, hp, 0.4, color=pred_c, alpha=0.35)
+        ax.bar(bins[:-1] + 0.7, hf, 0.4, color=fix_c, alpha=0.35)
+        ax.plot(grid, smooth(pred), color=pred_c, lw=2)
+        ax.plot(grid, smooth(fixed), color=fix_c, lw=2)
+        n_never = int(g["never_fixed"].sum())
+        top = max(hp.max(initial=1), hf.max(initial=1)) * 1.15
+        ax.bar(32.5, min(n_never, top), 2.2, color=never_c)
+        ax.annotate(str(n_never), (32.5, min(n_never, top)), ha="center", va="bottom", fontsize=10)
+        ax.set_ylim(0, top * 1.12)
+        ax.set_xlim(-0.5, 34)
+        ax.set_xticks([0, 5, 10, 15, 20, 25, 32.5], ["0", "5", "10", "15", "20", "25", "never"])
+        ax.tick_params(labelsize=10)
+        ax.set_title(f"{mname}\nmedian ETA {pred.median():.1f} min, fix {g.loc[~g['never_fixed'], 'fix'].median():.1f} min",
+                     fontsize=11)
+        ax.spines[["top", "right"]].set_visible(False)
+    for ax in axes.flat[len(models):]:
+        ax.axis("off")
+    for i, ax in enumerate(axes.flat[:len(models)]):
+        if i + ncol >= len(models):
+            ax.set_xlabel("minutes after the bug was sent", fontsize=11)
+    for row in axes:
+        row[0].set_ylabel("bugs per minute", fontsize=11)
+    handles = [Line2D([], [], color=pred_c, lw=2, label="predicted fix time (ETA)"),
+               Line2D([], [], color=fix_c, lw=2, label="actual fix time"),
+               Patch(color=never_c, label="never fixed (bugs)")]
+    spare = axes.flat[len(models)] if len(models) < axes.size else None
+    (spare.legend if spare is not None else fig.legend)(handles=handles, fontsize=11, loc="center", frameon=False)
+    fig.suptitle("Predicted vs actual fix times (L0)", fontsize=14)
+    _save(fig, out / "eta_hist.png")
 
 
 def response_cdf(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> pd.DataFrame:
