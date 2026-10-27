@@ -335,10 +335,10 @@ def eta_vs_fix(e: pd.DataFrame, models: list[str], out: Path) -> None:
         ax.axis("off")
     for i, ax in enumerate(axes.flat[:len(models)]):
         if i + ncol >= len(models):  # nothing below it: label its x axis
-            ax.set_xlabel("predicted fix (min after bug sent)", fontsize=11)
+            ax.set_xlabel("predicted time (min)", fontsize=11)
             ax.xaxis.set_tick_params(labelbottom=True)
     for row in axes:
-        row[0].set_ylabel("actual fix (min, log)", fontsize=11)
+        row[0].set_ylabel("actual time (min)", fontsize=11)
     handles = [Line2D([], [], color=ok_c, marker="o", ls="", markeredgewidth=0, label="fixed by its ETA"),
                Line2D([], [], color=late_c, marker="o", ls="", markeredgewidth=0, label="fixed after its ETA"),
                Line2D([], [], color="grey", marker="o", ls="", markerfacecolor="none", label="never fixed"),
