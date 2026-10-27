@@ -445,8 +445,10 @@ def response_cdf(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> pd
     grid = np.geomspace(lo, hi, 200)
     rows = []
     plt = pyplot()
-    fig, axes = plt.subplots(1, len(models), figsize=(4 * len(models), 3.5), squeeze=False, sharey=True)
-    for ax, mname in zip(axes[0], models):
+    ncol = 4
+    nrow = math.ceil((len(models) + 1) / ncol)  # two rows for seven models, one cell left for the legend
+    fig, axes = plt.subplots(nrow, ncol, figsize=(13, 3.2 * nrow), squeeze=False, sharey=True)
+    for ax, mname in zip(axes.flat, models):
         for s in SETTINGS:
             v = pd.to_numeric(bugs[(bugs["model"] == mname) & (bugs["setting"] == s)]["user_reply_sec"], errors="coerce")
             if v.empty:
@@ -454,14 +456,27 @@ def response_cdf(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> pd
             cdf = [(v <= g).sum() / len(v) for g in grid]
             ax.step(grid, cdf, where="post", color=COLORS[s], label=SETTING_LABEL[s])
             rows += [{"model": mname, "setting": s, "t_sec": g, "replied_frac": c} for g, c in zip(grid, cdf)]
-        ax.set_title(mname, fontsize=9)
+        ax.set_title(mname, fontsize=12)
         ax.set_xscale("log")
         ax.set_xlim(lo, hi)
-        ax.set_xlabel("seconds after the bug was sent (log)")
         ax.set_ylim(0, 1.02)
-    axes[0][0].set_ylabel("share of bugs replied to")
-    axes[0][-1].legend(fontsize=7, loc="lower right")
-    _save(fig, out / "response_cdf.png")
+        ax.tick_params(labelsize=10)
+        ax.grid(True, color="0.9", lw=0.6)
+    for ax in axes.flat[len(models):]:
+        ax.axis("off")
+    for i, ax in enumerate(axes.flat[:len(models)]):
+        if i + ncol >= len(models):  # nothing below it
+            ax.set_xlabel("seconds after the bug was sent", fontsize=11)
+    for row in axes:
+        row[0].set_ylabel("share of bugs replied to", fontsize=11)
+    handles = [_patch(s) for s in SETTINGS]
+    if len(models) < axes.size:
+        axes.flat[len(models)].legend(handles=handles, fontsize=11, loc="center", frameon=False)
+    else:
+        fig.legend(handles=handles, fontsize=11, loc="lower center", ncol=len(SETTINGS), frameon=False)
+    fig.suptitle("Time to the first reply to a bug", fontsize=14)
+    fig.tight_layout(h_pad=2.0)
+    _save(fig, out / "response_cdf.png", tight=False)
     return pd.DataFrame(rows)
 
 
