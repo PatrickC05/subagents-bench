@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
 import shlex
 import shutil
@@ -614,6 +615,7 @@ def test_interrupt_stops_harbor_and_exits_130(fake, spec):
     assert (spec.jobs_dir / job / "sigint").exists() and manifest(spec)[-1]["event"] == "interrupted"
     assert fake.calls()[0]["pgid"] != os.getpgid(0)  # a terminal's Ctrl-C reaches harbor only via the sweep
     assert json.loads((spec.jobs_dir / "sweep.json").read_text())["status"] == "interrupted"
+    sweep.lock_jobs_dir(spec).close()  # the interrupted sweep released the jobs dir
 
 
 # --- several jobs at once (--jobs-at-once) --------------------------------------------------------
@@ -744,6 +746,129 @@ def test_sigterm_and_sighup_stop_the_sweep_like_ctrl_c(fake, tmp_path):
             signal.signal(s, handler)
 
 
+# --- one sweep per jobs dir (.sweep.lock) ---------------------------------------------------------
+
+
+def test_a_second_sweep_on_the_jobs_dir_exits_2_and_touches_nothing(fake, spec, monkeypatch, capsys):
+    running = spec.jobs_dir / first_job(spec)  # the first sweep's job: a second sweep would move it aside
+    running.mkdir(parents=True)
+    write_job(running, 2, finished=False)
+    held = sweep.lock_jobs_dir(spec)
+    assert go(spec) == 2
+    assert f"another sweep is running on jobs/t (pid {os.getpid()}: {shlex.join(sys.argv)})" in capsys.readouterr().out
+    monkeypatch.setenv("SAIL_API_KEY", "test-key")
+    assert sweep.preflight(spec, oracle=True) == 2  # its oracle job writes there too: refused before any check
+    assert "another sweep is running on jobs/t" in capsys.readouterr().out
+    assert sweep.preflight(spec) == 0  # without the oracle it only reads
+    assert sweep.run(spec, sweep.plan(spec), dry_run=True) == 0  # so does a dry run
+    assert fake.calls() == [] and sorted(p.name for p in spec.jobs_dir.iterdir()) == [".sweep.lock", running.name]
+    held.close()
+    assert go(spec) == 0 and len(fake.calls()) == 2  # released: the next sweep runs
+    assert (spec.jobs_dir / "_partial" / f"{running.name}.1").is_dir()
+    assert (spec.jobs_dir / ".sweep.lock").read_text() == f"pid {os.getpid()}: {shlex.join(sys.argv)}\n"
+    sweep.lock_jobs_dir(spec).close()  # and it released the jobs dir when it returned
+
+
+HOLD = ("import sys; from subagents_bench import sweep; lock = sweep.lock_jobs_dir(sweep.load_spec(sys.argv[1])); "
+        "print('locked', flush=True); sys.stdin.read()")
+
+
+def test_the_lock_holds_across_processes_until_the_holder_dies(fake, tmp_path, capsys):
+    path = str(make_spec(tmp_path))
+    holder = subprocess.Popen([sys.executable, "-c", HOLD, path], cwd=REPO, stdin=subprocess.PIPE,
+                              stdout=subprocess.PIPE, text=True)
+    try:
+        assert holder.stdout.readline() == "locked\n"
+        assert cli.main(["sweep", path]) == 2
+        assert cli.main(["preflight", path, "--oracle"]) == 2
+        out = capsys.readouterr().out
+        assert out.count(f"another sweep is running on jobs/t (pid {holder.pid}: {shlex.join(['-c', path])})") == 2
+        assert fake.calls() == []
+    finally:
+        holder.kill()  # SIGKILL: no cleanup runs in the holder, the OS releases its lock
+        holder.wait()
+    assert cli.main(["sweep", path]) == 0 and len(fake.calls()) == 2
+
+
+def test_preflight_then_sweep_take_the_lock_in_turn(fake, tmp_path, monkeypatch):
+    """run_experiment.sh runs `preflight --oracle`, then the sweep: each holds the jobs dir while it runs."""
+    path = str(make_spec(tmp_path))
+    monkeypatch.setenv("SAIL_API_KEY", "test-key")
+    assert cli.main(["preflight", path, "--oracle"]) == 0 and cli.main(["sweep", path]) == 0
+    assert fake.jobs()[0] == "_oracle" and len(fake.jobs()) == 3
+
+
+# --- job selection (--rounds, --only, --job) ------------------------------------------------------
+
+
+def plan_before_job(spec, only=None, rounds=None) -> list[tuple[int, str]]:
+    """plan() as it was before --job, verbatim."""
+    rng = random.Random(spec.order_seed)
+    jobs = []
+    for r in range(1, spec.rounds + 1):
+        order = list(spec.configs)
+        rng.shuffle(order)
+        jobs += [(r, c) for c in order if (not rounds or r in rounds) and (not only or c in only)]
+    return jobs
+
+
+def test_plans_without_job_are_unchanged():
+    for path in sorted((REPO / "configs/sweeps").glob("*.yaml")):
+        s = sweep.load_spec(path)
+        conds, rounds = list(s.configs), list(range(1, s.rounds + 1))
+        for only, rs in [(None, None), *((None, [r]) for r in rounds), *(([c], None) for c in conds),
+                         (conds[:2], [1]), (conds[-3:], rounds[-2:])]:
+            assert sweep.plan(s, only, rs) == sweep.plan(s, only, rs, []) == plan_before_job(s, only, rs), (path, only, rs)
+
+
+def test_job_selects_single_jobs(tmp_path):
+    s = sweep.load_spec(make_spec(tmp_path, rounds=3))
+    assert sweep.plan(s, jobs=[(3, "par")]) == [(3, "par")]  # alone: only these jobs
+    assert sweep.plan(s, jobs=[(2, "par"), (1, "single"), (2, "par")]) == [(2, "par"), (1, "single")]  # in order, once
+    r1 = sweep.plan(s, rounds=[1])
+    assert sweep.plan(s, rounds=[1], jobs=[(3, "par"), r1[1], (3, "par")]) == r1 + [(3, "par")]  # the union
+    single = sweep.plan(s, only=["single"])
+    assert sweep.plan(s, only=["single"], jobs=[(2, "par"), (2, "single")]) == single + [(2, "par")]
+    par23 = sweep.plan(s, only=["par"], rounds=[2, 3])
+    assert sweep.plan(s, only=["par"], rounds=[2, 3], jobs=[(1, "single")]) == par23 + [(1, "single")]
+    levels = sweep.load_spec(REPO / "configs/sweeps/swe_interactive_levels.yaml")
+    l23 = [c for c in levels.configs if c.endswith(("_questions", "_urgent"))]
+    reruns = [(1, "manager_background_baseline")]
+    assert sweep.plan(levels, l23, [1], reruns) == sweep.plan(levels, l23, [1]) + reruns
+
+
+def test_bad_job_values(fake, tmp_path, capsys):
+    path = str(make_spec(tmp_path))
+    with pytest.raises(ConfigError, match="not in sweep 't': job 2:single, job 1:nope"):
+        sweep.plan(sweep.load_spec(Path(path)), jobs=[(1, "par"), (2, "single"), (1, "nope")])
+    for bad in ("2:single", "0:par", "1:nope", "1:Par"):
+        assert cli.main(["sweep", path, "--job", bad]) == 2
+        assert f"not in sweep 't': job {bad}" in capsys.readouterr().err
+    assert cli.main(["sweep", path, "--only", "nope", "--job", "1:par"]) == 2  # --only is checked as before
+    assert "not in sweep 't': nope" in capsys.readouterr().err
+    for bad in ("1", ":par", "x:par", "1:", "1,2:par"):
+        with pytest.raises(SystemExit) as e:
+            cli.main(["sweep", path, "--job", bad])
+        assert e.value.code == 2 and f"expected ROUND:CONDITION like 1:single (got {bad!r})" in capsys.readouterr().err
+    assert fake.calls() == [] and not (tmp_path / "proj/jobs").exists()
+
+
+def test_cli_job(fake, tmp_path, capsys):
+    path = str(make_spec(tmp_path, rounds=2))
+    s = sweep.load_spec(Path(path))
+    r1 = [sweep.job_name(s, *j) for j in sweep.plan(s, rounds=[1])]
+    assert cli.main(["sweep", path, "--dry-run", "--rounds", "1", "--job", "2:par", "--job", "1:par"]) == 0
+    out = capsys.readouterr().out
+    assert "Sweep 't': 3 jobs" in out and re.findall(r"\] (t__\S+):", out) == [*r1, "t__r2__par"]
+    assert cli.main(["sweep", path, "--job", "2:par", "--job", "1:single"]) == 0
+    assert fake.jobs() == ["t__r2__par", "t__r1__single"]
+    assert cli.main(["sweep", path, "--only", "single", "--job", "2:par"]) == 0  # 1:single and 2:par: skipped
+    assert fake.jobs() == ["t__r2__par", "t__r1__single", "t__r2__single"]
+    r = subprocess.run([sys.executable, "-m", "subagents_bench.cli", "sweep", "--help"], capture_output=True,
+                       text=True, cwd=REPO)
+    assert "--job ROUND:CONDITION" in r.stdout
+
+
 # --- preflight, probe, CLI ------------------------------------------------------------------------
 
 
@@ -797,10 +922,29 @@ def test_probe_sends_one_short_request_per_model(spec, monkeypatch):
         def close(self):
             pass
 
-    monkeypatch.setattr(sweep, "SailClient", Client)
+    monkeypatch.setattr(sweep, "ChatClient", Client)
     assert sweep.probe(sweep.sweep_models(spec)) == [f"{SUB_MODEL}: RuntimeError: boom"]
     assert [(c.model, c.max_retries, c.request_timeout_sec, c.retry_budget_sec) for c in sent] == [
         (ORCH_MODEL, 1, 60.0, 30.0), (SUB_MODEL, 1, 60.0, 30.0)]
+
+
+def test_a_busy_model_is_not_an_outage(spec, monkeypatch):
+    """A 429 (Prime's per-model concurrency limit) answers the probe: the model is busy, not down."""
+    from subagents_bench.llm import ProviderError
+
+    class Client:
+        def __init__(self, cfg):
+            self.cfg = cfg
+
+        def complete(self, system, messages, tools):
+            status = 429 if self.cfg.model == ORCH_MODEL else 503
+            raise ProviderError("giving up", status=status)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(sweep, "ChatClient", Client)
+    assert [p.split(":")[0] for p in sweep.probe(sweep.sweep_models(spec))] == [SUB_MODEL]
 
 
 @pytest.mark.parametrize("over, msg", [
@@ -861,6 +1005,50 @@ def test_a_job_threads_error_stops_the_other_harbor_and_the_queue(fake, spec4, m
     m = manifest(spec4)
     assert [e["event"] for e in m if e.get("job") in queued] == [] and m[-1]["event"] == "error"
     assert json.loads((spec4.jobs_dir / "sweep.json").read_text())["status"] == "error"
+    sweep.lock_jobs_dir(spec4).close()  # released though run() raised
+
+
+LEVELS = {"baseline": {}, "eta": {"status_every": 2}, "questions": {"status_every": 2, "questions_per_interval": 2},
+          "urgent": {"status_every": 2, "questions_per_interval": 2, "urgent_every": 3}}
+SETTINGS = ("single", "manager_background", "background_hinted", "manager_available", "manager_owner", "dispatcher_hinted")
+
+
+def test_swe_interactive_levels_spec(tmp_path):
+    """Levels: the baseline on Modal plus the request kinds added one at a time. Every condition is
+    its setting's baseline condition with snapshots and require_eta on and only its level's request
+    settings changed, and every condition, level and round sends the same bugs at the same times."""
+    from subagents_bench.hints import Question, schedule, write_questions
+    s = sweep.load_spec(REPO / "configs/sweeps/swe_interactive_levels.yaml")
+    base = sweep.load_spec(REPO / "configs/sweeps/swe_interactive_baseline_modal.yaml")
+    assert (s.environment, s.tasks, s.rounds) == ("modal", base.tasks, 1)
+    assert (s.dataset_path, s.platform, s.extra_args, s.n_concurrent, s.timeout_multiplier) == (
+        base.dataset_path, base.platform, base.extra_args, base.n_concurrent, base.timeout_multiplier)
+    assert set(s.configs) == {f"{st}_{lv}" for st in SETTINGS for lv in LEVELS}
+    for st in SETTINGS:
+        twin = base.configs[f"{st}_baseline"].to_dict()
+        for lv, knobs in LEVELS.items():
+            d = s.configs[f"{st}_{lv}"].to_dict()
+            assert d["interactive"].pop("snapshots") is True and d["interactive"].pop("require_eta") is True
+            twin["interactive"].pop("snapshots", None), twin["interactive"].pop("require_eta", None)
+            for k in ("questions_per_interval", "status_every", "urgent_every"):
+                assert d["interactive"].pop(k) == knobs.get(k, 0), (st, lv, k)
+                twin["interactive"].pop(k, None)
+            assert {**d, "name": twin["name"]} == twin, (st, lv)
+    assert len(sweep.plan(s)) == 24
+    if s.dataset_path.is_dir():
+        for t in s.tasks:
+            write_questions(tmp_path, t, "m", [Question(f"q{i}", "x.py", f"Q{i}?", "a") for i in range(12)])
+            sends = {tuple((h.subtask.id, h.t_offset) for h in schedule(cfg.interactive, s.dataset_path / t, t, tmp_path, r)
+                           if h.kind == "bug")
+                     for cfg in s.configs.values() for r in (1,)}
+            assert len(sends) == 1 and [o for _, o in next(iter(sends))] == [k * 240 for k in range(6)], t
+            urgent = [h.index for h in schedule(s.configs["single_urgent"].interactive, s.dataset_path / t, t, tmp_path, 1)
+                      if h.urgent]
+            assert urgent == [3], t
+    smoke = sweep.load_spec(REPO / "configs/sweeps/swe_interactive_levels_smoke.yaml")
+    i = smoke.configs["single_urgent"].interactive
+    assert (smoke.environment, smoke.rounds, len(smoke.configs), i.wall_clock_sec, i.interval_sec) == ("modal", 1, 24, 120, 30)
+    assert 120 + sweep.SESSION_GRACE_SEC <= 43200 * smoke.timeout_multiplier
 
 
 def test_harbor_environment_modal(monkeypatch):
@@ -893,3 +1081,65 @@ def test_harbor_environment_is_checked(tmp_path, monkeypatch):
     monkeypatch.chdir(REPO)
     with pytest.raises(ConfigError, match="harbor.environment"):
         sweep.load_spec(tmp_path / "bad.yaml")
+
+
+# --- --model ------------------------------------------------------------------------------------
+
+LUNA = REPO / "configs/prime/models/gpt-5.6-luna.yaml"
+
+
+def test_model_flag_runs_every_orchestrator_on_the_model(tmp_path, fake, monkeypatch, capsys):
+    path = make_spec(tmp_path, conditions={"single": {"topology": "single"}, "same": {"subagent": {"model": None}},
+                                           "par": {}})
+    own, spec = sweep.load_spec(path), sweep.load_spec(path, model=LUNA)
+    assert spec.name == "t-gpt-5.6-luna" and spec.jobs_dir == own.jobs_dir.with_name("t-gpt-5.6-luna")
+    assert spec.model == LUNA and sweep.hints_dir(spec) == own.jobs_dir / "hints"
+    for cfg in spec.configs.values():  # the file replaces the orchestrator: no Sail keys left over
+        assert (cfg.orchestrator.model, cfg.orchestrator.provider, cfg.orchestrator.completion_window) == (
+            "openai/gpt-5.6-luna", "prime", None)
+    assert spec.configs["same"].subagent_model.model == "openai/gpt-5.6-luna"
+    assert spec.configs["par"].subagent_model.model == SUB_MODEL  # a sweep's own subagent model stays
+    assert sweep.job_name(spec, 1, "single") == "t-gpt-5.6-luna__r1__single"
+    assert cli.main(["sweep", str(path), "--model", str(LUNA), "--dry-run"]) == 0
+    assert "t-gpt-5.6-luna__r1__single" in capsys.readouterr().out
+    monkeypatch.delenv("PRIME_API_KEY", raising=False)
+    monkeypatch.setenv("SAIL_API_KEY", "test-key")
+    assert sweep.preflight(spec) == 1
+    out = capsys.readouterr().out
+    assert "[FAIL] PRIME_API_KEY: missing" in out and "[PASS] SAIL_API_KEY: set" in out  # Gemma's still Sail
+    assert "[PASS] request openai/gpt-5.6-luna" in out and f"request {ORCH_MODEL}" not in out
+
+
+def test_model_flag_errors_and_relative_path(tmp_path, monkeypatch):
+    path = make_spec(tmp_path)
+    bad = tmp_path / "proj/configs/bad.yaml"
+    bad.write_text("model: x/y\nprovider: openrouter\n")
+    with pytest.raises(ConfigError, match=r"^--model .*bad\.yaml: orchestrator\.provider: 'openrouter' is not one of"):
+        sweep.load_spec(path, model=bad)
+    with pytest.raises(ConfigError, match="^--model: .*missing.yaml"):
+        sweep.load_spec(path, model=tmp_path / "missing.yaml")
+    shutil.copy(LUNA, tmp_path / "proj/configs/luna.yaml")
+    monkeypatch.chdir(tmp_path)  # not under the repository root: resolved against it, as the spec in run_experiment.sh
+    assert sweep.load_spec(path, model="configs/luna.yaml").name == "t-luna"
+
+
+@pytest.mark.parametrize("model", sorted((REPO / "configs/prime/models").glob("*.yaml")), ids=lambda p: p.stem)
+def test_prime_model_files_load_and_match_the_prices(model):
+    spec = sweep.load_spec(REPO / "configs/sweeps/swe_interactive_levels.yaml", model=model)
+    m = spec.configs["single_baseline"].orchestrator
+    assert m.provider == "prime" and m.max_output_tokens == 32768 and spec.configs["single_eta"].subagent_model == m
+    # silent reasoning (32768 tokens at ~65/s) is not a stall, and a stalled attempt is still retried
+    assert m.request_timeout_sec >= 900 and m.retry_budget_sec > m.request_timeout_sec
+    prices = yaml.safe_load((REPO / "configs/pricing.yaml").read_text())
+    assert prices["prime"][m.model] == prices["default"][m.model] == {
+        "in": m.price_in, "cached": m.price_cache_read, "out": m.price_out}
+
+
+@pytest.mark.parametrize("over, msg", [
+    ({"provider": "openrouter"}, "orchestrator.provider: 'openrouter' is not one of prime, sail"),
+    ({"reasoning_effort": ""}, "orchestrator.reasoning_effort: expected null or a level"),
+    ({"cache_control": "yes"}, "orchestrator.cache_control: expected true or false"),
+])
+def test_bad_model_configs(tmp_path, over, msg):
+    with pytest.raises(ConfigError, match=msg):
+        sweep.load_spec(make_spec(tmp_path, overrides={"orchestrator": over}))

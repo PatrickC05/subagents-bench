@@ -1,0 +1,79 @@
+{
+  "task": "swe-sweep__dayjs",
+  "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "generated_at": 1792138308.9104488,
+  "questions": [
+    {
+      "id": "q1",
+      "file": "src/locale/ru.js",
+      "question": "In src/locale/ru.js, what does the `plural` function return for the word '\u043c\u0438\u043d\u0443\u0442\u0430_\u043c\u0438\u043d\u0443\u0442\u044b_\u043c\u0438\u043d\u0443\u0442' when `num` is 22?",
+      "answer": "'\u043c\u0438\u043d\u0443\u0442\u044b'"
+    },
+    {
+      "id": "q2",
+      "file": "src/locale/ru.js",
+      "question": "In src/locale/ru.js, what does `relativeTimeWithPlural` return when `key` is 'm' and `withoutSuffix` is true?",
+      "answer": "'\u043c\u0438\u043d\u0443\u0442\u0430'"
+    },
+    {
+      "id": "q3",
+      "file": "src/locale/bo.js",
+      "question": "In bo.js, what does the `ordinal` function return for a given number?",
+      "answer": "It returns the input number unchanged (n => n)."
+    },
+    {
+      "id": "q4",
+      "file": "src/locale/bo.js",
+      "question": "In bo.js, what is the value of the `formats.L` property?",
+      "answer": "'DD/MM/YYYY'"
+    },
+    {
+      "id": "q5",
+      "file": "src/locale/ka.js",
+      "question": "In src/locale/ka.js, what value is assigned to the `weekStart` property?",
+      "answer": "1"
+    },
+    {
+      "id": "q6",
+      "file": "src/locale/ka.js",
+      "question": "In src/locale/ka.js, what does the `ordinal` function return when called with a number n?",
+      "answer": "n (the number itself, unchanged)"
+    },
+    {
+      "id": "q7",
+      "file": "src/locale/si.js",
+      "question": "In si.js, what does the `ordinal` function return when called with a number?",
+      "answer": "It returns the number itself (n => n)."
+    },
+    {
+      "id": "q8",
+      "file": "src/locale/si.js",
+      "question": "In si.js, what is the value of the `formats.LT` property?",
+      "answer": "'a h:mm'."
+    },
+    {
+      "id": "q9",
+      "file": "src/locale/my.js",
+      "question": "In src/locale/my.js, what does the `ordinal` function return when called with a number n?",
+      "answer": "It returns n unchanged."
+    },
+    {
+      "id": "q10",
+      "file": "src/locale/my.js",
+      "question": "In src/locale/my.js, what is the value of `weekStart` for the Burmese locale?",
+      "answer": "1"
+    },
+    {
+      "id": "q11",
+      "file": "src/locale/bn.js",
+      "question": "In src/locale/bn.js, what does the `ordinal` function return when called with a number?",
+      "answer": "It returns the same number unchanged (the function is defined as `n => n`)."
+    },
+    {
+      "id": "q12",
+      "file": "src/locale/bn.js",
+      "question": "In src/locale/bn.js, what is the value of the `formats.LT` property?",
+      "answer": "'A h:mm \u09b8\u09ae\u09df'"
+    }
+  ]
+}

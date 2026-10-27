@@ -1,0 +1,26 @@
+# A 2-minute smoke of swe_interactive_hard.yaml on Modal: *_symptom sends a bug every 30 s (4 bugs),
+# *_web two lists of 3 bugs at 0:00 and 1:20 (6 bugs). It checks the symptom reports, the bundled
+# message and the per-item replies, and that the records and analysis keep one row per bug:
+#   .venv/bin/subagents-bench hints configs/sweeps/swe_interactive_hard_smoke.yaml
+#   scripts/run_experiment.sh configs/sweeps/swe_interactive_hard_smoke.yaml --only single_web ...
+#   scripts/analyze.sh jobs/swe_interactive_hard_smoke
+extends: configs/sweeps/swe_interactive_hard.yaml
+name: swe_interactive_hard_smoke
+rounds: 1
+
+overrides:
+  interactive:
+    wall_clock_sec: 120
+    interval_sec: 30
+
+conditions:
+  single_web: {interactive: {interval_sec: 80}}
+  background_hinted_web: {interactive: {interval_sec: 80}}
+  manager_background_web: {interactive: {interval_sec: 80}}
+  manager_available_web: {interactive: {interval_sec: 80}}
+  manager_owner_web: {interactive: {interval_sec: 80}}
+
+harbor:
+  # x the tasks' 43200 s agent timeout = 432 s: the 120 s session, preflight's 120 s grace, and room
+  # for the subagents' shutdown and the end kill.
+  agent_timeout_multiplier: 0.01

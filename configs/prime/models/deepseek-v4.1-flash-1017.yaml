@@ -1,0 +1,15 @@
+# DeepSeek-V4.1-Flash (1017) on Prime Inference, for `--model` (README, *Models*).
+# Prices: USD per 1M tokens, from api.pinference.ai/api/v1/models on 2026-10-25.
+# A hosted model: Prime lists its cache-read price.
+model: deepseek/deepseek-v4.1-flash-1017
+provider: prime
+temperature: 0.7
+max_output_tokens: 32768
+request_timeout_sec: 900         # no data for this long fails an attempt: OpenAI's models stream
+                                 # nothing while they reason (docs/DESIGN.md, *Stall rule*)
+retry_budget_sec: 1200           # more than request_timeout_sec: a stalled attempt is retried once
+reasoning_effort: high           # every model at high reasoning (issue #23); without an
+                                 # effort, Prime serves it without thinking (Sail's reasoned)
+price_in: 0.3
+price_cache_read: 0.006
+price_out: 1.2

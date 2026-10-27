@@ -1,0 +1,20 @@
+# A 2-minute smoke of swe_interactive_levels.yaml on Modal: a bug every 30 s (4 bugs), so a status check
+# at 0:45 and 1:45, 2 questions after each bug (+10 s, +20 s; 8 per session) and bug 3 (1:30) urgent at
+# the levels that have them; all 24 conditions on click and echo, 1 round = 24 jobs, 48 sessions. It
+# checks every request kind, the require_eta rule, the snapshot recorder's overhead on Modal, and gives
+# `fix-times` and `grade-answers` real trials to run on:
+#   .venv/bin/subagents-bench questions configs/sweeps/swe_interactive_levels_smoke.yaml
+#   scripts/run_experiment.sh configs/sweeps/swe_interactive_levels_smoke.yaml --jobs-at-once 24
+extends: configs/sweeps/swe_interactive_levels.yaml
+name: swe_interactive_levels_smoke
+rounds: 1
+
+overrides:
+  interactive:
+    wall_clock_sec: 120
+    interval_sec: 30
+
+harbor:
+  # x the tasks' 43200 s agent timeout = 432 s: the 120 s session, preflight's 120 s grace, and room
+  # for the subagents' shutdown and the end kill.
+  agent_timeout_multiplier: 0.01

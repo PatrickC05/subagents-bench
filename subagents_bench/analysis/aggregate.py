@@ -1,5 +1,7 @@
 """The analysis tables: one row per trial (episodes), per record (calls, tools, dispatches,
-arbitrations) and per condition, plus the summary and the delegation gate."""
+arbitrations) and per (sweep, condition), plus the summary and the delegation gate; for
+interactive sessions per hint and message, and for the levels experiment per replayed bug fix
+(fixes), estimate, status-check pair, urgent bug and (sweep, setting, level) (``levels.py``)."""
 
 from __future__ import annotations
 
@@ -13,9 +15,11 @@ import numpy as np
 import pandas as pd
 
 from ..config import SCOPES, STRATEGIES
+from . import estimates, fixes
 from .fairplay import tool_flags
 from .interactivity import condition_table as interactivity_table
 from .interactivity import hint_rows, position_table
+from .levels import bug_rows, level_table, question_columns, urgency_rows
 from .requests import request_rows, request_table
 from .latency import PARTS, critical_path
 from .load import Trial
@@ -50,6 +54,7 @@ def episode_row(t: Trial, prices: dict) -> dict[str, Any]:
                interactive=int(ep["config"].get("interactive") is not None), n_hints=ep.get("n_hints"),
                n_hints_delivered=ep.get("n_hints_delivered"), n_questions=ep.get("n_questions"),
                n_replies=ep.get("n_replies"),
+               n_interrupts=sum(1 for c in recs["calls"] if c.get("error") == "interrupted"),
                n_stream_repairs=sum(c["stream_repairs"] for c in recs["calls"]))
     for role, short in ROLE_SHORT.items():
         mine = [c for c in recs["calls"] if c["role"] == role]
@@ -110,16 +115,18 @@ def condition_order(row: pd.Series) -> tuple:
 
 
 def condition_table(episodes: pd.DataFrame) -> pd.DataFrame:
+    """Per (sweep, condition): two runs of a condition in different sweeps (two baselines) never pool."""
     rows = []
-    for cond, g in episodes.groupby("condition", sort=False):
+    for (sweep, cond), g in episodes.groupby(["sweep", "condition"], sort=False):
         design = g.dropna(subset=["topology"]).iloc[0] if g["topology"].notna().any() else g.iloc[0]
         v = g[g["valid"]]
         k, n = int(v["resolved"].sum()), len(v)
         lo, hi = wilson(k, n)
         n_del = int(v["delegated"].sum()) if n else 0
         bugs = float(v["n_subtasks"].sum()) if n else 0.0  # SWE-sweep: bugs in the valid trials' tasks
-        row = {"condition": cond, **{c: design.get(c) for c in ("topology", "strategy", "scope", "orchestrator_tools",
-                                                                 "orchestrator_model", "subagent_model")},
+        row = {"sweep": sweep, "condition": cond,
+               **{c: design.get(c) for c in ("topology", "strategy", "scope", "orchestrator_tools",
+                                             "orchestrator_model", "subagent_model")},
                "n": len(g), "n_valid": n, "n_resolved": k, "resolve_rate": k / n if n else math.nan,
                "resolve_ci_lo": lo, "resolve_ci_hi": hi, "n_delegated": n_del,
                "delegated_frac": n_del / n if n else math.nan,
@@ -133,32 +140,52 @@ def condition_table(episodes: pd.DataFrame) -> pd.DataFrame:
         row["cost_per_solve"] = float(v["cost_total"].sum(skipna=False)) / k if k else math.nan
         rows.append(row)
     out = pd.DataFrame(rows)
-    return out.iloc[sorted(range(len(out)), key=lambda i: condition_order(out.iloc[i]))].reset_index(drop=True)
+    order = sorted(range(len(out)), key=lambda i: (condition_order(out.iloc[i]), str(out.iloc[i]["sweep"])))
+    return out.iloc[order].reset_index(drop=True)  # a condition's sweeps side by side
 
 
 def build_tables(trials: list[Trial], prices: dict) -> dict[str, pd.DataFrame]:
+    """Every table. The levels tables (fixes, estimates, status_pairs, eta: the estimates per
+    (sweep, condition), urgency, levels) are empty without replies, replayed fix times
+    (``fix-times``) or levels conditions; the question rows of ``messages`` gain
+    ``levels.QUESTION_COLUMNS``."""
     eps = [episode_row(t, prices) for t in trials]
     recs: dict[str, list[dict]] = {"calls": [], "tools": [], "dispatches": [], "arbitrations": []}
+    timing: dict[str, list[dict]] = {"fixes": [], "estimates": [], "status_pairs": []}
     hints: list[dict] = []
     reqs: list[dict] = []
+    bugs: list[dict] = []
     for t, e in zip(trials, eps):
-        for kind, rows in record_rows(t, e["valid"], prices).items():
+        keys, valid = _keys(t), e["valid"]
+        for kind, rows in record_rows(t, valid, prices).items():
             recs[kind] += rows
-        hints += hint_rows(t, _keys(t), e["valid"])
-        reqs += request_rows(t, _keys(t), e["valid"])
+        trial_hints = hint_rows(t, keys, valid)
+        hints += trial_hints
+        questions = question_columns(t)
+        reqs += [{**x, **questions.get(x["msg_id"], {})} for x in request_rows(t, keys, valid)]
+        fixed = fixes.fix_times(t)
+        timing["fixes"] += [{**keys, "valid": valid, **x} for x in fixes.bug_fix_rows(t)]
+        timing["estimates"] += [{**keys, "valid": valid, **x} for x in estimates.estimate_rows(t, fixed)]
+        timing["status_pairs"] += [{**keys, "valid": valid, **x} for x in estimates.status_pair_rows(t, fixed)]
+        bugs += bug_rows(t, keys, valid, fixed, trial_hints)
     episodes = pd.DataFrame(eps)
-    hint_table = pd.DataFrame(hints)
-    return {"episodes": episodes, "conditions": condition_table(episodes),
-            **{k: pd.DataFrame(v) for k, v in recs.items()},
-            "hints": hint_table, "interactivity": interactivity_table(hint_table),
-            "hint_positions": position_table(hint_table), "messages": pd.DataFrame(reqs),
-            "requests": request_table(pd.DataFrame(reqs))}
+    hint_table, messages = pd.DataFrame(hints), pd.DataFrame(reqs)
+    tables = {"episodes": episodes, "conditions": condition_table(episodes),
+              **{k: pd.DataFrame(v) for k, v in recs.items()},
+              "hints": hint_table, "interactivity": interactivity_table(hint_table),
+              "hint_positions": position_table(hint_table), "messages": messages,
+              "requests": request_table(messages), **{k: pd.DataFrame(v) for k, v in timing.items()},
+              "urgency": pd.DataFrame(urgency_rows(bugs))}
+    tables["eta"] = estimates.estimate_table(tables["estimates"], tables["status_pairs"])
+    tables["levels"] = level_table(episodes, messages, tables["estimates"], tables["status_pairs"], bugs,
+                                   tables["urgency"])
+    return tables
 
 
 def delegation_gate(conditions: pd.DataFrame) -> list[str]:
-    """Subagent conditions with valid episodes of which none delegated."""
+    """Subagent conditions with valid episodes of which none delegated (in any sweep)."""
     c = conditions[(conditions["topology"] == "subagents") & (conditions["n_valid"] > 0)]
-    return list(c.loc[c["n_delegated"] == 0, "condition"])
+    return list(dict.fromkeys(c.loc[c["n_delegated"] == 0, "condition"]))  # once, if it failed in two sweeps
 
 
 def _none(x: Any) -> Any:

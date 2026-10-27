@@ -1,6 +1,10 @@
 """``python -m subagents_bench.analysis JOBS_DIR... --out DIR``: tables, summary.json and the
 delegation gate.
 
+Several jobs dirs are one data set whose per-condition tables keep each sweep apart (a ``sweep``
+column, printed when there are several); with levels conditions (``levels.py``) it also prints
+the levels' main numbers with their intervals.
+
 Exit 3 if a subagent condition never delegated in any of its valid episodes (in the first
 smoke run the all-tools orchestrator delegated in 0 of 18 episodes), 2 if there is no episode.
 """
@@ -11,6 +15,7 @@ import argparse
 from pathlib import Path
 
 from .aggregate import build_tables, summary, write
+from .levels import summary_text as levels_summary
 from .load import load_trials
 from .pricing import DEFAULT_PRICING, load_prices
 
@@ -30,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("jobs_dirs", nargs="+", type=Path, help="sweep jobs dir(s), analyzed as one data set")
     p.add_argument("--out", required=True, type=Path, help="output dir for the CSV tables and summary.json")
     p.add_argument("--pricing", type=Path, default=DEFAULT_PRICING, help="price file (default configs/pricing.yaml)")
-    p.add_argument("--scheme", default="sail_balanced", help="price scheme in the price file")
+    p.add_argument("--scheme", default="default", help="price scheme in the price file (default: every provider's)")
     args = p.parse_args(argv)
     missing = [str(d) for d in args.jobs_dirs if not d.is_dir()]
     if missing:
@@ -44,17 +49,23 @@ def main(argv: list[str] | None = None) -> int:
     summ = summary(tables, [str(d) for d in args.jobs_dirs], {"file": str(args.pricing), "scheme": args.scheme})
     write(tables, summ, args.out)
     conds = tables["conditions"]
-    print(conds[SHOW + (SHOW_BUGS if conds["n_bugs"].sum() else [])].to_string(index=False,
-                                                                                float_format=lambda x: f"{x:.3g}"))
+    sweep = ["sweep"] if conds["sweep"].nunique() > 1 else []  # several sweeps: which run a row is
+    print(conds[sweep + SHOW + (SHOW_BUGS if conds["n_bugs"].sum() else [])].to_string(
+        index=False, float_format=lambda x: f"{x:.3g}"))
     inter = tables["interactivity"]
     if len(inter):
         print("\ninteractivity (hints after the first; seconds after each was sent; medians count a missing "
               "event as never):")
-        print(inter[SHOW_INTERACTIVE].to_string(index=False, float_format=lambda x: f"{x:.3g}"))
+        print(inter[sweep + SHOW_INTERACTIVE].to_string(index=False, float_format=lambda x: f"{x:.3g}"))
     reqs = tables["requests"]
     if len(reqs):
         print("\nrequests (questions, estimates and done claims; seconds after each message was sent):")
-        print(reqs[SHOW_REQUESTS].to_string(index=False, float_format=lambda x: f"{x:.3g}"))
+        print(reqs[sweep + SHOW_REQUESTS].to_string(index=False, float_format=lambda x: f"{x:.3g}"))
+    levels = tables["levels"]
+    if len(levels):
+        print("\nlevels (main numbers; [95% interval] from a bootstrap over sessions stratified by task; n_timed: "
+              "sessions with replayed fix times):")
+        print(levels_summary(levels))
     print(f"\n{summ['n_valid']} of {summ['n_trials']} trials valid; invalid: {summ['invalid_reasons'] or 'none'}")
     cp = summ["critical_path"]
     overhead = "n/a" if cp["mean_overhead_sec"] is None else f"{cp['mean_overhead_sec']:.3g} s"

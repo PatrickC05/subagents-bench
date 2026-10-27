@@ -1,0 +1,22 @@
+# A 2-minute smoke of swe_interactive_levels_more.yaml on Modal, as swe_interactive_levels_smoke.yaml
+# is of swe_interactive_levels.yaml: a bug every 30 s (4 bugs), status checks, questions and the
+# urgent bug at the levels that have them, on the four new tasks; it checks that sessions, snapshots,
+# `fix-times` and the analysis work on these repositories. Run a couple of conditions, e.g.:
+#   .venv/bin/subagents-bench questions configs/sweeps/swe_interactive_levels_more_smoke.yaml
+#   .venv/bin/subagents-bench sweep configs/sweeps/swe_interactive_levels_more_smoke.yaml \
+#       --only single_questions manager_available_questions --jobs-at-once 2
+#   .venv/bin/subagents-bench fix-times configs/sweeps/swe_interactive_levels_more_smoke.yaml
+#   scripts/analyze.sh jobs/swe_interactive_levels_more_smoke
+extends: configs/sweeps/swe_interactive_levels_more.yaml
+name: swe_interactive_levels_more_smoke
+rounds: 1
+
+overrides:
+  interactive:
+    wall_clock_sec: 120
+    interval_sec: 30
+
+harbor:
+  # x the tasks' 43200 s agent timeout = 432 s: the 120 s session, preflight's 120 s grace, and room
+  # for the subagents' shutdown and the end kill.
+  agent_timeout_multiplier: 0.01

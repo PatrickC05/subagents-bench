@@ -1,22 +1,124 @@
-# subagents-bench
+# subagents-bench: human-interactive coding agents
 
-Measuring the **cost and latency** of a frontier **orchestrator** directing
-smaller **subagents** on executable coding tasks — the configuration
-practitioners actually deploy, but one existing scaling studies don't primarily
-measure.
+A coding agent's user does not send one request and wait: they send a bug, ask
+a question about the code, check how long the fix will take, and change
+priorities while earlier work is still running. This repository measures how
+well an agent stays **correct, predictable and responsive** in such a session,
+and whether handing work to background **subagents** keeps the orchestrator
+free to answer.
 
-Prior work (Kim et al. 2025, *Towards a Science of Scaling Agent Systems*)
-assigns the **same** model to every agent, reports **accuracy** rather than
-latency, and includes no repository-level coding with executable tests. This
-project instead varies **subagent size** independently of the orchestrator, runs
-on **Terminal-Bench 2.0** and **ExploitBench** (tasks with real, runnable
-scoring), and reports resolve rate against **tokens** and **wall-clock time** as
-Pareto curves.
+A session is 30 minutes on one [SWE-sweep](https://github.com/facebookresearch/swe-sweep)
+repository: a simulated user sends 6 bugs, one every 4 minutes, and, depending
+on the level, status checks asking for ETAs and questions about the code. The
+agent answers with a `reply` tool; the user sees nothing else.
+Every LLM and tool call is logged, workspace snapshots are replayed to time
+each fix, and the hidden tests grade every bug, so we measure, per request:
+time to the first reply, bugs fixed, ETA error, questions answered (judged
+correct or not), and cost.
 
-This version runs Terminal-Bench 2.0 and [SWE-sweep](#swe-sweep); the
-ExploitBench adapter is not part of it.
+The settings differ in what the orchestrator may do itself and what it is told
+about subagents (the subagents are the same model, with every tool):
 
-## The experiment
+| Setting | Orchestrator's tools | Told |
+|---|---|---|
+| `background_hinted` (orchestrator + subagents) | all five | delegating long work keeps it free for the user |
+| `manager_background` (subagents only) | read-only | nothing: it must delegate every command and edit |
+| `manager_owner` (subagents only, owner) | read-only | stay available; put one subagent in charge of each bug (it may start helpers) |
+| `single_bug<k>` (isolated baseline) | all five, no subagents | one bug per fresh session |
+
+To reproduce the final study, see [Final study](#final-study-issue-23).
+
+## Setup
+
+You need macOS or Linux, [Docker](https://docs.docker.com/get-docker/) running
+(4 task containers at once: give it about 6 CPUs and 12 GB), [uv](https://docs.astral.sh/uv/),
+network access and a [Prime Inference](https://docs.primeintellect.ai/inference/overview) API key
+(and a Sail key for the DeepSeek sweeps on `configs/sail/base.yaml`).
+
+```bash
+scripts/setup.sh        # .venv from uv.lock (harbor 0.24.0 included), Docker check,
+                        # Terminal-Bench 2.0 download, creates .env from .env.example
+```
+
+Put `PRIME_API_KEY=...` (and `SAIL_API_KEY=...`) in `.env` and run it again; it ends
+with `Setup OK`. `PRIME_TEAM_ID=...` bills a Prime team instead of the key's owner.
+`.env` never overrides a variable already set in your shell, and no script
+prints a key. The task images are `linux/amd64`: on Apple Silicon they run
+emulated, which slows tool calls (tool time is measured separately).
+
+## Final study (issue #23)
+
+Two experiments on SWE-sweep, in 30-minute sessions where a user sends 6 bugs
+every 4 minutes on 6 repositories (click, echo, dateutil, gin, dayjs, luxon),
+1 round. The tasks are [facebookresearch/swe-sweep](https://github.com/facebookresearch/swe-sweep)
+at `5968c69`. The sessions run on Modal; the models run on
+[Prime Inference](https://docs.primeintellect.ai/inference/overview) at high
+reasoning effort (`configs/prime/models/`, see *Models* below); the questions'
+judge is DeepSeek-V4.1-Flash on Sail for every model.
+
+| Experiment | Spec | Conditions | Models | Sessions per model |
+|---|---|---|---|---|
+| 1. Cost vs bugs fixed at L0 | `final_levels.yaml` (`*_baseline`) | `background_hinted`, `manager_background`, `manager_owner` at L0 | all 6 | 18 |
+| 1b. Isolated baseline | `final_isolated.yaml` | `single_bug0`-`single_bug5`: each bug alone in a fresh session (`interactive.only_bug`) | all 6 | 36 |
+| 2. Levels | `final_levels.yaml` | the three settings at L0-L2 (bugs; + ETAs; + questions; no urgent tier) | Opus 5.5, GPT-5.6 Luna, DeepSeek-V4.1-Flash-1017 | 54 (L0 included) |
+
+The 6 models: GPT-5.6 Luna, Terra and Sol, Claude Opus 5.5 and Sonnet 5.5, and
+DeepSeek-V4.1-Flash-1017 (432 sessions, about $1.35k). Gemini 4 Argon and Kimi K3
+are left out (no access), and Claude Haiku 5.5 and MiMo V2.6 are not on Prime.
+
+```bash
+scripts/setup.sh --final            # .venv, .env (PRIME_API_KEY, PRIME_TEAM_ID to bill a team, SAIL_API_KEY),
+                                    # the SWE-sweep tasks (scripts/get_tasks.sh), a Modal token check; no Docker
+scripts/run_final_patrick.sh        # Luna, DeepSeek (exp. 1 + 2), Sonnet (exp. 1): 234 sessions, ~$200
+scripts/run_final_jonathan.sh       # Opus (exp. 1 + 2), Sol, Terra (exp. 1): 198 sessions, ~$1.15k
+scripts/run_all_final.sh --dry-run  # every model's jobs
+scripts/run_all_final.sh --parallel # the whole study on one machine, then the cross-model figures
+scripts/run_final.sh --model configs/prime/models/gpt-5.6-luna.yaml            # one model, experiments 1 and 2
+scripts/run_final.sh --model configs/prime/models/kimi-k3.yaml --l0-only       # one model, experiment 1 only
+```
+
+The two shares run on two machines at the same time. Each runs its models, and
+each model's two sweeps, all at once (`--parallel`; logs in `logs/final/`), so
+the sessions take about 30 minutes, about 1 hour with preflight and grading;
+Ctrl-C stops every run. The agent loops run on the launching machine (the
+sandboxes only run commands), so it must stay awake and online throughout.
+Without `--parallel` the models run one after another. Everything is
+resumable. `run_final.sh` asks every model the same questions
+(`data/questions/`, generated once by DeepSeek-V4.1-Flash), runs the two sweeps
+in `jobs/final_levels-<model>` and `jobs/final_isolated-<model>`, replays each
+trial's snapshots to time every fix (`fix-times`), judges the answers
+(`grade-answers`), writes `analysis/final_levels-<model>/` and
+`analysis/final_isolated-<model>/` with `scripts/analyze.sh`, and the model's
+experiment 1 table, `analysis/final_l0-<model>/l0.csv`.
+
+### Plots
+
+`run_all_final.sh` draws both from whatever models' tables exist; to draw them
+by hand:
+
+```bash
+# experiment 1: dollars per bug against the share fixed, every model and setting, and the
+# isolated sessions, also graded at the time each bug had in the shared sessions (isolated_capped)
+.venv/bin/python -m subagents_bench.analysis.final \
+  --model "Opus 5.5"=analysis/final_levels-claude-opus-5.5:analysis/final_isolated-claude-opus-5.5 \
+  --model "GPT-5.6 Sol"=analysis/final_levels-gpt-5.6-sol:analysis/final_isolated-gpt-5.6-sol --out analysis/final_l0
+# experiment 2: the levels across models
+.venv/bin/python -m subagents_bench.plots.final \
+  --model "Opus 5.5"=analysis/final_levels-claude-opus-5.5 --model "GPT-5.6 Luna"=analysis/final_levels-gpt-5.6-luna \
+  --model "DeepSeek-V4.1-Flash"=analysis/final_levels-deepseek-v4.1-flash-1017 --out figures/final
+```
+
+Experiment 2 gives six figures in `figures/final/`, each with the table it draws:
+`response_time` (median time to the first reply the user saw, per model, level
+and setting; a bug never replied to counts as never), `bugs_fixed`, `eta`
+(estimate against the real time to fix), `response_cdf`, `orchestrator_time`
+(share of the session in model calls, own tools, or waiting) and
+`question_vs_bug` (L2).
+
+## Earlier study: orchestrator and subagents on Terminal-Bench
+
+The repository started as a batch study of cost and latency on Terminal-Bench 2.0; the
+sections from here to *SWE-sweep* describe it.
 
 One episode is one Terminal-Bench 2.0 task, run by harbor 0.24.0 in the task's
 own Docker image:
@@ -40,7 +142,7 @@ own Docker image:
 | Scope | `easy`: `read_file`, `list_dir`, `search`; `medium`: + `bash` (told not to edit project files); `hard`: + `edit_file` |
 | Orchestrator tools | all five, or `read_file`, `list_dir`, `search` only (a **manager**, which must delegate every command and edit) |
 
-### Conditions
+### Conditions (pilot)
 
 All 15 are in [`configs/sweeps/pilot.yaml`](configs/sweeps/pilot.yaml), each a
 set of overrides on [`configs/sail/base.yaml`](configs/sail/base.yaml).
@@ -59,22 +161,6 @@ x 3 rounds = 45 harbor jobs, 450 episodes. The **smoke** sweep
 conditions on `fix-git` and `prove-plus-comm`, 1 round (30 episodes). Each
 round runs the conditions in its own shuffled order.
 
-## Setup
-
-You need macOS or Linux, [Docker](https://docs.docker.com/get-docker/) running
-(4 task containers at once: give it about 6 CPUs and 12 GB), [uv](https://docs.astral.sh/uv/),
-network access and a Sail API key.
-
-```bash
-scripts/setup.sh        # .venv from uv.lock (harbor 0.24.0 included), Docker check,
-                        # Terminal-Bench 2.0 download, creates .env from .env.example
-```
-
-Put `SAIL_API_KEY=...` in `.env` and run it again; it ends with `Setup OK`.
-`.env` never overrides a variable already set in your shell, and no script
-prints a key. The task images are `linux/amd64`: on Apple Silicon they run
-emulated, which slows tool calls (tool time is measured separately).
-
 ## The three scripts
 
 ```bash
@@ -83,14 +169,18 @@ scripts/run_experiment.sh                             # the pilot (configs/sweep
 scripts/analyze.sh jobs/pilot                         # tables, figures, delegation gate
 ```
 
-`run_experiment.sh [SPEC] [--dry-run] [--only COND...] [--rounds 1,2]` runs
-`subagents-bench preflight SPEC --oracle` (Docker, harbor, the key, one request
-per model, harbor's oracle agent on every task), then `subagents-bench sweep
-SPEC`: one `harbor run` per (round, condition). It prints one line per trial
-as harbor finishes it. `--dry-run` prints the jobs and their harbor commands
-and runs nothing. On macOS the sweep runs under `caffeinate -i` (turn off with
-`SB_NO_CAFFEINATE=1`). Exit codes: 0 done, 1 jobs failed or need a retry,
-2 spec or config error, 3 billing error, 4 provider outage, 130 interrupted.
+`run_experiment.sh [SPEC] [--dry-run] [--only COND...] [--rounds 1,2]
+[--job ROUND:COND]...` runs `subagents-bench preflight SPEC --oracle` (Docker,
+harbor, the key, one request per model, harbor's oracle agent on every task),
+then `subagents-bench sweep SPEC`: one `harbor run` per (round, condition).
+`--rounds` and `--only` narrow that to some rounds and conditions; `--job 1:single`
+(repeatable) adds that one job after them, and without `--rounds` or `--only`
+runs only the jobs it names, so new rounds and the reruns of earlier jobs are
+one sweep. It prints one line per trial as harbor finishes it. `--dry-run`
+prints the jobs and their harbor commands and runs nothing. On macOS the sweep
+runs under `caffeinate -i` (turn off with `SB_NO_CAFFEINATE=1`). Exit codes:
+0 done, 1 jobs failed or need a retry, 2 spec or config error or another sweep
+running on the jobs dir, 3 billing error, 4 provider outage, 130 interrupted.
 
 The sweep is resumable: run the same command again after any stop. Complete
 jobs are skipped; an unfinished job, or one with a trial that did not measure
@@ -100,6 +190,18 @@ the verifier, or on SWE-sweep a verifier that could not grade), is moved to
 retry. On a provider failure the sweep sends one tiny request to every
 model and stops with exit 4 if one still fails.
 Ctrl-C gives harbor up to two minutes to remove its containers.
+
+One sweep runs on a jobs dir at a time. A second one would take the first's
+running jobs for unfinished ones and move them aside, so while a sweep (or
+preflight's oracle job) holds `jobs/<sweep>/.sweep.lock`, another exits 2 at
+once, before it writes anything: `another sweep is running on jobs/<sweep>
+(pid N: <its command>)`. To add jobs, let the running sweep end (or stop it)
+and start one sweep with every job, using `--job` for the odd ones. A sweep
+started by code from before `.sweep.lock` holds no lock, so nothing can tell
+it is running: a new sweep is not refused and moves its running jobs aside.
+Let such a sweep end first (`pgrep -fl 'subagents-bench sweep'` lists the
+sweeps on this machine). `--dry-run` neither takes nor checks the lock: while
+a sweep runs, its running jobs show as `move aside, rerun`.
 
 `analyze.sh [JOBS_DIR...]` aggregates the jobs (several dirs are one data
 set), draws the figures, and exits 3 if a subagent condition never delegated
@@ -185,7 +287,11 @@ on it starts, and whether the earlier ones keep going:
 
 Hints name the files the bug's reference fix changes and its hidden tests' ids
 (`interactive.hint_detail: tests`); `report` uses bug reports written once per
-subtask by `subagents-bench hints configs/sweeps/swe_interactive.yaml`. The
+subtask by `subagents-bench hints configs/sweeps/swe_interactive.yaml`, and
+`symptom` reports of the observable behaviour only, as an end user would write
+them (no file, module or test names: `configs/sweeps/swe_interactive_hard.yaml`,
+written by `subagents-bench hints` too). `interactive.bundle: n` sends n bugs per
+message as a numbered list (the agent replies per bug with `reply(..., item)`). The
 analysis adds `hints.csv` (per hint: delivery, response, dispatch, first touch
 and first edit of its files, in seconds after it was sent, and whether the
 grader counts it fixed; and whether it was not started, continued or stopped
@@ -400,7 +506,7 @@ fixed, a second round would only repeat the same sessions.
 sandbox and the separate verifier) in Modal sandboxes, built from the tasks'
 Dockerfiles on x86-64 machines, instead of the local Docker: no emulation, and
 sessions don't share one machine, so more run at once. The agent loop stays
-here and calls Sail. It needs the `modal` extra (`scripts/setup.sh` installs
+here and calls the model's provider. It needs the `modal` extra (`scripts/setup.sh` installs
 it) and a Modal token (`modal token new`); the sweep sets Modal's 2025.06 image
 builder, since the legacy one fails on images without pip (echo's).
 [`swe_interactive_baseline_modal.yaml`](configs/sweeps/swe_interactive_baseline_modal.yaml)
@@ -412,12 +518,241 @@ scripts/run_experiment.sh configs/sweeps/swe_interactive_baseline_modal_smoke.ya
 scripts/run_experiment.sh configs/sweeps/swe_interactive_baseline_modal.yaml --jobs-at-once 3
 ```
 
+### Levels: one kind of request at a time
+
+The requests run sent every kind of message at once, and could say when a
+bug was fixed only at the end of a session.
+[`swe_interactive_levels.yaml`](configs/sweeps/swe_interactive_levels.yaml)
+extends the Modal baseline and adds one kind of message per level, in the
+baseline's three settings (`single`, `manager_background`,
+`background_hinted`), on click and echo: 12 conditions.
+
+| Level | Conditions | Adds to the level below |
+|---|---|---|
+| L0 | `*_baseline` | nothing: the baseline's 6 bugs, every 4 minutes, run again in this sweep |
+| L1 | `*_eta` | a status check 2 minutes after bugs 1, 3 and 5 that names the bugs so far and asks for each one's `eta_min` or `done` (`status_every: 2`) |
+| L2 | `*_questions` | 2 questions about the code after each bug, 12 per session (`questions_per_interval: 2`) |
+| L3 | `*_urgent` | bug 3, sent at 12:00, is urgent (`urgent_every: 3`) |
+
+Every level has the same system prompt and the same bugs at the same times,
+so L2 - L1 measures the questions and L3 - L2 the urgency. Two options are
+on in every condition. Workspace snapshots (`interactive.snapshots`)
+record the collect hook's diff in the background after every `bash` or
+`edit_file` call and every 15 s, and `fix-times` grades each recorded state
+afterwards with the task's own grader, which gives each bug's real fix time
+(`fixed_sec`). `reply` refuses a reply to a bug that has neither `eta_min`
+nor `done: true` (`interactive.require_eta`). The three main numbers were
+chosen before the run, each with a 95% interval from a bootstrap over
+sessions stratified by task:
+- the on-time share of the structured estimates against those fix times,
+  each bug weighted once (L1);
+- the share of questions answered correctly within 60 s (L2);
+- the urgent bug's win rate on time to fix against the same bug at L2 (L3).
+
+They are in `levels.csv`; the details are in `fixes.csv`,
+`estimates.csv`, `status_pairs.csv`, `eta.csv` and `urgency.csv`, and
+`messages.csv` gains each question's `correct_sec`.
+
+Rounds 1-2 run all 12 conditions (24 jobs, 48 sessions). Rounds 3-4 add L2
+and L3 again (12 jobs), because the urgency comparison pairs sessions and 2
+rounds give only 4 pairs per task and setting. Everything runs on Modal: the
+sessions, through harbor's `environment: modal`, and the replay, with one
+sandbox per trial built from the task's verifier image. `fix-times` makes no
+LLM call. `grade-answers` judges every reply to a question up to the first
+correct one, as correct, wrong or not an answer, at temperature 0.
+
+```bash
+.venv/bin/subagents-bench questions configs/sweeps/swe_interactive_levels.yaml      # 12 per task (click's copied from the requests run)
+scripts/run_experiment.sh configs/sweeps/swe_interactive_levels.yaml --rounds 1,2 --jobs-at-once 24
+scripts/run_experiment.sh configs/sweeps/swe_interactive_levels.yaml --rounds 3,4 --jobs-at-once 12 \
+  --only single_questions manager_background_questions background_hinted_questions \
+         single_urgent manager_background_urgent background_hinted_urgent
+.venv/bin/subagents-bench fix-times configs/sweeps/swe_interactive_levels.yaml      # <trial>/agent/fix_states.json
+.venv/bin/subagents-bench grade-answers configs/sweeps/swe_interactive_levels.yaml  # <trial>/agent/answers.json
+scripts/analyze.sh jobs/swe_interactive_levels
+```
+
+The smoke,
+[`swe_interactive_levels_smoke.yaml`](configs/sweeps/swe_interactive_levels_smoke.yaml)
+(2026-10-16), ran the 12 conditions in 2-minute sessions: a bug every 30 s,
+with the checks, questions and urgent bug of each level. One round on click
+and echo, 12 jobs at once, gave 24 of 24 sessions valid.
+- The snapshots worked: 609 snapshots, none failed.
+- The replay worked: `fix-times` graded the 24 trials (76 states) in 40 s,
+  and every final state reproduced the verifier's verdicts.
+- The recorder does not slow the agents on Modal. A snapshot took a median
+  0.09 s (90th percentile 0.18 s). The agents' `bash` calls took a median
+  0.084 s while a snapshot ran and 0.100 s otherwise.
+- `require_eta` refused 11 of 63 `reply` calls.
+
+**More tasks.** With click and echo alone, each condition gets one session
+per repository.
+[`swe_interactive_levels_more.yaml`](configs/sweeps/swe_interactive_levels_more.yaml)
+runs the same 24 conditions on four more tasks (24 jobs, 96 sessions; its
+jobs pool with this sweep's for 6 sessions per condition): dateutil
+(Python, 10 bugs), gin (Go, 11), dayjs (JavaScript, 11) and luxon
+(JavaScript, 14). They were picked from 13 candidates (2026-10-16). Harbor's
+oracle on Modal solved every bug of all 13 with no regression; images built
+in 0.5-2 min. The picks grade fastest among those whose first 6 bugs (the
+ones sent) name files that exist in the image: the oracle's verifier took
+11, 24, 30 and 40 s with warm images. pendulum, pint and svgo name missing
+files; mpmath, gorm, networkx, goawk and isort grade in 57-111 s. The
+2-minute smoke
+([`swe_interactive_levels_more_smoke.yaml`](configs/sweeps/swe_interactive_levels_more_smoke.yaml),
+`single_questions` and `manager_available_questions`) gave 8 of 8 sessions
+valid. `fix-times` replayed them in 38 s, and every final state matched the
+verifier. One replayed state with 4 bugs sent took 4-6 s (dateutil), 5-9 s
+(gin), 8-15 s (dayjs) and 11-16 s (luxon).
+
+```bash
+.venv/bin/subagents-bench questions configs/sweeps/swe_interactive_levels_more.yaml
+scripts/run_experiment.sh configs/sweeps/swe_interactive_levels_more.yaml --jobs-at-once 24
+.venv/bin/subagents-bench fix-times configs/sweeps/swe_interactive_levels_more.yaml
+.venv/bin/subagents-bench grade-answers configs/sweeps/swe_interactive_levels_more.yaml
+scripts/analyze.sh jobs/swe_interactive_levels jobs/swe_interactive_levels_more
+```
+
+Design, definitions and where the analysis departs from the plan in PR
+#13: docs/DESIGN.md, *Requests*; files and columns: docs/DATA.md.
+
+### Change of plan: taking back a bug
+
+Users change their minds.
+[`swe_interactive_change.yaml`](configs/sweeps/swe_interactive_change.yaml)
+extends the Modal baseline (6 bugs every 4 minutes, with the levels sweep's
+snapshots and `require_eta`) with two messages that take back an earlier bug
+(`interactive.change_of_plan`):
+- at 13:30, `Request #5: forget request #4: that behaviour is intended. Leave
+  that code as it was before you started (undo any change you made for it).`
+  (bug 3, sent at 12:00, likely still in progress: `kind: cancel`);
+- at 16:00, `Request #7: please undo your fix for #1: we need the old
+  behaviour after all.` (bug 0, likely fixed by then: `kind: undo`).
+
+A change is honoured when its bug's hidden tests fail at the end with the
+visible suite passing; the grader needs nothing new. `messages.csv` has a row
+per change (`honoured`, `reply_sec`, until the last tool call touching the
+bug's files, and the subagents that kept working on it). Background subagents
+could not be stopped, so `subagent.stop_tool` gives the orchestrator
+`stop_subagents(agent_ids)`: a named subagent stops before its next LLM or
+tool call and its dispatch ends `stopped`. Five settings on click and echo, 1
+round: `single`, `manager_background`, `background_hinted`,
+`manager_available`, and `manager_available` with the stop tool.
+
+```bash
+scripts/run_experiment.sh configs/sweeps/swe_interactive_change.yaml --jobs-at-once 5
+.venv/bin/subagents-bench fix-times configs/sweeps/swe_interactive_change.yaml
+scripts/analyze.sh jobs/swe_interactive_change
+```
+
+The smoke,
+[`swe_interactive_change_smoke.yaml`](configs/sweeps/swe_interactive_change_smoke.yaml)
+(2026-10-16), ran the five settings for 2 minutes with a bug every 30 s, bug
+2 cancelled at 1:15 and bug 0 undone at 1:35, on click and echo: 10 sessions.
+Every session ran to its deadline.
+- 14 of the 20 change messages were delivered. The other 6 went to the
+  sessions of `single` (echo) and `background_hinted` (both tasks), whose
+  agents were inside one long step at the time.
+- The managers acknowledged 9 of the 12 changes delivered to them, in 7 to
+  25 s.
+- With the stop tool, both managers stopped the subagent working on the bug
+  within 6 to 19 s of each change. The subagents ended 1 to 15 s later, with
+  status `stopped`. Without the tool, those subagents ran on until the
+  deadline.
+- 18 of 20 changes were honoured. Most are trivial: in 2-minute sessions
+  the targeted bug was rarely fixed in the first place. The 2 that were not
+  are undos in echo, where bug 0 stayed fixed under `manager_background` and
+  under `manager_available` with the stop tool.
+
+### Interrupts: a message stops the call in progress
+
+A message reaches the orchestrator only between its LLM calls, and those
+calls often reason for 2-7 minutes. Settings told to keep their steps short
+answered in about 15 s; the others took minutes. With
+`interactive.interrupt: true`, a user message that comes due during the
+orchestrator's call aborts it. The stream is closed and the partial reply
+dropped, and the model is called again with the message. A call that has
+run under 5 s, or has started a tool call, finishes first. At most 3 calls
+in a row are interrupted. Subagent reports never interrupt, and subagents
+are never interrupted (docs/DESIGN.md, *Interrupts*).
+[`swe_interactive_interrupt.yaml`](configs/sweeps/swe_interactive_interrupt.yaml)
+extends the levels sweep with only its own 6 conditions: `single`,
+`manager_background` and `background_hinted`, at L0
+(`*_interrupt_baseline`) and L2 (`*_interrupt_questions`). Each pairs with
+the levels condition of the same name without `_interrupt`.
+
+```bash
+mkdir -p jobs/swe_interactive_interrupt/hints   # the levels sweep's questions, reused
+cp <levels checkout>/jobs/swe_interactive_levels/hints/*.questions.json jobs/swe_interactive_interrupt/hints/
+scripts/run_experiment.sh configs/sweeps/swe_interactive_interrupt.yaml --jobs-at-once 6
+.venv/bin/subagents-bench fix-times configs/sweeps/swe_interactive_interrupt.yaml
+.venv/bin/subagents-bench grade-answers configs/sweeps/swe_interactive_interrupt.yaml
+scripts/analyze.sh jobs/swe_interactive_interrupt
+```
+
+The smoke,
+[`swe_interactive_interrupt_smoke.yaml`](configs/sweeps/swe_interactive_interrupt_smoke.yaml)
+(2026-10-16), ran the 6 conditions in 2-minute sessions on click and echo:
+12 of 12 sessions valid, no provider errors, $0.040 in all.
+- 67 calls were interrupted, 2-11 per session. Each aborted call ended a
+  median 0.25 s after the rule held (at most 0.42 s). Every one was
+  followed by a call that had the message, and none left a reply in the
+  conversation.
+- Median delivery fell from 2-13 s in the levels smoke to 0.2-3.4 s. The
+  slowest was 15.6 s, behind a call protected by the 3-in-a-row cap. With a
+  message every 10 s, 3 interrupts in a row came often. In both
+  `manager_background_interrupt_questions` sessions the protected 4th call
+  then reasoned for its last 40-50 s, until the deadline. That left 9
+  messages undelivered, and that condition never delegated, so the
+  delegation gate failed. Messages that close together
+  are a smoke artefact: the full session's gaps are 40 s or more.
+- The aborted calls were 38% of the cost. Their tokens are estimates. The
+  smoke recorded one token a chunk; the code now uses 16 tokens a chunk,
+  which puts them at about $0.021.
+
+### Models: the same sweeps on Prime Inference
+
+The DeepSeek runs used Sail, which serves few of the models issue #23 compares;
+those run on [Prime Inference](https://docs.primeintellect.ai/inference/overview).
+`--model FILE` runs any sweep's orchestrators, and its subagents where the spec
+sets them to the orchestrator's model (`subagent.model: null`, as in every
+interactive sweep since the baseline), on one model, in
+`jobs/<sweep>-<file stem>`. Every model gets the sweep's own questions and bug
+reports (`jobs/<sweep>/hints`), and `grade-answers` judges every model's
+answers with the sweep's own model, so the judge stays the same.
+
+| Model | `--model configs/prime/models/...` | Prime id | USD per 1M tokens in / out |
+|---|---|---|---|
+| GPT-5.6 Luna | `gpt-5.6-luna.yaml` | `openai/gpt-5.6-luna` | 0.20 / 1.20 |
+| GPT-5.6 Terra | `gpt-5.6-terra.yaml` | `openai/gpt-5.6-terra` | 2.50 / 15 |
+| GPT-5.6 Sol | `gpt-5.6-sol.yaml` | `openai/gpt-5.6-sol` | 5 / 30 |
+| Claude Opus 5.5 | `claude-opus-5.5.yaml` | `anthropic/claude-opus-5.5` | 4 / 20 |
+| Claude Sonnet 5.5 | `claude-sonnet-5.5.yaml` | `anthropic/claude-sonnet-5.5` | 2 / 10 |
+| Gemini 4 Argon | `gemini-4-argon.yaml` | `google/gemini-4-argon` | 2 / 10 (launch price) |
+| Kimi K3 | `kimi-k3.yaml` | `moonshotai/kimi-k3` | 3.45 / 17.25 |
+| DeepSeek-V4.1-Flash | `deepseek-v4.1-flash-1017.yaml` | `deepseek/deepseek-v4.1-flash-1017` | 0.30 / 1.20 |
+
+Claude Haiku 5.5 and MiMo V2.6 are not on Prime (404 `model_not_found` on
+2026-10-25). Every file sets `reasoning_effort: high`. Cached prompt tokens
+cost 10% of the input price (DeepSeek: 0.006), as Prime billed them; the
+Anthropic models set `cache_control`, without which they cache nothing.
+docs/DESIGN.md, *Providers*, has what the probes of every model found.
+
+```bash
+RUN_LIVE=1 .venv/bin/python -m pytest -q tests/test_llm_live.py -k harness   # each model: prompt, tools, round trip
+scripts/run_experiment.sh configs/sweeps/swe_interactive_levels_smoke.yaml --model configs/prime/models/gpt-5.6-luna.yaml \
+  --job 1:single_baseline
+scripts/run_experiment.sh configs/sweeps/swe_interactive_levels.yaml --model configs/prime/models/claude-opus-5.5.yaml \
+  --only single_baseline manager_background_baseline background_hinted_baseline --jobs-at-once 3
+scripts/analyze.sh jobs/swe_interactive_levels-claude-opus-5.5
+```
+
 ## Where data and figures land
 
 ```
 jobs/<sweep>/                       the sweep (git-ignored, like analysis/ and figures/)
   configs/<condition>.yaml          resolved config of each condition
   sweep.json, sweep_manifest.jsonl  status and one line per job event
+  .sweep.lock                       locked while a sweep runs: its pid and command line
   <sweep>__r<k>__<condition>/       one harbor job
     <task>__<id>/result.json        harbor's trial result (reward, exceptions, timings)
     <task>__<id>/agent/             this harness's records: episode.json, calls.jsonl,
@@ -536,27 +871,33 @@ To keep track of:
 ```
 subagents_bench/
   config.py           ExperimentConfig: one condition, loaded strictly from YAML
-  llm.py              Sail client: streamed SSE, tool-call repair, fail-fast retries
+  llm.py              Prime Inference and Sail client: streamed SSE, reasoning_details, tool-call repair, retries
   environment.py      harbor's container or the host shell, with a shared stop event
   tools.py            bash, edit_file, read_file, list_dir, search via a per-agent shell
   prompts.py          orchestrator, subagent, judge and debate prompts
   orchestrator.py     the step loop and spawn_subagents
   interactive.py      timed sessions: hints as user messages, background subagents, wait, reply
-  hints.py            SWE-sweep subtasks -> the message schedule; generated bug reports and code questions
+  snapshots.py        workspace snapshots during a session (interactive.snapshots)
+  fixtimes.py, replay_states.py   `fix-times`: grade every snapshot with the task's grader on Modal
+  hints.py            SWE-sweep subtasks -> the message schedule; generated bug reports and code questions;
+                      the answer judge
   subagent.py         one subagent run (a dispatch)
   arbiter.py          candidates, judge, debate, copy isolation and apply
   records.py          the episode records
   harness/harbor_agent.py   harbor's external agent (OrchestratorAgent)
   sweep.py, cli.py    sweep specs, preflight, harbor jobs; `subagents-bench`
   analysis/           validity, cost, critical path, tables, delegation gate; interactivity.py (hints),
-                      requests.py (replies: answers, estimates, done claims)
+                      requests.py (replies: answers, estimates, done claims); fixes.py, estimates.py,
+                      levels.py (the levels: fix times, estimates against them, urgency, main numbers)
   monitor/            the HTML monitor of an interactive sweep (python -m subagents_bench.monitor)
   plots/              the nine figures
-configs/              sail/base.yaml, sweeps/{pilot,smoke,swe_sweep,swe_interactive*}.yaml, pricing.yaml
+configs/              sail/base.yaml, prime/models/*.yaml (--model), sweeps/{pilot,smoke,swe_sweep,swe_interactive*}.yaml,
+                      pricing.yaml
 scripts/              setup.sh, run_experiment.sh, analyze.sh
 tests/                offline tests (fake models, fake harbor); RUN_DOCKER=1, RUN_LIVE=1 opt in
 ```
 
 Tests: `.venv/bin/python -m pytest -q` (offline, under a minute).
-`RUN_DOCKER=1` adds the container tests, `RUN_LIVE=1` one tool-calling request
-to each Sail model.
+`RUN_DOCKER=1` adds the container tests, `RUN_LIVE=1` a tool-calling request
+to each model, and for each Prime model the interactive prompt and every tool
+with a round trip (a few cents).

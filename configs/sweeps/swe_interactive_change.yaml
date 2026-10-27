@@ -1,0 +1,52 @@
+# Change of plan: mid-session the user takes back an earlier bug, on top of the bugs-only baseline
+# (swe_interactive_baseline_modal.yaml's sessions: 6 bugs every 4 minutes, 30 minutes, the same bugs
+# in the same order everywhere). Two more messages, each with its own id:
+#   #5 at 13:30  cancel bug 3 (#4, sent 12:00, likely still in progress): "forget request #4: that
+#                behaviour is intended. Leave that code as it was before you started (undo any change
+#                you made for it)."
+#   #7 at 16:00  undo bug 0 (#1, sent 0:00, likely fixed by then): "please undo your fix for #1: we
+#                need the old behaviour after all." (#6 is bug 4, sent at the same time)
+# The grader needs nothing new: a change is honoured when its bug's hidden tests FAIL at the end with
+# the visible suite passing (messages.csv `honoured`; the bug's own row says `fixed` false). The
+# system prompt gains one "Replying to the user" bullet for these messages, nothing else.
+# As at the levels sweep's L0: workspace snapshots (fix-times can tell when a fix was reverted) and
+# reply rejects a reply to a bug with neither eta_min nor done: true; no questions or status checks.
+# Five settings: single, manager_background, background_hinted, manager_available, and
+# manager_available with `stop_subagents` (subagent.stop_tool), so the manager can stop the
+# subagent working on the cancelled bug instead of letting it finish.
+# On Modal, 1 round, click and echo for now: 5 conditions x 2 tasks = 5 jobs, 10 sessions:
+#   scripts/run_experiment.sh configs/sweeps/swe_interactive_change.yaml --jobs-at-once 5
+#   .venv/bin/subagents-bench fix-times configs/sweeps/swe_interactive_change.yaml
+#   scripts/analyze.sh jobs/swe_interactive_change
+extends: configs/sweeps/swe_interactive_baseline_modal.yaml
+name: swe_interactive_change
+rounds: 1
+
+overrides:
+  interactive:
+    snapshots: true
+    require_eta: true
+    change_of_plan:                  # bug: 0-based bug index (the order is fixed); at_sec: when it is sent
+      - {kind: cancel, bug: 3, at_sec: 810}
+      - {kind: undo, bug: 0, at_sec: 960}
+
+conditions:
+  # the parent's six bugs-only conditions are not run here
+  single_baseline: null
+  manager_background_baseline: null
+  background_hinted_baseline: null
+  manager_available_baseline: null
+  manager_owner_baseline: null
+  dispatcher_hinted_baseline: null
+  single_change: {topology: single}
+  manager_background_change:
+    subagent: {strategy: parallel, scope: hard, spawn_mode: background}
+    tools: {orchestrator_tools: [read_file, list_dir, search]}
+  background_hinted_change:
+    subagent: {strategy: parallel, scope: hard, spawn_mode: background, delegation_hint: true}
+  manager_available_change:
+    subagent: {strategy: parallel, scope: hard, spawn_mode: background, availability_hint: true}
+    tools: {orchestrator_tools: [read_file, list_dir, search]}
+  manager_available_stop_change:
+    subagent: {strategy: parallel, scope: hard, spawn_mode: background, availability_hint: true, stop_tool: true}
+    tools: {orchestrator_tools: [read_file, list_dir, search]}

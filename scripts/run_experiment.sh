@@ -7,12 +7,19 @@
 #   SPEC             sweep spec, default configs/sweeps/pilot.yaml (a relative path that does
 #                    not exist in the current directory is taken from the repository root)
 #   sweep options    passed to `subagents-bench sweep`: --dry-run (print the jobs, skip
-#                    preflight), --only COND..., --rounds 1,2
+#                    preflight), --only COND..., --rounds 1,2, --job ROUND:COND (one more
+#                    job; repeatable; alone: only these jobs), --jobs-at-once N, --model FILE
+#                    (every orchestrator on this model, e.g. configs/prime/models/gpt-5.6-luna.yaml,
+#                    in jobs/<sweep>-<file stem>; preflight gets it too)
 #
 # SKIP_PREFLIGHT=1 skips preflight. On macOS the sweep runs under `caffeinate -i` so the
 # machine does not sleep (and drop the network); SB_NO_CAFFEINATE=1 turns that off.
-# Exit codes: 0 done, 1 failed jobs or preflight, 2 spec or config error, 3 billing error,
-# 4 provider outage (the ABORT line names the model and error), 130 interrupted.
+# Preflight's oracle job and the sweep each lock the jobs dir while they run, one after the
+# other; with another sweep on it, either exits 2 at once. A sweep run by code from before
+# the lock holds none and is not detected: let it end first.
+# Exit codes: 0 done, 1 failed jobs or preflight, 2 spec or config error or another sweep
+# running on the jobs dir, 3 billing error, 4 provider outage (the ABORT line names the model
+# and error), 130 interrupted.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -30,11 +37,16 @@ case "$SPEC" in
 esac
 
 DRY_RUN=0
+MODEL=()
+prev=""
 for arg in "$@"; do
   case "$arg" in
     -h | --help) usage; exit 0 ;;
     --dry-run) DRY_RUN=1 ;;
+    --model=*) MODEL=("$arg") ;;
   esac
+  [ "$prev" = --model ] && MODEL=(--model "$arg")
+  prev="$arg"
 done
 
 BIN="$ROOT/.venv/bin/subagents-bench"
@@ -44,7 +56,7 @@ if [ ! -x "$BIN" ]; then
 fi
 
 if [ "$DRY_RUN" = 0 ] && [ "${SKIP_PREFLIGHT:-0}" != 1 ]; then
-  "$BIN" preflight "$SPEC" --oracle || exit $?
+  "$BIN" preflight "$SPEC" --oracle ${MODEL[@]+"${MODEL[@]}"} || exit $?
 fi
 
 AWAKE=()

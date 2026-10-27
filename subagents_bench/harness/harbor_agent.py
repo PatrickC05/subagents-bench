@@ -31,7 +31,7 @@ from ..config import load_config, load_dotenv
 from ..environment import HarborEnvironment
 from ..hints import HINTS_DIR_ENV, HintError, order_seed, schedule
 from ..interactive import InteractiveOrchestrator
-from ..llm import LLMError, SailClient
+from ..llm import ChatClient, LLMError
 from ..orchestrator import Orchestrator
 from ..records import EpisodeRecorder
 
@@ -91,7 +91,7 @@ class OrchestratorAgent(BaseAgent):
         if not path:
             raise RuntimeError("set SUBAGENTS_BENCH_CONFIG to the condition's YAML config")
         self.config = load_config(path)
-        self.client_factory = SailClient  # tests inject fakes
+        self.client_factory = ChatClient  # tests inject fakes
         self.state_root: str | None = None  # tests keep host-side shell state out of /tmp/.sb
         self.recorder: EpisodeRecorder | None = None
 

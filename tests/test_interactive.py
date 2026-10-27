@@ -27,6 +27,7 @@ from subagents_bench.interactive import InteractiveOrchestrator
 from subagents_bench.plots.__main__ import main as plot
 from subagents_bench.prompts import clock, interactive_note, interactive_prompt
 from subagents_bench.records import EpisodeRecorder
+from test_snapshots import collect_on_copy, init_repo, isolate_git
 
 FAST = {"interactive": {"wall_clock_sec": 4.0, "interval_sec": 0.5}, "budget": {"orchestrator_steps": 80}}
 
@@ -177,6 +178,54 @@ def test_deadline_records_hints_never_delivered(tmp_path):
     assert exit_reason == "deadline" and sec < 10
     assert [h["t_delivered"] is None for h in hints_in(r)] == [False, True, True]
     assert (r["episode"]["n_hints"], r["episode"]["n_hints_delivered"]) == (3, 1)
+    assert r["snapshots"] == [] and not (tmp_path / "ep" / "snapshots").exists()  # snapshots are off by default
+
+
+def test_session_with_snapshots_records_the_workspace(tmp_path, monkeypatch):
+    """interactive.snapshots: snapshot 0 at the start, one after the bash and edit_file calls (not
+    after wait), heartbeats during a long command; the last changed state's patch is the collect
+    hook's patch of the final workspace; nothing after the session ends."""
+    isolate_git(monkeypatch)
+    work = init_repo(tmp_path / "work", {"src/m0.py": b"a = 0\n", "README": b"r\n"})
+    script = [Reply("", [tc("bash", command="printf 'a = 1\\n' > src/m0.py")], latency=0.5),  # after snapshot 0
+              Reply("", [tc("edit_file", path="src/m1.py", old="", new="b = 1\n")]),
+              Reply("", [tc("bash", command="sleep 0.8")])]
+
+    def orch(system, messages, tools):
+        return script.pop(0) if script else Reply("", [tc("wait")])
+
+    exit_reason, r, _, _, _ = session(tmp_path, {ORCH: orch}, n_hints=2, topology="single",
+                                      interactive={"snapshots": True, "snapshot_every_sec": 0.25})
+    assert exit_reason == "idle"
+    s, ep = r["snapshots"], r["episode"]
+    assert [x["seq"] for x in s] == list(range(len(s))) and all(x["error"] is None for x in s), s
+    assert (s[0]["trigger"], s[0]["changed"], s[0]["bytes"]) == ("start", True, 0)
+    triggers = [x["trigger"] for x in s]
+    assert 2 <= triggers.count("tool") <= 4 and "heartbeat" in triggers  # 3 bash/edit calls, maybe coalesced
+    assert all(ep["session_t0"] <= x["t_request"] <= x["t_start"] <= x["t_end"] <= ep["t_end"] for x in s)
+    changed = [x for x in s if x["changed"]]
+    assert all(x["patch"] == f"snapshots/{x['seq']:04d}.patch" for x in changed)
+    assert all(x["patch"] is None for x in s if not x["changed"])
+    assert sorted(p.name for p in (tmp_path / "ep" / "snapshots").iterdir()) == [
+        f"{x['seq']:04d}.patch" for x in changed]
+    patch, tree = collect_on_copy(work, tmp_path / "copy")
+    assert (tmp_path / "ep" / changed[-1]["patch"]).read_bytes() == patch and changed[-1]["tree"] == tree
+    assert b"+a = 1" in patch and b"b/src/m1.py" in patch
+    assert s[-1]["tree"] == tree and not s[-1]["changed"]  # after the edit: the sleep changed nothing
+
+
+def test_snapshots_stop_with_the_deadline(tmp_path, monkeypatch):
+    isolate_git(monkeypatch)
+    init_repo(tmp_path / "work", {"src/m0.py": b"a = 0\n"})
+    scripts = {ORCH: [Reply("", [tc("bash", command="printf 'a = 1\\n' > src/m0.py; sleep 30")], latency=0.4)]}
+    exit_reason, r, _, _, sec = session(tmp_path, scripts, n_hints=2, topology="single",
+                                        interactive={"wall_clock_sec": 1.2, "snapshots": True,
+                                                     "snapshot_every_sec": 0.2})
+    assert exit_reason == "deadline" and sec < 10
+    s = r["snapshots"]
+    assert s[0]["trigger"] == "start" and {x["trigger"] for x in s[1:]} <= {"heartbeat", "tool"}
+    assert any(x["changed"] and x["seq"] > 0 for x in s)  # the heartbeats saw the running command's edit
+    assert all(x["t_end"] <= r["episode"]["t_end"] for x in s)
 
 
 def test_reply_without_tool_call_waits_and_finish_is_not_a_tool(tmp_path):
@@ -260,6 +309,28 @@ def test_schedule_order_slots_and_texts(tmp_path):
     assert hint_text(b0, "report", "  Clicking crashes.  ") == "Clicking crashes."
     with pytest.raises(HintError, match="no generated report"):
         hint_text(b0, "report")
+
+
+def test_only_bug_sends_one_bug_of_the_shared_order(tmp_path):
+    task = make_task(tmp_path, 14, files=[[f"src/m{i}.py"] for i in range(14)])
+    shared = schedule(make_config(interactive={"max_hints": 6, "replies": True}).interactive, task, "task-1")
+    for k in range(6):
+        one = schedule(make_config(interactive={"max_hints": 1, "only_bug": k, "replies": True}).interactive,
+                       task, "task-1")
+        assert len(one) == 1 and one[0].subtask == shared[k].subtask and one[0].text == shared[k].text
+        assert (one[0].t_offset, one[0].index, one[0].positions, one[0].msg_id) == (0.0, 0, (0,), 1)
+    plain = schedule(make_config(interactive={"only_bug": 2}).interactive, task, "task-1")
+    assert plain[0].msg_id is None
+    with pytest.raises(HintError, match="only_bug 14"):
+        schedule(make_config(interactive={"only_bug": 14}).interactive, task, "task-1")
+
+
+@pytest.mark.parametrize("extra", [{"max_hints": 6}, {"replies": True, "questions_per_interval": 2},
+                                   {"replies": True, "status_every": 2}, {"replies": True, "bundle": 3},
+                                   {"only_bug": -1}, {"only_bug": True}])
+def test_only_bug_config_errors(extra):
+    with pytest.raises(ConfigError, match="only_bug"):
+        make_config(interactive={"only_bug": 0, **extra})
 
 
 def test_task_without_subtasks_is_a_hint_error(tmp_path):
@@ -513,7 +584,7 @@ def test_sweep_generates_reports_and_passes_the_hints_dir(tmp_path, monkeypatch,
     spec = sweep.load_spec(path)
     assert "no generated reports" in sweep.check_interactive(spec)[0]
     replies = iter(["Report A.", "Report B.", "Report C."])
-    monkeypatch.setattr(sweep, "SailClient", lambda m: FakeFactory({m.model: lambda s, ms, t: Reply(next(replies))})(m))
+    monkeypatch.setattr(sweep, "ChatClient", lambda m: FakeFactory({m.model: lambda s, ms, t: Reply(next(replies))})(m))
     assert cli.main(["hints", str(path)]) == 0
     assert "[OK] task-1: 3 reports (3 new)" in capsys.readouterr().out
     assert sorted(load_reports(sweep.hints_dir(spec), "task-1").values()) == ["Report A.", "Report B.", "Report C."]
@@ -583,7 +654,8 @@ def test_old_reports_and_reasoning_are_elided_too(tmp_path):
     def orch(system, messages, tools):  # one job at a time: each report is its own, older message
         n = sum(1 for m in messages if m.role == "assistant" and m.tool_calls[0].name == "spawn_subagents")
         if n < 4 and messages[-1].role == "user":
-            return Reply("", [tc("spawn_subagents", instructions=[f"job {n}"])], reasoning="r" * 3000)
+            return Reply("", [tc("spawn_subagents", instructions=[f"job {n}"])], reasoning="r" * 3000,
+                         reasoning_details=[{"type": "reasoning.text", "text": "r" * 3000, "signature": "s"}])
         return Reply("", [tc("wait")])
 
     sub = lambda system, messages, tools: Reply("", [tc("submit", report="R" * 5000)])  # noqa: E731
@@ -591,7 +663,33 @@ def test_old_reports_and_reasoning_are_elided_too(tmp_path):
                             interactive={"max_context_chars": 10000})
     users = [m.content for req in f[ORCH].requests for m in req["messages"][1:] if m.role == "user"]
     assert any("characters of an older report]" in u for u in users) and r["episode"]["n_elided_results"] >= 2
-    assert f[ORCH].requests[-1]["messages"][1].reasoning is None
+    first = f[ORCH].requests[-1]["messages"][1]
+    assert first.reasoning is None and first.reasoning_details is None
+    assert f[ORCH].requests[1]["messages"][1].reasoning_details[0]["signature"] == "s"  # kept until elided
+
+
+def test_elision_keeps_the_current_turns_reasoning(tmp_path):
+    """Even when everything older is elided, the assistant turn the newest tool result answers keeps
+    its reasoning: Anthropic and Gemini reject a tool loop whose current turn lost its signature."""
+    details = [{"type": "reasoning.text", "text": "r" * 20000, "signature": "s"}]
+    orch = [Reply("", [tc("list_dir", path=".")], reasoning="r" * 20000, reasoning_details=details),
+            Reply("", [tc("wait")])]
+    _, _, f, _, _ = session(tmp_path, {ORCH: orch}, n_hints=1, topology="single",
+                            interactive={"max_context_chars": 10000})
+    msgs = f[ORCH].requests[1]["messages"]
+    assert msgs[-1].role == "tool" and msgs[-2].role == "assistant"
+    assert msgs[-2].reasoning_details == details and msgs[-2].reasoning == "r" * 20000
+
+
+def test_model_flag_keeps_the_sweeps_hints_and_writer(tmp_path):
+    """Under --model every model gets the sweep's own questions and reports and the same judge."""
+    from subagents_bench import sweep
+    path = interactive_spec(tmp_path)
+    own = sweep.load_spec(path)
+    spec = sweep.load_spec(path, model=Path(__file__).resolve().parents[1] / "configs/prime/models/gpt-5.6-luna.yaml")
+    assert spec.jobs_dir != own.jobs_dir and sweep.hints_dir(spec) == sweep.hints_dir(own) == own.jobs_dir / "hints"
+    assert spec.configs["solo"].orchestrator.model == "openai/gpt-5.6-luna"
+    assert sweep.writer_model(spec) == sweep.writer_model(own) == own.configs["solo"].orchestrator
 
 
 def test_scope_all_keeps_the_task_goal_and_rounds_vary_the_order(tmp_path):

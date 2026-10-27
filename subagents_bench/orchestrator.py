@@ -16,7 +16,8 @@ from typing import Any, Callable
 from .arbiter import run_arbitration
 from .config import ExperimentConfig
 from .environment import AgentStopped
-from .llm import BillingError, LLMError, Message, SailClient, ToolCall, ToolResult, ToolSpec
+from .llm import (BillingError, CallCancel, CallInterrupted, ChatClient, LLMError, Message, ToolCall, ToolResult,
+                  ToolSpec)
 from .prompts import LENGTH_CUTOFF_NOTE, LENGTH_CUTOFF_REPLY, orchestrator_prompt, step_note
 from .records import EpisodeRecorder, Who
 from .subagent import Runtime, new_dispatch, run_dispatch
@@ -41,7 +42,7 @@ MIN_REPORT_CHARS = 2000  # per report in a spawn result
 
 class Orchestrator:
     def __init__(self, config: ExperimentConfig, env: Any, rec: EpisodeRecorder, workdir: str,
-                 client_factory: Callable[[Any], Any] = SailClient):
+                 client_factory: Callable[[Any], Any] = ChatClient):
         self.cfg, self.env, self.rec, self.workdir = config, env, rec, workdir
         env.stop_event = rec.stop_event
         self.client_factory = client_factory
@@ -96,6 +97,10 @@ class Orchestrator:
         self.messages.append(m)
         self.rec.transcript(self.who, m, call_id)
 
+    # Interactive interrupts (InteractiveOrchestrator): None, or when to abort the step's LLM call.
+    _interrupt: Callable[[CallCancel], bool] | None = None
+    last_interrupted = False  # the last step's call was interrupted
+
     def _note(self, step: int) -> str:
         return step_note(step, self.cfg.budget.orchestrator_steps, self.dispatches_left if self.subagents else None)
 
@@ -105,15 +110,20 @@ class Orchestrator:
         t_llm_end = call_id = None
         names: list[str] = []
         groups: list[str] = []
-        finished = False
+        finished = interrupted = False
         try:
             try:
-                r, call_id = self.rec.llm(self.who, self.rt.orch_client, self.system, self.messages, self.specs, step)
+                r, call_id = self.rec.llm(self.who, self.rt.orch_client, self.system, self.messages, self.specs, step,
+                                          self._interrupt)
+            except CallInterrupted as e:  # its partial reply is dropped; the next step delivers what interrupted it
+                interrupted, call_id = True, getattr(e, "call_id", None)
+                return None
             finally:
                 t_llm_end = time.time()
+                self.last_interrupted = interrupted
             cut_off = not r.tool_calls and r.finish_reason == "length"
             self._add(Message("assistant", r.text or (LENGTH_CUTOFF_REPLY if cut_off else ""), r.tool_calls,
-                              reasoning=r.reasoning or None), call_id)
+                              reasoning=r.reasoning or None, reasoning_details=r.reasoning_details or None), call_id)
             if not r.tool_calls:
                 if not cut_off:
                     return "no_tool_call"
@@ -137,7 +147,7 @@ class Orchestrator:
         finally:
             self.rec.write("steps", {
                 "step": step, "call_id": call_id, "t_start": t_start, "t_llm_end": t_llm_end, "t_end": time.time(),
-                "tool_names": names, "group_ids": groups, "finished": finished,
+                "tool_names": names, "group_ids": groups, "finished": finished, "interrupted": interrupted,
             })
 
     def _tool(self, tc: ToolCall, step: int, call_id: str, groups: list[str]) -> ToolOutput:

@@ -2,6 +2,21 @@
 # USD per 1M tokens: `in` uncached prompt tokens, `cached` prompt tokens served
 # from the provider's prefix cache, `out` completion tokens (reasoning included).
 # A model without a price in the scheme costs NaN, never 0.
-sail_balanced:                   # Sail `balanced` tier, retrieved 2026-10-11
+sail_balanced: &sail_balanced    # Sail `balanced` tier, retrieved 2026-10-11
   deepseek-ai/DeepSeek-V4.1-Flash: {in: 0.07, cached: 0.005, out: 0.22}
   nvidia/Gemma-4-31B-IT-NVFP4: {in: 0.11, cached: 0.06, out: 0.32}
+# Prime Inference (api.pinference.ai/api/v1/models), retrieved 2026-10-25. Prime lists no cache-read
+# price for its gateway models; its bills charged cached tokens at 10% of the input price
+# (docs/DESIGN.md, *Providers*). DeepSeek is a hosted model, with a listed cache-read price.
+prime: &prime
+  openai/gpt-5.6-luna: {in: 0.2, cached: 0.02, out: 1.2}
+  openai/gpt-5.6-terra: {in: 2.5, cached: 0.25, out: 15}
+  openai/gpt-5.6-sol: {in: 5, cached: 0.5, out: 30}
+  anthropic/claude-opus-5.5: {in: 4, cached: 0.4, out: 20}
+  anthropic/claude-sonnet-5.5: {in: 2, cached: 0.2, out: 10}
+  google/gemini-4-argon: {in: 2, cached: 0.2, out: 10}      # launch price; $4 / $20 from 2026-12-01
+  moonshotai/kimi-k3: {in: 3.45, cached: 0.345, out: 17.25}
+  deepseek/deepseek-v4.1-flash-1017: {in: 0.3, cached: 0.006, out: 1.2}
+# The default: every model above at its provider's price (Sail's and Prime's model ids differ).
+default:
+  <<: [*sail_balanced, *prime]

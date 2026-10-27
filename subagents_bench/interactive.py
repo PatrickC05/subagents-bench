@@ -17,12 +17,22 @@ it); the deadline stops every agent through the recorder's stop event, like harb
 With ``interactive.replies`` the schedule also holds questions and status checks, every message
 has an id, and the orchestrator answers with ``reply`` (``replies.jsonl``: when, to which message,
 the text, an ETA in minutes, done). The user sees nothing else, so a reply's time is when the user
-got an answer, an estimate or a done.
+got an answer, an estimate or a done. With ``require_eta``, a reply to a bug without a usable
+``eta_min`` and without ``done: true`` is refused (an error result; nothing is sent or recorded).
+
+With ``subagent.stop_tool``, ``stop_subagents(agent_ids)`` asks running background subagents to
+stop: each ends at its next step (before its next LLM call or tool call) with status ``stopped``,
+and its report is delivered as usual. With ``interactive.change_of_plan``, ``cancel`` and ``undo``
+messages take back an earlier bug (their inbox records name it: ``target_msg_id``, ``subtask_id``).
+
+With ``interactive.snapshots``, a :class:`~subagents_bench.snapshots.Snapshotter` records the
+workspace's diff against ``baseline`` in the background from the session's start until it ends.
 """
 
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import threading
 import time
 import traceback
@@ -32,11 +42,12 @@ from typing import Any, Callable
 from .config import ExperimentConfig
 from .environment import AgentStopped
 from .hints import Hint
-from .llm import BillingError, LLMError, Message, SailClient, ToolCall, ToolResult, ToolSpec
+from .llm import BillingError, CallCancel, ChatClient, LLMError, Message, ToolCall, ToolResult, ToolSpec
 from .orchestrator import SPAWN_SPEC, Orchestrator
 from .prompts import (FIRST_HINT, REPORT_EVENT, REPORTED_SCOPE, USER_EVENT, WAIT_RESULT, clock, interactive_note,
                       interactive_prompt, request_text)
 from .records import EpisodeRecorder
+from .snapshots import Snapshotter
 from .subagent import Dispatch, DispatchResult, Runtime, new_dispatch, run_dispatch
 from .tools import ToolOutput, truncate
 
@@ -65,6 +76,20 @@ REPLY_SPEC = ToolSpec(
         "done": {"type": "boolean", "description": "For a bug: true once it is fixed and checked."}},
      "required": ["to", "text"]},
 )
+STOP_SPEC = ToolSpec(
+    "stop_subagents",
+    "Stop background subagents that are still running. Each stops at its next step (a command or model call "
+    "in progress finishes first); its report so far arrives as a message.",
+    {"type": "object", "properties": {"agent_ids": {"type": "array", "items": {"type": "string"},
+                                                    "description": "Ids of running subagents (sub-3)."}},
+     "required": ["agent_ids"]},
+)
+# interactive.bundle > 1: a reply can be about one bug of a message that lists several
+REPLY_ITEM = {"type": "integer", "description": "For a message that lists several bugs: the number of the bug this "
+                                                "reply is about (omit: every bug of the message)."}
+BUNDLE_REPLY_SPEC = ToolSpec(REPLY_SPEC.name, REPLY_SPEC.description,
+                             {**REPLY_SPEC.parameters, "properties": {**REPLY_SPEC.parameters["properties"],
+                                                                       "item": REPLY_ITEM}})
 POLL_SEC = 0.5  # a wait also wakes this often to notice the stop event
 JOIN_SEC = 30.0  # for the background subagents to unwind after a stop
 ELIDED = "[elided to keep the conversation within its size limit: {n} characters of older tool output]"
@@ -75,7 +100,7 @@ ELIDE_TO = 0.75  # elide down to this fraction of max_context_chars, so the prom
 
 class InteractiveOrchestrator(Orchestrator):
     def __init__(self, config: ExperimentConfig, env: Any, rec: EpisodeRecorder, workdir: str, hints: list[Hint],
-                 client_factory: Callable[[Any], Any] = SailClient):
+                 client_factory: Callable[[Any], Any] = ChatClient):
         super().__init__(config, env, rec, workdir, client_factory)
         self.icfg = config.interactive
         self.hints = hints
@@ -84,7 +109,9 @@ class InteractiveOrchestrator(Orchestrator):
         specs = [s for s in self.specs if s.name != "finish"]
         if self.background:
             specs = [BACKGROUND_SPAWN_SPEC if s.name == "spawn_subagents" else s for s in specs]
-        self.specs = specs + [WAIT_SPEC] + ([REPLY_SPEC] if self.icfg.replies else [])
+        reply = BUNDLE_REPLY_SPEC if self.icfg.bundle > 1 else REPLY_SPEC
+        self.specs = specs + ([STOP_SPEC] if self.background and config.subagent.stop_tool else []) + [WAIT_SPEC] + \
+            ([reply] if self.icfg.replies else [])
         self.sent: dict[int, Hint] = {}  # delivered messages by id, for `reply`
         self.answered: set[int] = set()  # ids replied to
         self.system = interactive_prompt(config, workdir)
@@ -98,6 +125,9 @@ class InteractiveOrchestrator(Orchestrator):
         self.deadline_hit = self.idle = False
         self.n_elided = 0
         self.report_bodies: list[str] = []  # delivered report texts, for elision
+        self.snapshotter: Snapshotter | None = None
+        self.in_row = 0  # interrupted calls in a row
+        self._interrupt = self._interrupt_due if self.icfg.interrupt else None
 
     # -- the session -------------------------------------------------------------------------
 
@@ -115,6 +145,9 @@ class InteractiveOrchestrator(Orchestrator):
             if self.background:
                 self.pool = ThreadPoolExecutor(self.cfg.subagent.max_concurrent, thread_name_prefix="bg-subagent")
             self.rec.update(session_t0=self.t0)
+            if self.icfg.snapshots:
+                self.snapshotter = Snapshotter(self.env, self.rec, self.workdir, self.icfg.snapshot_every_sec)
+                self.snapshotter.start()
             timer.start()
             self.rec.transcript(self.who, Message("system", self.system))
             template = REPORTED_SCOPE if self.icfg.scope == "reported" else FIRST_HINT
@@ -122,7 +155,8 @@ class InteractiveOrchestrator(Orchestrator):
             if self.hints:
                 h = self.hints[0]
                 first = template.format(instruction=instruction, note=note,
-                                        request=request_text(h.kind, h.msg_id, h.text, h.urgent, first=True))
+                                        request=request_text(h.kind, h.msg_id, h.text, h.urgent, first=True,
+                                                             n_items=max(1, len(h.items))))
                 self._hint_record(h, self.t0, 1)
                 self.next_hint = 1
             else:
@@ -134,6 +168,7 @@ class InteractiveOrchestrator(Orchestrator):
                 self._elide()
                 if self._step(step) == "no_tool_call":
                     self._implicit_wait(step)
+                self.in_row = self.in_row + 1 if self.last_interrupted else 0
                 if self.idle and self._nothing_left():
                     exit_reason = "idle"
                     break
@@ -153,12 +188,14 @@ class InteractiveOrchestrator(Orchestrator):
         except BaseException:
             timer.cancel()
             self._shutdown()
+            self._stop_snapshots()
             self._close(clients)
             self._finish_records()
             self.rec.finalize("error", traceback.format_exc()[-4000:])
             raise
         timer.cancel()
         self._shutdown()
+        self._stop_snapshots()
         self._close(clients)
         self._finish_records()
         self.rec.finalize(exit_reason, error)
@@ -183,6 +220,12 @@ class InteractiveOrchestrator(Orchestrator):
             self.rec.stop_event.set()
         self.pool.shutdown(wait=False, cancel_futures=True)
         concurrent.futures.wait(self.futures, timeout=JOIN_SEC)
+
+    def _stop_snapshots(self) -> None:
+        """After the agents stopped: no more snapshots, and none is written once the records finish
+        (the final state is the trial's ``model.patch``)."""
+        if self.snapshotter is not None:
+            self.snapshotter.stop()
 
     def _finish_records(self) -> None:
         """Hints and reports never delivered (the session ended first) get their inbox record too."""
@@ -233,7 +276,8 @@ class InteractiveOrchestrator(Orchestrator):
             t_ready = self.t0 + h.t_offset
             self._hint_record(h, now, step)
             parts.append((t_ready, USER_EVENT.format(at=clock(t_ready - self.t0),
-                                                     text=request_text(h.kind, h.msg_id, h.text, h.urgent))))
+                                                     text=request_text(h.kind, h.msg_id, h.text, h.urgent,
+                                                                       n_items=max(1, len(h.items))))))
         cap = max(2000, self.cfg.tools.max_output_chars // max(len(done), 1))
         for d, r, t_end in done:
             self._report_record(d, r, t_end, now, step)
@@ -259,18 +303,38 @@ class InteractiveOrchestrator(Orchestrator):
         })
 
     def _hint_record(self, h: Hint, t_delivered: float | None, step: int | None) -> None:
-        """A bug's record keeps the kind ``hint``; questions and status checks have their own kinds."""
+        """A bug's record keeps the kind ``hint``; questions and status checks have their own kinds.
+        A bug message gets one record per bug it lists (``interactive.bundle``): each with its own
+        subtask, ``hint_index`` (its position among every bug sent) and ``item`` (1, 2, ... in the
+        list), and the message's ``msg_id``, ``msg_index`` (its position among the bug messages),
+        ``subtask_ids`` (every item's, in order) and ``chars`` (the whole message's text)."""
         if t_delivered is not None and h.msg_id is not None:
             self.sent[h.msg_id] = h
-        s, q = h.subtask, h.question
-        self.rec.write("inbox", {
-            "kind": "hint" if h.kind == "bug" else h.kind, "t_ready": self.t0 + h.t_offset, "t_delivered": t_delivered,
-            "step": step, "hint_index": h.index, "subtask_id": s.id if s else None,
-            "target_files": list(s.target_files) if s else None, "f2p": list(s.f2p) if s else None,
-            "dispatch_id": None, "agent_id": None, "status": None, "chars": len(h.text), "msg_id": h.msg_id,
-            "urgent": h.urgent, "question_id": q.id if q else None, "question": q.question if q else None,
-            "reference": q.answer if q else None,
-        })
+        q = h.question
+        items = list(zip(h.items, h.positions)) if h.items else [(h.subtask, h.index)]
+        for k, (s, pos) in enumerate(items, 1):
+            bug = h.kind == "bug" and s is not None
+            self.rec.write("inbox", {
+                "kind": "hint" if h.kind == "bug" else h.kind, "t_ready": self.t0 + h.t_offset,
+                "t_delivered": t_delivered, "step": step, "hint_index": pos, "subtask_id": s.id if s else None,
+                "target_files": list(s.target_files) if s else None, "f2p": list(s.f2p) if s else None,
+                "dispatch_id": None, "agent_id": None, "status": None, "chars": len(h.text), "msg_id": h.msg_id,
+                "urgent": h.urgent, "question_id": q.id if q else None, "question": q.question if q else None,
+                "reference": q.answer if q else None, "target_msg_id": h.target, "msg_index": h.index,
+                "item": k if bug else None, "subtask_ids": [x.id for x, _ in items] if bug else None,
+            })
+
+    def _interrupt_due(self, call: CallCancel) -> bool:
+        """Abort the orchestrator's call in progress: a user message (any kind; subagent reports never
+        interrupt) is due, the call has run ``interrupt_min_sec``, it is not streaming a tool call yet
+        (its reasoning is over: let it act), and fewer than ``interrupt_max_in_row`` calls in a row were
+        interrupted. Checked every ``records.POLL_SEC``; the next step delivers all that is due."""
+        now = time.time()
+        if (now - call.t_start < self.icfg.interrupt_min_sec or self.in_row >= self.icfg.interrupt_max_in_row
+                or call.in_tool_call):
+            return False
+        with self.cv:
+            return bool(self._due(now))
 
     def _wait(self, timeout: float | None) -> str:
         """Block until something arrives (``event``) or ``timeout`` passes; an untimed wait (the end of a
@@ -309,6 +373,8 @@ class InteractiveOrchestrator(Orchestrator):
     def _tool(self, tc: ToolCall, step: int, call_id: str, groups: list[str]) -> ToolOutput:
         if tc.name == "reply" and self.icfg.replies:
             return self.rec.tool(self.who, step, call_id, tc, lambda: self._reply(tc.arguments, step))
+        if tc.name == "stop_subagents" and self.background and self.cfg.subagent.stop_tool:
+            return self.rec.tool(self.who, step, call_id, tc, lambda: self._stop_subagents(tc.arguments))
         if tc.name != "wait":
             return super()._tool(tc, step, call_id, groups)
 
@@ -332,17 +398,54 @@ class InteractiveOrchestrator(Orchestrator):
         eta, eta_ok = _minutes(args.get("eta_min"))
         done, done_ok = _flag(args.get("done"))
         h = self.sent[to]
+        items = list(h.items) or ([h.subtask] if h.subtask else [])
+        item = _message_id(args.get("item")) if len(items) > 1 else None  # one bug of a list, or every one
+        if len(items) > 1 and args.get("item") is not None and not (item is not None and 1 <= item <= len(items)):
+            return ToolOutput(f"[error] `item` must be the number of one of the {len(items)} bugs of #{to} "
+                              f"(1-{len(items)}), or left out for all of them; nothing was sent", True)
+        covered = [items[item - 1]] if item else items
+        pos = h.positions[item - 1] if item and h.positions else h.index  # the bug's hint_index (one bug)
+        if self.icfg.require_eta and h.kind == "bug" and eta is None and not done:
+            return ToolOutput(f"[error] a reply to a bug (#{to}) needs eta_min (your estimate, in minutes from now, of "
+                              "when it will be fixed) or done: true; nothing was sent", True)
         first_answer = h.kind == "question" and to not in self.answered
         self.answered.add(to)
         self.rec.write("replies", {
-            "t": time.time(), "step": step, "to": to, "kind": h.kind, "hint_index": h.index,
-            "subtask_id": h.subtask.id if h.subtask else None, "question_id": h.question.id if h.question else None,
-            "text": text, "eta_min": eta, "done": done,
+            "t": time.time(), "step": step, "to": to, "kind": h.kind, "hint_index": pos,
+            "subtask_id": covered[0].id if len(covered) == 1 else None,
+            "question_id": h.question.id if h.question else None, "text": text, "eta_min": eta, "done": done,
+            "item": item, "subtask_ids": [x.id for x in covered] if h.kind == "bug" else None,
         })
         notes = (["taken as your answer to this question"] if first_answer else []) + \
                 ([] if eta_ok else ["eta_min ignored: expected a number of minutes >= 0"]) + \
                 ([] if done_ok else ["done ignored: expected true or false"])
-        return ToolOutput(f"[sent to the user, re #{to}" + "".join(f"; {n}" for n in notes) + "]")
+        about = f" item {item}" if item else ""
+        return ToolOutput(f"[sent to the user, re #{to}{about}" + "".join(f"; {n}" for n in notes) + "]")
+
+    def _stop_subagents(self, args: dict) -> ToolOutput:
+        ids = args.get("agent_ids")
+        if isinstance(ids, str):
+            ids = [ids]
+        if not isinstance(ids, list) or not ids or not all(isinstance(x, str) for x in ids):
+            return ToolOutput("[error] `agent_ids` must be a non-empty list of subagent ids (sub-3)", True)
+        now = time.time()
+        with self.cv:
+            live = {d.agent_id: d for d, _ in self.live.values()}
+        stopping, unknown = [], []
+        for a in dict.fromkeys(x.strip() for x in ids):
+            d = live.get(a)
+            if d is None:
+                unknown.append(a)
+                continue
+            if not d.stop.is_set():
+                d.t_stop = now
+                d.stop.set()
+            stopping.append(a)
+        parts = [f"[stop_subagents: {', '.join(stopping)} will stop at its next step; each report arrives as a "
+                 "message]"] if stopping else []
+        if unknown:
+            parts.append(f"[not running: {', '.join(unknown)}]")
+        return ToolOutput("\n".join(parts), not stopping)
 
     def _spawn(self, instructions: list[str], step: int, group_id: str) -> ToolOutput:
         if not self.background:
@@ -395,13 +498,15 @@ class InteractiveOrchestrator(Orchestrator):
     def _elide(self) -> None:
         """While the conversation is over its limit, replace, oldest message first, tool outputs and
         subagent reports with a marker and drop old reasoning (never the task message or the newest
-        message)."""
+        message, and never the newest assistant turn's reasoning: Anthropic and Gemini reject a tool
+        loop whose current turn lost its signed thinking or thought signature)."""
         limit = self.icfg.max_context_chars
         if limit is None:
             return
         size = sum(_chars(m) for m in self.messages)
         if size <= limit:
             return
+        newest_turn = next((m for m in reversed(self.messages) if m.role == "assistant"), None)
         for m in self.messages[1:-1]:
             if size <= ELIDE_TO * limit:
                 break
@@ -422,9 +527,9 @@ class InteractiveOrchestrator(Orchestrator):
                         m.content = m.content.replace(body, marker, 1)
                         size -= len(body) - len(marker)
                         self.n_elided += 1
-            elif m.role == "assistant" and m.reasoning:
-                size -= len(m.reasoning)
-                m.reasoning = None
+            elif m.role == "assistant" and m is not newest_turn and (m.reasoning or m.reasoning_details):
+                size -= _reasoning_chars(m)
+                m.reasoning = m.reasoning_details = None
                 self.n_elided += 1
 
 
@@ -481,5 +586,10 @@ def wait_timeout(raw: Any, cap: float) -> float | None:
 
 
 def _chars(m: Message) -> int:
-    return (len(m.content or "") + len(m.reasoning or "") + sum(len(r.content) for r in m.tool_results)
+    return (len(m.content or "") + _reasoning_chars(m) + sum(len(r.content) for r in m.tool_results)
             + sum(len(str(c.arguments)) for c in m.tool_calls))
+
+
+def _reasoning_chars(m: Message) -> int:
+    """The reasoning sent back with ``m``: its reasoning_details if any (llm._wire), else its reasoning."""
+    return len(json.dumps(m.reasoning_details)) if m.reasoning_details else len(m.reasoning or "")
