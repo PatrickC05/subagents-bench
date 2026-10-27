@@ -232,10 +232,11 @@ def pareto(points: pd.DataFrame) -> list[tuple[float, float]]:
 
 
 def plot(table: pd.DataFrame, path: Path, title: str = "", levels: pd.DataFrame | None = None,
-         frontiers: bool = True) -> None:
+         frontiers: bool = True, joint: bool = False) -> None:
     """``levels`` (``levels_table`` rows with a ``model`` column): each model's L1 and L2 points for the
     settings in ``table``. With ``frontiers``, the Pareto
-    frontier of the independent sessions (before) and of the same-session L0 points (after)."""
+    frontier of the independent sessions (before) and of the same-session L0 points (after); with
+    ``joint`` instead, one frontier over the independent and the same-session points together."""
     from matplotlib.lines import Line2D
 
     from ..plots.final import MARKERS, pyplot
@@ -272,7 +273,9 @@ def plot(table: pd.DataFrame, path: Path, title: str = "", levels: pd.DataFrame 
         sets += [(lvl, lv[lv["level"] == lvl]) for lvl in LEVEL_STYLE] if not lv.empty else []
         shade = plt.get_cmap("Greys")
         styles = {"isolated": (shade(0.95), "-"), "L0": (shade(0.75), "--"), "L1": (shade(0.6), "-."),
-                  "L2": (shade(0.45), ":")}
+                  "L2": (shade(0.45), ":"), "joint": (shade(0.95), "-")}
+        if joint:
+            sets = [("joint", every)]
         for name, pts in sets:
             if pts.empty:
                 continue
@@ -281,8 +284,8 @@ def plot(table: pd.DataFrame, path: Path, title: str = "", levels: pd.DataFrame 
             # closed on both sides: up from below the axes at the cheapest point, flat to the right edge
             ax.step([fx[0]] + list(fx) + [right], [-1.0] + list(fy) + [fy[-1]], where="post", color=color, lw=1.2,
                     ls=ls, zorder=0)
-            label = "independent sessions" if name == "isolated" else name
-            fronts.append(Line2D([], [], color=color, lw=1.2, ls=ls, label=f"frontier: {label}"))
+            label = {"isolated": "frontier: independent sessions", "joint": "cost performance frontier"}
+            fronts.append(Line2D([], [], color=color, lw=1.2, ls=ls, label=label.get(name, f"frontier: {name}")))
         if not lv.empty and len(fm) < len(models):
             fronts.append(Line2D([], [], ls="", label="(frontiers: " + ", ".join(TAG.get(m, m) for m in fm) + ")"))
     ax.set_xscale("log")
@@ -404,6 +407,8 @@ def main(argv: list[str] | None = None) -> int:
     for pt in shared:
         sub = table[table["point"].isin([pt, "isolated", "isolated_capped"])]
         plot(sub, a.out / f"l0_{pt}.png", title=TITLE.get(pt, f"Cost Performance Frontier: {pt}"), levels=levels)
+        # without the levels, one frontier over this setting's points and the independent sessions together
+        plot(sub, a.out / f"l0_{pt}_joint.png", title=TITLE.get(pt, f"Cost Performance Frontier: {pt}"), joint=True)
     for m in ([] if levels is None else list(dict.fromkeys(levels["model"]))):  # one plot per model with levels
         plot_model(table, levels, m, a.out / f"l0_model_{m}.png")
     print(table.to_string(index=False))
