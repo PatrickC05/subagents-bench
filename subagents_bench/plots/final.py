@@ -413,7 +413,7 @@ def eta_hist(e: pd.DataFrame, models: list[str], out: Path) -> None:
         top = max(hp.max(initial=1), hf.max(initial=1)) * 1.15
         ax.bar(32.5, min(n_never, top), 2.2, color=never_c)
         ax.annotate(str(n_never), (32.5, min(n_never, top)), ha="center", va="bottom", fontsize=10)
-        ax.set_ylim(0, top * 1.12)
+        ax.set_ylim(0, top * 1.3)  # headroom for the count above the never bar
         ax.set_xlim(-0.5, 34)
         ax.set_xticks([0, 5, 10, 15, 20, 25, 32.5], ["0", "5", "10", "15", "20", "25", "never"])
         ax.tick_params(labelsize=10)
@@ -422,9 +422,8 @@ def eta_hist(e: pd.DataFrame, models: list[str], out: Path) -> None:
         ax.spines[["top", "right"]].set_visible(False)
     for ax in axes.flat[len(models):]:
         ax.axis("off")
-    for i, ax in enumerate(axes.flat[:len(models)]):
-        if i + ncol >= len(models):
-            ax.set_xlabel("minutes after the bug was sent", fontsize=11)
+    for ax in axes[-1][:len(models) - ncol * (nrow - 1)]:  # bottom row only: no label under the row above
+        ax.set_xlabel("minutes after the bug was sent", fontsize=11)
     for row in axes:
         row[0].set_ylabel("bugs per minute", fontsize=11)
     handles = [Line2D([], [], color=pred_c, lw=2, label="predicted fix time (ETA)"),
@@ -433,7 +432,8 @@ def eta_hist(e: pd.DataFrame, models: list[str], out: Path) -> None:
     spare = axes.flat[len(models)] if len(models) < axes.size else None
     (spare.legend if spare is not None else fig.legend)(handles=handles, fontsize=11, loc="center", frameon=False)
     fig.suptitle("Predicted vs actual fix times (L0)", fontsize=14)
-    _save(fig, out / "eta_hist.png")
+    fig.tight_layout(h_pad=2.5, w_pad=1.5)
+    _save(fig, out / "eta_hist.png", tight=False)
 
 
 def response_cdf(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> pd.DataFrame:
