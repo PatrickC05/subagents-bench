@@ -295,7 +295,7 @@ def eta(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> pd.DataFram
 
 def eta_vs_fix(e: pd.DataFrame, models: list[str], out: Path) -> None:
     """``eta_scatter_all.png``: each estimate's predicted fix (when it was given + its ETA) against when the
-    bug was fixed, both in minutes after the bug was sent, every setting and level pooled; one panel per
+    bug was fixed, both in minutes after the bug was sent, at L0 (every setting pooled); one panel per
     model (log axes, the same on every panel), bugs never fixed in a band at the top."""
     from matplotlib.lines import Line2D
     plt = pyplot()
@@ -303,6 +303,7 @@ def eta_vs_fix(e: pd.DataFrame, models: list[str], out: Path) -> None:
     pred = e["est_sec"] / 60 + e["eta_min"]
     fixed = pd.to_numeric(e["fixed_sec"], errors="coerce") / 60
     d = e.assign(pred=pred, fix=fixed)
+    d = d[d["level"] == "L0"]
     lo, hi, never_y = 0.2, 40.0, 70.0
     ncol = 4
     nrow = math.ceil((len(models) + 1) / ncol)  # one cell left for the legend
@@ -319,8 +320,7 @@ def eta_vs_fix(e: pd.DataFrame, models: list[str], out: Path) -> None:
         ax.scatter(late["pred"], late["fix"].clip(lower=lo), s=22, color=late_c, alpha=0.9, linewidths=0, zorder=3)
         ax.scatter(nv["pred"], never_y * np.exp(rng.uniform(-0.15, 0.15, len(nv))), s=16, facecolors="none",
                    edgecolors="grey", linewidths=0.8, zorder=2)
-        n = len(g) - len(nv)
-        ax.set_title(f"{mname}\n{len(ok)}/{n} fixed by their ETA" if n else mname, fontsize=11)
+        ax.set_title(mname, fontsize=12)
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.set_xlim(lo * 5, hi)
@@ -348,7 +348,7 @@ def eta_vs_fix(e: pd.DataFrame, models: list[str], out: Path) -> None:
         spare.legend(handles=handles, fontsize=11, loc="center", frameon=False)
     else:
         fig.legend(handles=handles, fontsize=11, loc="lower center", ncol=4, frameon=False)
-    fig.suptitle("Predicted vs actual fix time for each estimate", fontsize=14)
+    fig.suptitle("Predicted vs actual fix time for each estimate (L0)", fontsize=14)
     _save(fig, out / "eta_scatter_all.png")
 
 
