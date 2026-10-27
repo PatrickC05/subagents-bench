@@ -242,7 +242,7 @@ def plot(table: pd.DataFrame, path: Path, title: str = "", levels: pd.DataFrame 
     from ..plots.final import MARKERS, pyplot
     plt = pyplot()
     table = table[table["point"] != "isolated_capped"]  # the capped point is in l0.csv; the figure shows the frontier
-    fig, ax = plt.subplots(figsize=(7, 4.5))
+    fig, ax = plt.subplots(figsize=(11, 3.6) if joint else (7, 4.5))  # joint: wide and flat, legend below
     models = list(dict.fromkeys(table["model"]))
     colors = {m: plt.get_cmap("tab10")(i % 10) for i, m in enumerate(models)}
     labels = []  # (model, x, y) of each isolated point, labelled once the axes are final
@@ -312,9 +312,13 @@ def plot(table: pd.DataFrame, path: Path, title: str = "", levels: pd.DataFrame 
                     Line2D([], [], color="grey", marker=mk, ls="", markerfacecolor="white", markersize=6,
                            label="L2 (+ questions)")]
     handles += fronts
-    ax.legend(handles=handles, fontsize=7, loc="center left", bbox_to_anchor=(1.0, 0.5), frameon=False)
+    if joint:
+        ax.legend(handles=handles, fontsize=7.5, loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=6,
+                  frameon=False)
+    else:
+        ax.legend(handles=handles, fontsize=7, loc="center left", bbox_to_anchor=(1.0, 0.5), frameon=False)
     fig.tight_layout()
-    fig.savefig(path, dpi=150)
+    fig.savefig(path, dpi=150, bbox_inches="tight" if joint else None)
     plt.close(fig)
 
 
