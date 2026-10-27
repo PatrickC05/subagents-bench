@@ -123,10 +123,11 @@ def _log_limits(values, pad: float = 1.6, floor: float = 1e-3) -> tuple[float, f
 
 
 def _bars(ax, table: pd.DataFrame, value: str, models: list[str], ylabel: str, log: bool = False,
-          extra: str | None = None) -> None:
+          extra: str | None = None, legend: bool = True, big: bool = False) -> float:
     """Grouped bars: x = model x the levels it ran, one bar per setting. With ``log``, a log axis
     fitted to the data, and a median that is never (NaN with rows) drawn hatched up to the top. With
-    ``extra``, a dashed outline of that column's height stacked on each bar."""
+    ``extra``, a dashed outline of that column's height stacked on each bar. ``big``: larger text (a
+    full-width paper figure). Returns the x extent used."""
     width, x0 = 0.8 / len(SETTINGS), 0
     ticks, labels = [], []
     top = None
@@ -157,22 +158,48 @@ def _bars(ax, table: pd.DataFrame, value: str, models: list[str], ylabel: str, l
             labels.append(lv)
             x0 += 1
         if len(ticks) > first:
-            ax.text((ticks[-1] + ticks[first]) / 2, -0.12, m, transform=ax.get_xaxis_transform(), ha="center",
-                    fontsize=8, fontweight="bold")
+            ax.text((ticks[-1] + ticks[first]) / 2, -0.16 if big else -0.12, m, transform=ax.get_xaxis_transform(),
+                    ha="center", fontsize=11 if big else 8, fontweight="bold")
         x0 += 0.5
-    ax.set_xticks(ticks, labels, fontsize=7)
+    ax.set_xticks(ticks, labels, fontsize=10 if big else 7)
+    ax.tick_params(axis="y", labelsize=10 if big else None)
     if log:
         ax.set_ylim(lo, top)
-    ax.set_ylabel(ylabel)
-    _legend(ax, extra=extra is not None and bool((table[extra] > 0).any()))
+    ax.set_ylabel(ylabel, fontsize=11 if big else None)
+    if legend:
+        _legend(ax, extra=extra is not None and bool((table[extra] > 0).any()), big=big)
+    return x0 - 0.5
 
 
-def _legend(ax, extra: bool = False) -> None:
+def _two_rows(tab: pd.DataFrame, value: str, models: list[str], ylabel: str, title: str, path: Path,
+              log: bool = False, extra: str | None = None, ylim: tuple[float, float] | None = None) -> None:
+    """``_bars`` in two rows: the models that ran more than one level on top, the L0-only ones below,
+    both on the same y axis and bar width (the shorter row centred)."""
+    many = [m for m in models if tab.loc[tab["model"] == m, "level"].nunique() > 1]
+    rows = [r for r in (many, [m for m in models if m not in many]) if r]
+    plt = pyplot()
+    fig, axes = plt.subplots(len(rows), 1, figsize=(11, 3.4 * len(rows)), squeeze=False)
+    spans = [_bars(ax, tab, value, r, ylabel, log=log, extra=extra, legend=i == 0, big=True)
+             for i, (ax, r) in enumerate(zip(axes[:, 0], rows))]
+    width = max(spans)
+    for ax, span in zip(axes[:, 0], spans):
+        pad = (width - span) / 2
+        ax.set_xlim(-0.4 - pad, span - 0.15 + pad)  # bars run from about -0.13 to span - 0.2
+        if ylim:
+            ax.set_ylim(*ylim)
+    fig.suptitle(title, fontsize=14)
+    fig.tight_layout()
+    fig.subplots_adjust(hspace=0.45)
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
+def _legend(ax, extra: bool = False, big: bool = False) -> None:
     from matplotlib.patches import Patch
     handles = [_patch(s) for s in SETTINGS]
     if extra:
         handles.append(Patch(fill=False, edgecolor="dimgrey", linestyle="--", label="bugs in lost sessions"))
-    ax.legend(handles=handles, fontsize=7, loc="lower center", bbox_to_anchor=(0.5, 1.0),
+    ax.legend(handles=handles, fontsize=11 if big else 7, loc="lower center", bbox_to_anchor=(0.5, 1.0),
               ncol=len(handles), frameon=False)
 
 
@@ -186,11 +213,9 @@ def response_time(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> p
     bugs = m[(m["kind"] == "bug") & (m["index"] > 0)]
     tab = bugs.groupby(["model", "setting", "level"])["user_reply_sec"].agg(
         median_sec=_median_censored, replied_frac=lambda v: v.notna().mean(), n="size").reset_index()
-    plt = pyplot()
-    fig, ax = plt.subplots(figsize=(max(6, 3 * len(models)), 4))
-    _bars(ax, tab, "median_sec", models, "median s to first reply (log; hatched: never)", log=True)
-    fig.suptitle("Time to the first reply the user saw, bugs (L0 bugs, L1 + ETA, L2 + questions)", fontsize=9)
-    _save(fig, out / "response_time.png")
+    _two_rows(tab, "median_sec", models, "median s to first reply\n(log; hatched: never)",
+              "Time to the first reply to a bug (L1: + ETA requests, L2: + questions)", out / "response_time.png",
+              log=True)
     return tab
 
 
@@ -201,12 +226,10 @@ def bugs_fixed(t: dict[str, pd.DataFrame], models: list[str], out: Path) -> pd.D
     tab = bugs.groupby(["model", "setting", "level"]).agg(
         fixed_frac=("fixed", "mean"), n_fixed=("fixed", "sum"), n=("fixed", "size"),
         lost_frac=("lost", "mean")).reset_index()
-    plt = pyplot()
-    fig, ax = plt.subplots(figsize=(max(6, 3 * len(models)), 4))
-    _bars(ax, tab, "fixed_frac", models, "share of bugs fixed", extra="lost_frac")
-    ax.set_ylim(max(0.0, float(tab["fixed_frac"].min()) - 0.1), max(1.02, float((tab["fixed_frac"] + tab["lost_frac"]).max()) + 0.02))
-    fig.suptitle("Bugs fixed at the end of the session", fontsize=9)
-    _save(fig, out / "bugs_fixed.png")
+    _two_rows(tab, "fixed_frac", models, "share of bugs fixed", "Bugs fixed at the end of the session",
+              out / "bugs_fixed.png", extra="lost_frac",
+              ylim=(max(0.0, float(tab["fixed_frac"].min()) - 0.1),
+                    max(1.02, float((tab["fixed_frac"] + tab["lost_frac"]).max()) + 0.02)))
     return tab
 
 
